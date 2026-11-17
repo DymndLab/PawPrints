@@ -1,0 +1,45 @@
+name: Checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  portable:
+    name: Portable checks
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: '10.0.x'
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - name: Check repository and fonts
+        run: python tools/repository_checks.py
+      - name: Test release tooling
+        run: python -m unittest discover -s tests -p "test_*.py"
+      - name: Test portable renderer and storage
+        run: dotnet run --project tests/Blueprint.Tests.csproj -c Release -p:RestoreLockedMode=true -p:NuGetAudit=true -p:NuGetAuditMode=all
+      - name: Install checklist test dependencies
+        run: npm --prefix tests/manual ci --ignore-scripts
+      - name: Test checklist
+        run: npm --prefix tests/manual test
+      - name: Check checklist dependency advisories
+        run: npm --prefix tests/manual audit --audit-level=moderate

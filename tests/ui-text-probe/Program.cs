@@ -1,0 +1,82 @@
+using Blueprint;
+using Brutal.ImGuiApi;
+using Brutal.Numerics;
+using System.Runtime.InteropServices;
+
+// A headless UI context exercises the installed native library. It neither
+// starts KSA nor attaches to its process; no game/profile files are changed.
+string game = Path.GetFullPath(args[0]);
+NativeLibrary.SetDllImportResolver(typeof(ImGui).Assembly, (name, assembly, path) =>
+    name.Contains("imgui", StringComparison.OrdinalIgnoreCase)
+        ? NativeLibrary.Load(Path.Combine(game, "imgui.dll")) : IntPtr.Zero);
+
+var context = ImGui.CreateContext(default);
+try
+{
+    var io = ImGui.GetIO();
+    io.IniFilename = default;
+    io.DisplaySize = new float2(1600, 1000);
+    io.DeltaTime = 1f / 60;
+    io.BackendFlags |= ImGuiBackendFlags.RendererHasTextures;
+    io.Fonts.AddFontDefault();
+    ImGui.NewFrame();
+    ImGui.SetNextWindowPos(new float2(10, 10));
+    ImGui.SetNextWindowSize(new float2(1500, 950));
+    ImGui.Begin("Text regression"u8);
+    string[] cases =
+    [
+        "Print at 100% without stretching.", "100%", "%", "%%", "%s", "%n", "%q",
+        "Tank 20% / path 50% complete", "Pressure 100% \u2014 \u65e5\u672c\u8a9e"
+    ];
+    foreach (string text in cases)
+    {
+        // Explicit diagnostic mode only: the original native call is expected
+        // to terminate THIS process with 0xc0000409 on the first fixture.
+        if (args.Contains("--unsafe"))
+            ImGui.TextWrapped(text);
+        else
+            PrintUiText.Wrapped(text);
+        var actual = ImGui.GetItemRectSize();
+        var expected = ImGui.CalcTextSize(text);
+        if (Math.Abs(actual.X - expected.X) > 1 || Math.Abs(actual.Y - expected.Y) > 1)
+            throw new Exception("Wrapped text no longer matches the literal input.");
+        PrintUiText.Tooltip(text);
+    }
+    ImGui.End();
+    ImGui.Render();
+    Console.WriteLine($"PASS {cases.Length} native wrapped-text/tooltip cases, with exact literal text dimensions.");
+}
+finally
+{
+    ImGui.DestroyContext(context);
+}
+
+// Log output is bounded, flushed while running and omits exception messages.
+string logs = Path.Combine(Path.GetTempPath(), "PawPrints-diagnostics-probe-" + Guid.NewGuid());
+PrintDiagnostics.Start(logs, "test");
+PrintDiagnostics.State("settings.tab", "Title Block");
+PrintDiagnostics.State("settings.tab", "Title Block");
+try { throw new InvalidOperationException("PRIVATE-TEXT-DO-NOT-LOG"); }
+catch (Exception error) { PrintDiagnostics.Error("probe", error); }
+string live;
+using (var reader = new StreamReader(new FileStream(Path.Combine(logs, "PawPrints.log"), FileMode.Open, FileAccess.Read, FileShare.ReadWrite)))
+    live = reader.ReadToEnd();
+if (live.Contains("PRIVATE-TEXT") || !live.Contains("InvalidOperationException")
+    || live.Split("settings.tab=Title Block").Length != 2)
+    throw new Exception("Diagnostic privacy, flushing or deduplication failed.");
+for (int i = 0; i < 600; i++)
+    PrintDiagnostics.Record("probe " + new string('x', 4000));
+PrintDiagnostics.Stop();
+for (int i = 0; i < 5; i++)
+{
+    PrintDiagnostics.Start(logs, "restart");
+    PrintDiagnostics.Stop();
+}
+var files = new DirectoryInfo(logs).GetFiles();
+if (files.Length != 4 || files.Any(f => f.Length > 530000))
+    throw new Exception("Diagnostic rotation bound failed.");
+// An unwritable destination must neither throw nor disrupt other UI work.
+PrintDiagnostics.Start(Path.Combine(logs, "PawPrints.log", "invalid"), "test");
+PrintDiagnostics.Record("ignored-unwritable");
+PrintDiagnostics.Stop();
+Console.WriteLine("PASS local diagnostic flushing, privacy, deduplication, rotation and unwritable-path handling.");

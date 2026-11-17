@@ -1,0 +1,94 @@
+{
+  "fonts": [
+    {
+      "slug": "mrdafoe",
+      "files": [
+        {
+          "url": "https://raw.githubusercontent.com/google/fonts/0fb1bdc740dd9d495e639a160778db34c28807b7/ofl/mrdafoe/MrDafoe-Regular.ttf",
+          "file": "MrDafoe-Regular.ttf",
+          "sha256": "A42A3C66A709927F358243FDFCBC437BD8EB188E2EE6A680C52F5BE12C670FD2"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/google/fonts/0fb1bdc740dd9d495e639a160778db34c28807b7/ofl/mrdafoe/OFL.txt",
+          "file": "OFL.txt",
+          "sha256": "0DA6A3E5B24A9FA04085C20A2A1D3101EEB1E0BFF56A2291F407187E1B2ADCF2"
+        }
+      ]
+    },
+    {
+      "slug": "kristi",
+      "files": [
+        {
+          "url": "https://raw.githubusercontent.com/google/fonts/0fb1bdc740dd9d495e639a160778db34c28807b7/ofl/kristi/Kristi-Regular.ttf",
+          "file": "Kristi-Regular.ttf",
+          "sha256": "6725B7A28D9BD8761E2834A6AB380BABE073678C6F42017FE576116B9D6FD2A0"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/google/fonts/0fb1bdc740dd9d495e639a160778db34c28807b7/ofl/kristi/OFL.txt",
+          "file": "OFL.txt",
+          "sha256": "4EC46C3E4469AFA19F0156BAC6917472974F9C85C189F9220CF8735D3E810401"
+        }
+      ]
+    },
+    {
+      "slug": "reeniebeanie",
+      "files": [
+        {
+          "url": "https://raw.githubusercontent.com/google/fonts/0fb1bdc740dd9d495e639a160778db34c28807b7/ofl/reeniebeanie/OFL.txt",
+          "file": "OFL.txt",
+          "sha256": "FBB941B371C6348EE2572CE8C78FB66128A61885F960DEC1906C4E44CA4B4D3C"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/google/fonts/0fb1bdc740dd9d495e639a160778db34c28807b7/ofl/reeniebeanie/ReenieBeanie.ttf",
+          "file": "ReenieBeanie.ttf",
+          "sha256": "0EA608AA325BF9E11C9590CC0B63DCF7CD215E270784F1EBBE6FAD4927B31FF8"
+        }
+      ]
+    },
+    {
+      "slug": "nothingyoucoulddo",
+      "files": [
+        {
+          "url": "https://raw.githubusercontent.com/google/fonts/0fb1bdc740dd9d495e639a160778db34c28807b7/ofl/nothingyoucoulddo/NothingYouCouldDo.ttf",
+          "file": "NothingYouCouldDo.ttf",
+          "sha256": "1DAF8CF79076BF59C5A9117B5EFD6ECEA35E57A05EF127FE4F95B072B8A5245D"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/google/fonts/0fb1bdc740dd9d495e639a160778db34c28807b7/ofl/nothingyoucoulddo/OFL.txt",
+          "file": "OFL.txt",
+          "sha256": "0E441AE9F18AD0C294CC5B6AE3974C2DB1614CAB220598578B1B58C4CC334485"
+        }
+      ]
+    },
+    {
+      "slug": "zeyada",
+      "files": [
+        {
+          "url": "https://raw.githubusercontent.com/google/fonts/0fb1bdc740dd9d495e639a160778db34c28807b7/ofl/zeyada/OFL.txt",
+          "file": "OFL.txt",
+          "sha256": "0E441AE9F18AD0C294CC5B6AE3974C2DB1614CAB220598578B1B58C4CC334485"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/google/fonts/0fb1bdc740dd9d495e639a160778db34c28807b7/ofl/zeyada/Zeyada.ttf",
+          "file": "Zeyada.ttf",
+          "sha256": "09F23D0D78B6E166DDB8480793BB550AB4C2AAF6602EDA47A394FEE93D2A9667"
+        }
+      ]
+    },
+    {
+      "slug": "labelleaurore",
+      "files": [
+        {
+          "url": "https://raw.githubusercontent.com/google/fonts/0fb1bdc740dd9d495e639a160778db34c28807b7/ofl/labelleaurore/LaBelleAurore.ttf",
+          "file": "LaBelleAurore.ttf",
+          "sha256": "ED67462999E05F0CDAC92F686374661E4D68C56FDCD7D05725C6DF7B41EABD2A"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/google/fonts/0fb1bdc740dd9d495e639a160778db34c28807b7/ofl/labelleaurore/OFL.txt",
+          "file": "OFL.txt",
+          "sha256": "0E441AE9F18AD0C294CC5B6AE3974C2DB1614CAB220598578B1B58C4CC334485"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+<Project>
+  <Import Project="$(MSBuildThisFileDirectory).local/Development.props" Condition="Exists('$(MSBuildThisFileDirectory).local/Development.props')" />
+  <PropertyGroup>
+    <GameDir Condition="'$(GameDir)'==''">$(PAWPRINTS_GAME_DIR)</GameDir>
+    <LoaderDir Condition="'$(LoaderDir)'==''">$(PAWPRINTS_LOADER_DIR)</LoaderDir>
+    <!-- Remove the developer's absolute path from compiler/debug metadata. -->
+    <Deterministic>true</Deterministic>
+    <PathMap>$(MSBuildThisFileDirectory)=/_/PawPrints/</PathMap>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+  </PropertyGroup>
+</Project>

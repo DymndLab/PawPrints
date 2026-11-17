@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="CaptureProbe.cs" />
+    <Reference Include="$(GameDir)/KSA.dll" Private="false" />
+    <Reference Include="$(GameDir)/BepuUtilities.dll" Private="false" />
+    <Reference Include="$(GameDir)/Brutal.*.dll" Private="false" />
+    <Reference Include="$(GameDir)/Planet.*.dll" Private="false" />
+    <Reference Include="$(GameDir)/CommunityToolkit.HighPerformance.dll" Private="false" />
+    <Reference Include="$(LoaderDir)/StarMap.API.dll" Private="false" />
+    <Reference Include="$(LoaderDir)/0Harmony.dll" Private="false" />
+  </ItemGroup>
+</Project>

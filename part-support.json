@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "labelCategories": [
+    "Fuel Tank",
+    "Service Module"
+  ],
+  "rules": [
+    {
+      "templateContains": "SolarPanelA_CellA",
+      "surface": "solar"
+    },
+    {
+      "templateContains": "Cloth",
+      "surface": "foil"
+    },
+    {
+      "templateContains": "Foil",
+      "surface": "foil"
+    }
+  ]
+}

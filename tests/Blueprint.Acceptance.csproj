@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Acceptance.cs" />
+    <Compile Include="PoseAcceptance.cs" />
+    <Compile Include="PerformanceAcceptance.cs" />
+    <Compile Include="DrawingAcceptance.cs" />
+    <Reference Include="$(GameDir)/KSA.dll" Private="false" />
+    <Reference Include="$(GameDir)/Brutal.*.dll" Private="false" />
+    <Reference Include="$(GameDir)/Planet.*.dll" Private="false" />
+    <Reference Include="$(GameDir)/BepuUtilities.dll" Private="false" />
+    <Reference Include="$(LoaderDir)/StarMap.API.dll" Private="false" />
+    <Reference Include="$(LoaderDir)/0Harmony.dll" Private="false" />
+  </ItemGroup>
+</Project>

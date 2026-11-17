@@ -1,0 +1,10 @@
+{
+  "name": "pawprints-manual-checklist",
+  "private": true,
+  "scripts": {
+    "test": "node checklist.test.cjs"
+  },
+  "devDependencies": {
+    "jsdom": "26.1.0"
+  }
+}

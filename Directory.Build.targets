@@ -1,0 +1,6 @@
+<Project>
+ <Target Name="ValidateGameReferences" BeforeTargets="ResolveAssemblyReferences" Condition="'$(MSBuildProjectName)'=='PawPrints' Or '$(MSBuildProjectName)'=='Blueprint.Acceptance' Or '$(MSBuildProjectName)'=='CaptureProbe'">
+  <Error Condition="!Exists('$(GameDir)/KSA.dll')" Text="Configure GameDir / PAWPRINTS_GAME_DIR with the installed KSA directory. See DEVELOPMENT.md." />
+  <Error Condition="!Exists('$(LoaderDir)/StarMap.API.dll')" Text="Configure LoaderDir / PAWPRINTS_LOADER_DIR with StarMap 0.5.4. See DEVELOPMENT.md." />
+ </Target>
+</Project>

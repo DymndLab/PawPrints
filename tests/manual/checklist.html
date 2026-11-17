@@ -1,0 +1,2121 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width,initial-scale=1" />
+        <title>PawPrints — testing checklist</title>
+        <style>
+            :root {
+                color-scheme: dark;
+                --paper: #111619;
+                --panel: #192126;
+                --line: #34434b;
+                --ink: #e7eff2;
+                --muted: #a8bac4;
+                --blue: #345f86;
+                --green: #93d7b3;
+                --yellow: #f1cc77;
+                --red: #ffabab;
+            }
+            * {
+                box-sizing: border-box;
+            }
+            body {
+                margin: 0;
+                background: var(--paper);
+                color: var(--ink);
+                font:
+                    15px/1.5 system-ui,
+                    sans-serif;
+            }
+            button,
+            input,
+            select,
+            textarea {
+                font: inherit;
+                color: inherit;
+            }
+            button,
+            select,
+            input,
+            textarea {
+                border: 1px solid var(--line);
+                border-radius: 5px;
+                background: #10171c;
+            }
+            button {
+                padding: 7px 12px;
+                cursor: pointer;
+            }
+            button:hover {
+                background: #2b414f;
+            }
+            button:disabled {
+                opacity: 0.45;
+                cursor: default;
+            }
+            button.primary {
+                background: var(--blue);
+            }
+            :focus-visible {
+                outline: 2px solid #8ac7ff;
+                outline-offset: 3px;
+            }
+            a {
+                color: #a9d8ff;
+            }
+            input,
+            select {
+                padding: 7px;
+            }
+            textarea {
+                padding: 10px;
+                resize: vertical;
+                width: 100%;
+                min-height: 95px;
+            }
+            input[type="checkbox"] {
+                width: 22px;
+                height: 22px;
+                accent-color: #579d7c;
+                flex-shrink: 0;
+                cursor: pointer;
+            }
+            header {
+                padding: 22px 28px 16px;
+                background: #1d3041;
+                border-bottom: 1px solid #486376;
+            }
+            h1 {
+                font-size: 26px;
+                letter-spacing: 0.02em;
+                margin: 0 0 3px;
+            }
+            p {
+                margin: 8px 0;
+            }
+            .muted {
+                color: var(--muted);
+            }
+            .small {
+                font-size: 13px;
+            }
+            .top {
+                display: flex;
+                justify-content: space-between;
+                gap: 16px;
+                flex-wrap: wrap;
+            }
+            .actions {
+                display: flex;
+                gap: 7px;
+                flex-wrap: wrap;
+                align-items: center;
+            }
+            .summary {
+                display: flex;
+                align-items: center;
+                gap: 14px;
+                flex-wrap: wrap;
+                margin-top: 15px;
+            }
+            .summary progress {
+                width: 220px;
+                height: 12px;
+                accent-color: #91c9b0;
+            }
+            .pass {
+                color: var(--green);
+            }
+            .fail {
+                color: var(--red);
+            }
+            .skip {
+                color: var(--yellow);
+            }
+            #saveState {
+                font-size: 13px;
+            }
+            #notice {
+                padding: 10px 28px;
+                background: #433b25;
+                color: #ffe3a1;
+            }
+            #notice:empty {
+                display: none;
+            }
+            .workspace {
+                display: grid;
+                grid-template-columns: 275px minmax(0, 1fr);
+                max-width: 1500px;
+                margin: auto;
+                min-height: 80vh;
+            }
+            aside {
+                padding: 20px 14px;
+                border-right: 1px solid var(--line);
+            }
+            nav {
+                display: grid;
+                gap: 4px;
+            }
+            nav button {
+                text-align: left;
+                display: flex;
+                justify-content: space-between;
+                gap: 8px;
+                border-color: transparent;
+                background: transparent;
+                padding: 8px 10px;
+                font-size: 14px;
+            }
+            nav button.active {
+                background: var(--blue);
+            }
+            nav .count {
+                white-space: nowrap;
+                color: #c4d3dc;
+                font-size: 12px;
+                align-self: center;
+            }
+            main {
+                padding: 20px 28px 60px;
+                min-width: 0;
+            }
+            .session {
+                padding: 14px;
+                border: 1px solid var(--line);
+                background: var(--panel);
+                border-radius: 7px;
+                margin-bottom: 16px;
+            }
+            .session-fields {
+                display: flex;
+                gap: 14px;
+                flex-wrap: wrap;
+                align-items: end;
+            }
+            label.field {
+                display: grid;
+                gap: 4px;
+                font-size: 13px;
+            }
+            .session details {
+                margin-top: 10px;
+            }
+            summary {
+                cursor: pointer;
+            }
+            .filters {
+                display: flex;
+                gap: 10px;
+                flex-wrap: wrap;
+                margin: 18px 0;
+            }
+            .filters input {
+                flex: 1;
+                min-width: 180px;
+            }
+            .section-title {
+                font-size: 21px;
+                margin: 18px 0 4px;
+            }
+            .section-progress {
+                color: var(--muted);
+                margin: 0 0 12px;
+                font-size: 13px;
+            }
+            .task {
+                border: 1px solid var(--line);
+                border-radius: 7px;
+                background: var(--panel);
+                padding: 14px;
+                margin: 9px 0;
+            }
+            .task[data-status="fail"] {
+                border-left: 4px solid #c87b7b;
+            }
+            .task[data-status="pass"] {
+                border-left: 4px solid #539376;
+            }
+            .task[data-status="skip"] {
+                border-left: 4px solid #ad9255;
+            }
+            .task-head {
+                display: flex;
+                gap: 11px;
+                align-items: flex-start;
+            }
+            .task-title {
+                flex: 1;
+                cursor: pointer;
+            }
+            .id {
+                font-family: ui-monospace, Consolas, monospace;
+                color: #b0cde0;
+                margin-right: 7px;
+            }
+            .task-tools {
+                display: flex;
+                gap: 10px;
+                align-items: center;
+                margin: 11px 0 0 33px;
+                flex-wrap: wrap;
+            }
+            .task-tools select,
+            .task-tools button {
+                font-size: 13px;
+                padding: 4px 8px;
+            }
+            .stamp {
+                font-size: 12px;
+                color: var(--muted);
+            }
+            .notes {
+                margin: 12px 0 0 33px;
+            }
+            .notes label {
+                display: block;
+                margin-bottom: 5px;
+                font-size: 13px;
+            }
+            .notes[hidden] {
+                display: none;
+            }
+            .pager {
+                display: flex;
+                justify-content: space-between;
+                gap: 10px;
+                margin-top: 22px;
+            }
+            .empty {
+                padding: 25px;
+                border: 1px dashed var(--line);
+            }
+            .help {
+                font-size: 13px;
+                margin-top: 22px;
+                color: var(--muted);
+            }
+            .help p {
+                margin: 10px 0;
+            }
+            .section {
+                scroll-margin-top: 20px;
+            }
+            #file {
+                display: none;
+            }
+            @media (max-width: 850px) {
+                .workspace {
+                    grid-template-columns: 1fr;
+                }
+                aside {
+                    border-right: 0;
+                    border-bottom: 1px solid var(--line);
+                    padding: 12px;
+                }
+                nav {
+                    grid-template-columns: repeat(2, minmax(0, 1fr));
+                    max-height: 215px;
+                    overflow: auto;
+                }
+                main {
+                    padding: 15px;
+                }
+                header {
+                    padding: 18px;
+                }
+                .task-tools,
+                .notes {
+                    margin-left: 0;
+                }
+                .session-fields > * {
+                    flex: 1;
+                }
+                h1 {
+                    font-size: 23px;
+                }
+            }
+            @media print {
+                body {
+                    background: white;
+                    color: black;
+                }
+                header {
+                    background: white;
+                    color: black;
+                }
+                .workspace {
+                    display: block;
+                }
+                aside,
+                .filters,
+                .pager,
+                .actions,
+                .session,
+                #saveState,
+                #notice {
+                    display: none;
+                }
+                .task {
+                    background: white;
+                    break-inside: avoid;
+                    border-color: #aaa;
+                }
+                .task-tools select {
+                    color: black;
+                    background: white;
+                }
+                .muted,
+                .stamp,
+                .section-progress {
+                    color: #555;
+                }
+                button {
+                    display: none;
+                }
+                textarea {
+                    color: black;
+                    background: white;
+                }
+                .notes[hidden] {
+                    display: block;
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <header>
+            <div class="top">
+                <div>
+                    <h1>PawPrints / Test Log</h1>
+                    <div class="muted">
+                        0.5.38 feature checklist · work through it at your own
+                        pace
+                    </div>
+                </div>
+                <div class="actions">
+                    <button id="export" class="primary">Export progress</button
+                    ><button id="portable">Save portable HTML</button
+                    ><button id="import">Import progress</button
+                    ><input
+                        id="file"
+                        type="file"
+                        accept=".json,application/json"
+                    />
+                </div>
+            </div>
+            <div class="summary">
+                <strong id="total"></strong
+                ><progress
+                    id="progress"
+                    value="0"
+                    max="1"
+                    aria-label="Checklist completion"
+                ></progress
+                ><span id="counts"></span
+                ><span id="saveState" role="status" aria-live="polite"></span
+                ><span id="archiveState" class="small muted"></span>
+            </div>
+        </header>
+        <div id="notice" role="status" aria-live="polite"></div>
+        <div class="workspace">
+            <aside>
+                <nav id="navigation" aria-label="Test sections"></nav>
+                <div class="help">
+                    <p>
+                        Check the box to mark a pass. Use the result menu for a
+                        failure or skipped test. Add notes for reproduction
+                        steps, craft names and screenshot filenames.
+                    </p>
+                    <p>
+                        Progress saves automatically in this browser at this
+                        file location. Keep using the same file and browser.
+                        Export a backup before clearing browser data or moving
+                        computers.
+                    </p>
+                    <p>
+                        <b>Save portable HTML</b> embeds your current results in
+                        a new copy of this checklist. JSON exports can be
+                        attached to a bug report or shared with another tester.
+                    </p>
+                </div>
+            </aside>
+            <main>
+                <div class="session">
+                    <div class="session-fields">
+                        <label class="field"
+                            >Build being tested<input
+                                id="build"
+                                value=""
+                                placeholder="PawPrints version"
+                                maxlength="80" /></label
+                        ><label class="field"
+                            >Current craft<select id="craft">
+                                <option>Lander 1</option>
+                                <option>Gemini</option>
+                                <option>Rocket</option>
+                                <option>Other / mixed</option>
+                            </select></label
+                        ><button id="next" class="primary">
+                            Next untested
+                        </button>
+                    </div>
+                    <details id="sessionDetails">
+                        <summary>Session notes &amp; testing reminders</summary>
+                        <p class="small muted">
+                            Use a lander, a capsule and a rocket across the run.
+                            Enter the PawPrints version being tested; each
+                            result records that version and the selected craft.
+                            The checklist does not detect your installed
+                            version.
+                        </p>
+                        <textarea
+                            id="sessionNotes"
+                            aria-label="Session notes"
+                            placeholder="Where you left off, session dates, general observations…"
+                        ></textarea>
+                        <p class="small muted">
+                            Recapturing a craft starts a fresh undo history;
+                            accepted paper-size changes remain undoable.
+                            Editable sheets do not yet persist across game
+                            restarts; PNG export is an image, not a project
+                            save. Save your print before ending a game session.
+                        </p>
+                    </details>
+                </div>
+                <div class="filters">
+                    <input
+                        id="search"
+                        type="search"
+                        placeholder="Search all tests and notes…"
+                        aria-label="Search all tests and notes"
+                    /><select id="filter" aria-label="Filter results">
+                        <option value="all">All results</option>
+                        <option value="pending">Untested</option>
+                        <option value="fail">Failed</option>
+                        <option value="pass">Passed</option>
+                        <option value="skip">Skipped</option>
+                        <option value="notes">With notes</option>
+                    </select>
+                </div>
+                <div id="tests"></div>
+                <div class="pager">
+                    <button id="previous">← Previous section</button
+                    ><button id="following">Next section →</button>
+                </div>
+            </main>
+        </div>
+        <script id="embedded-progress" type="application/json">
+            null
+        </script>
+        <script>
+            "use strict";
+            // IDs remain stable so saved results and imported backups keep their meaning.
+            const sections = [
+                {
+                    id: 1,
+                    name: "Opening and navigation",
+                    items: [
+                        {
+                            id: "1.1",
+                            text: "Open through Editor > Open PawPrint Editor.",
+                        },
+                        { id: "1.2", text: "Open through Ctrl+Alt+P." },
+                        {
+                            id: "1.3",
+                            text: "With no vehicle loaded, the menu and hotkey do not open PawPrints; hovering the disabled menu entry shows No vehicle loaded.",
+                        },
+                        {
+                            id: "1.4",
+                            text: "Switch between Layout / Place / Title Block / Preferences.",
+                        },
+                        {
+                            id: "1.5",
+                            text: "Return using Back to editor, then reopen.",
+                        },
+                        {
+                            id: "1.6",
+                            text: "Resize the game window: controls remain accessible.",
+                        },
+                        {
+                            id: "1.7",
+                            text: "Confirm only one KSA instance is running.",
+                        },
+                    ],
+                },
+                {
+                    id: 2,
+                    name: "Preview navigation",
+                    items: [
+                        {
+                            id: "2.1",
+                            text: "Mouse-wheel zoom follows the pointer.",
+                        },
+                        {
+                            id: "2.2",
+                            text: "Space + drag pans; the PawPrints window itself stays fixed.",
+                        },
+                        { id: "2.3", text: "Fit page shows the entire sheet." },
+                        {
+                            id: "2.5",
+                            text: "Actual pixels shows the print at pixel size.",
+                        },
+                        {
+                            id: "2.6",
+                            text: "Zooming/panning changes neither exported scale nor object positions.",
+                        },
+                        {
+                            id: "2.7",
+                            text: "Navigating during placement does not accidentally place something.",
+                        },
+                    ],
+                },
+                {
+                    id: 3,
+                    name: "Paper, background and zones",
+                    items: [
+                        {
+                            id: "3.1",
+                            text: "Try every available ratio in Portrait and Landscape, plus Square.",
+                        },
+                        {
+                            id: "3.2",
+                            text: "Try each desktop preset and one custom portrait and landscape size.",
+                        },
+                        {
+                            id: "3.3",
+                            text: "Invalid custom dimensions produce a useful message.",
+                        },
+                        {
+                            id: "3.4",
+                            text: "Test Blue / White / Cream / Charcoal.",
+                        },
+                        { id: "3.5", text: "Toggle graph paper." },
+                        {
+                            id: "3.7",
+                            text: "Test Archival wear Off and levels 1 through 5.",
+                        },
+                        { id: "3.8", text: "Confirm Zoned sheet defaults on." },
+                        {
+                            id: "3.9",
+                            text: "Toggle zones: the underlying grid must not change.",
+                        },
+                        {
+                            id: "3.10",
+                            text: "Check zone letters, numbers, outward ticks and solid lower-right corner.",
+                        },
+                        {
+                            id: "3.11",
+                            text: "Confirm no unwanted outer perimeter surrounds the zones.",
+                        },
+                        {
+                            id: "3.12",
+                            text: "Check text and line contrast in all four themes.",
+                        },
+                    ],
+                },
+                {
+                    id: 4,
+                    name: "Templates",
+                    items: [
+                        {
+                            id: "4.1",
+                            text: "Open the template gallery after choosing paper shape/ratio.",
+                        },
+                        {
+                            id: "4.2",
+                            text: "Single-click selects; double-click generates.",
+                        },
+                        {
+                            id: "4.3",
+                            text: "Try each template, including single view, rows, columns and mixed arrangements.",
+                        },
+                        {
+                            id: "4.4",
+                            text: "Check template thumbnails clearly distinguish orthographic and isometric views.",
+                        },
+                        {
+                            id: "4.6",
+                            text: "Check automatic fitting uses reasonable available space.",
+                        },
+                        {
+                            id: "4.8",
+                            text: "Browse templates, then return to the existing print without applying one.",
+                        },
+                    ],
+                },
+                {
+                    id: 5,
+                    name: "Primary and independent views",
+                    items: [
+                        {
+                            id: "5.1",
+                            text: "Place a primary view using each available camera direction.",
+                        },
+                        {
+                            id: "5.2",
+                            text: "Change its scale before placement and use Preview scale.",
+                        },
+                        {
+                            id: "5.3",
+                            text: "Preview matches the committed drawing’s size and location.",
+                        },
+                        {
+                            id: "5.4",
+                            text: "Cancel placement with right-click or the Cancel placement button.",
+                        },
+                        {
+                            id: "5.5",
+                            text: "Add an independent isometric view through the right-click menu.",
+                        },
+                        {
+                            id: "5.6",
+                            text: "Place views against the top and side borders.",
+                        },
+                        {
+                            id: "5.7",
+                            text: "Place a view with its caption footprint touching the title-block rule.",
+                        },
+                        {
+                            id: "5.8",
+                            text: "Confirm clear, inside-border placements are accepted.",
+                        },
+                        {
+                            id: "5.9",
+                            text: "Confirm genuine collisions/outside-border placements explain the problem.",
+                        },
+                        {
+                            id: "5.10",
+                            text: "Change shared drawing scale: all main views change together; details remain independent.",
+                        },
+                        {
+                            id: "5.11",
+                            text: "Use Adjust Scale from the view context menu; the fit marker and Use max fit agree with valid placement.",
+                        },
+                        {
+                            id: "5.12",
+                            text: "Dragging beyond the fit marker warns and keeps the last valid drawing.",
+                        },
+                    ],
+                },
+                {
+                    id: 6,
+                    name: "Projected views and movement",
+                    items: [
+                        {
+                            id: "6.1",
+                            text: "Select Third-angle in Preferences, then project above, below, left and right.",
+                        },
+                        {
+                            id: "6.2",
+                            text: "Repeat using First-angle; directions reverse appropriately.",
+                        },
+                        {
+                            id: "6.3",
+                            text: "Move the parent: linked views and their annotations move and stay moved after release.",
+                        },
+                        {
+                            id: "6.4",
+                            text: "Project from a projected view, including a top/bottom view.",
+                        },
+                        {
+                            id: "6.5",
+                            text: "Move diagonally to obtain an isometric/corner preview.",
+                        },
+                        {
+                            id: "6.6",
+                            text: "Return near an axis: the preview becomes orthographic again without flickering.",
+                        },
+                        {
+                            id: "6.7",
+                            text: "Project from a three-quarter/isometric source.",
+                        },
+                        {
+                            id: "6.8",
+                            text: "Disable Roll from source and select a camera manually.",
+                        },
+                        {
+                            id: "6.9",
+                            text: "Unlock alignment, then move that view independently.",
+                        },
+                        {
+                            id: "6.10",
+                            text: "Repeat movement with custom-positioned tables already on the sheet.",
+                        },
+                        {
+                            id: "6.11",
+                            text: "Cancel a drag: original positions remain intact.",
+                        },
+                    ],
+                },
+                {
+                    id: 7,
+                    name: "Captions, snapping and view deletion",
+                    items: [
+                        {
+                            id: "7.1",
+                            text: "Captions sit centered below their drawings.",
+                        },
+                        {
+                            id: "7.2",
+                            text: "Right-click a caption and change its text size.",
+                        },
+                        {
+                            id: "7.3",
+                            text: "Snap main and exploded captions into horizontal rows.",
+                        },
+                        {
+                            id: "7.4",
+                            text: "Snap their centers into vertical alignment.",
+                        },
+                        {
+                            id: "7.5",
+                            text: "Disable snapping and move freely.",
+                        },
+                        {
+                            id: "7.6",
+                            text: "Snapping behaves consistently at different preview zoom levels.",
+                        },
+                        {
+                            id: "7.7",
+                            text: "Select a secondary view and delete it using Delete.",
+                        },
+                        {
+                            id: "7.8",
+                            text: "Delete the primary: remaining views stay put.",
+                        },
+                        {
+                            id: "7.9",
+                            text: "Delete the last main view, then place a new primary.",
+                        },
+                        {
+                            id: "7.10",
+                            text: "Undo/redo deletion restores/removes the view and its attached notes correctly.",
+                        },
+                    ],
+                },
+                {
+                    id: 8,
+                    name: "Part labels and leaders",
+                    items: [
+                        {
+                            id: "8.1",
+                            text: "Hover parts: correct part highlights and name appears.",
+                        },
+                        {
+                            id: "8.2",
+                            text: "Place labels by dragging, click-to-place, and right-click > Add label.",
+                        },
+                        {
+                            id: "8.3",
+                            text: "Placement does not commit prematurely against the part.",
+                        },
+                        {
+                            id: "8.4",
+                            text: "Move label text freely, including far away or inside the craft silhouette.",
+                        },
+                        {
+                            id: "8.5",
+                            text: "Drag the craft endpoint independently.",
+                        },
+                        {
+                            id: "8.6",
+                            text: "Automatic attachment finds the visible near edge, including small engines and tanks.",
+                        },
+                        {
+                            id: "8.7",
+                            text: "No endpoint stops short or unexpectedly attaches to the far side.",
+                        },
+                        {
+                            id: "8.8",
+                            text: "Plain-text leaders meet the appropriate text side with a small gap.",
+                        },
+                        {
+                            id: "8.9",
+                            text: "Boxed keys connect sensibly to the box edge.",
+                        },
+                        { id: "8.10", text: "Test Dotted / Dashed / Solid." },
+                        {
+                            id: "8.11",
+                            text: "Test Dot / Filled triangle / Outline triangle / None.",
+                        },
+                        {
+                            id: "8.12",
+                            text: "Compare label, flagnote and engine-block leaders: matching styles should look identical.",
+                        },
+                        { id: "8.13", text: "Override one label’s style." },
+                        {
+                            id: "8.14",
+                            text: "Use Automatic leader after manually moving an endpoint.",
+                        },
+                        {
+                            id: "8.15",
+                            text: "Edit label text; toggle visibility.",
+                        },
+                        {
+                            id: "8.16",
+                            text: "Toggle quantities globally and on an individual repeated-part label.",
+                        },
+                        {
+                            id: "8.17",
+                            text: "Check quantities in main views and exploded details.",
+                        },
+                        {
+                            id: "8.18",
+                            text: "Delete using the button and Del while hovered/selected.",
+                        },
+                    ],
+                },
+                {
+                    id: 10,
+                    name: "Flagnotes",
+                    items: [
+                        {
+                            id: "10.1",
+                            text: "Place the Remove before flight preset.",
+                        },
+                        {
+                            id: "10.2",
+                            text: "Custom flow: choose Custom > place start > place end > enter text.",
+                        },
+                        {
+                            id: "10.3",
+                            text: "The custom text popup appears over the KSA window after positioning the leader.",
+                        },
+                        { id: "10.4", text: "Confirm by button and Enter." },
+                        {
+                            id: "10.5",
+                            text: "Empty text cannot silently create an empty note.",
+                        },
+                        {
+                            id: "10.6",
+                            text: "Cancel during geometry placement and during text entry.",
+                        },
+                        {
+                            id: "10.7",
+                            text: "Move either leader endpoint after placement.",
+                        },
+                        {
+                            id: "10.8",
+                            text: "Edit/delete a note and verify its table entry updates.",
+                        },
+                        {
+                            id: "10.9",
+                            text: "Undo/redo creates or removes the whole note coherently.",
+                        },
+                        {
+                            id: "10.10",
+                            text: "The first flagnote is F1 regardless of the number of parts or part labels.",
+                        },
+                        {
+                            id: "10.11",
+                            text: "After adding, hiding and deleting notes, table keys still match their leaders.",
+                        },
+                    ],
+                },
+                {
+                    id: 11,
+                    name: "Parts and flagnotes tables",
+                    items: [
+                        {
+                            id: "11.1",
+                            text: "Enable Parts Table and Flagnotes Table in Layout before generation; both appear near the upper-right without overlapping.",
+                        },
+                        {
+                            id: "11.2",
+                            text: "Check part names, letter keys and quantities.",
+                        },
+                        {
+                            id: "11.3",
+                            text: "Check the flagnote table contains only placed notes.",
+                        },
+                        { id: "11.4", text: "Drag each table and resize it." },
+                        {
+                            id: "11.5",
+                            text: "Narrow tables wrap text without clipping rows.",
+                        },
+                        {
+                            id: "11.6",
+                            text: "Snap tables to one another and to exploded frames.",
+                        },
+                        {
+                            id: "11.7",
+                            text: "Tables cannot overlap one another.",
+                        },
+                        {
+                            id: "11.8",
+                            text: "Place a table against the sheet border: border and ticks remain visible.",
+                        },
+                        {
+                            id: "11.9",
+                            text: "Click blank paper outside a table to deselect it.",
+                        },
+                        {
+                            id: "11.10",
+                            text: "Right-click during a table drag cancels the move or resize.",
+                        },
+                        {
+                            id: "11.11",
+                            text: "Remove/re-add tables; undo/redo movement and resizing.",
+                        },
+                    ],
+                },
+                {
+                    id: 12,
+                    name: "Exploded details",
+                    items: [
+                        {
+                            id: "12.1",
+                            text: "Right-click a part and choose Add exploded detail view.",
+                        },
+                        {
+                            id: "12.2",
+                            text: "Move assembly scope up the tree; inclusion highlighting matches the selection.",
+                        },
+                        {
+                            id: "12.3",
+                            text: "Place multiple details and change their captions/cameras.",
+                        },
+                        {
+                            id: "12.4",
+                            text: "Default separation keeps insulation, capsule windows and fittings with their actual part.",
+                        },
+                        {
+                            id: "12.5",
+                            text: "The root stays fixed; other parts separate along root X/Y/Z axes.",
+                        },
+                        {
+                            id: "12.6",
+                            text: "Concentric shell groups stay aligned with the assembly root.",
+                        },
+                        {
+                            id: "12.7",
+                            text: "Adjust overall separation and spread axis.",
+                        },
+                        {
+                            id: "12.8",
+                            text: "Select a group, change its axis and drag it.",
+                        },
+                        {
+                            id: "12.9",
+                            text: "Hide a group; reset its position.",
+                        },
+                        {
+                            id: "12.10",
+                            text: "Explicitly Expand model components, then Restore whole parts.",
+                        },
+                        { id: "12.11", text: "Toggle assembly guide lines." },
+                        {
+                            id: "12.12",
+                            text: "Move the whole detail by its caption.",
+                        },
+                        {
+                            id: "12.13",
+                            text: "Resize its box: spread changes while part size stays fixed.",
+                        },
+                        {
+                            id: "12.14",
+                            text: "Change Part scale 1: part sizes change while their centers stay fixed.",
+                        },
+                        {
+                            id: "12.15",
+                            text: "Combine a tighter box with larger parts.",
+                        },
+                        {
+                            id: "12.16",
+                            text: "An impossible fit preserves the previous valid drawing.",
+                        },
+                        {
+                            id: "12.17",
+                            text: "Click blank space inside or outside a detail frame to deselect it.",
+                        },
+                        {
+                            id: "12.18",
+                            text: "Cancel an active detail move or resize with right-click; the original frame remains intact.",
+                        },
+                        {
+                            id: "12.19",
+                            text: "Add labels and flagnotes to exploded parts.",
+                        },
+                        {
+                            id: "12.20",
+                            text: "Check small-scale detail clarity and centered bottom caption.",
+                        },
+                        {
+                            id: "12.21",
+                            text: "Selection borders/grips do not appear in the exported PNG.",
+                        },
+                        {
+                            id: "12.22",
+                            text: "Delete a detail; undo/redo its edits and deletion.",
+                        },
+                    ],
+                },
+                {
+                    id: 13,
+                    name: "Part posing",
+                    items: [
+                        {
+                            id: "13.1",
+                            text: "Adjust Pose is disabled on parts without supported movement.",
+                        },
+                        {
+                            id: "13.2",
+                            text: "Test landing gear, solar panels and bays where available.",
+                        },
+                        {
+                            id: "13.3",
+                            text: "Use endpoint buttons and intermediate slider positions.",
+                        },
+                        {
+                            id: "13.4",
+                            text: "Release at 90%, then 100%: each completed slide refreshes the preview.",
+                        },
+                        {
+                            id: "13.5",
+                            text: "All views updates main views and details.",
+                        },
+                        {
+                            id: "13.6",
+                            text: "This view only changes only the targeted view.",
+                        },
+                        {
+                            id: "13.7",
+                            text: "Keep symmetry defaults on and updates linked counterparts.",
+                        },
+                        {
+                            id: "13.8",
+                            text: "Disable symmetry and pose one member independently.",
+                        },
+                        {
+                            id: "13.9",
+                            text: "Reset to captured pose; undo/redo.",
+                        },
+                        {
+                            id: "13.10",
+                            text: "Return to the Vehicle Editor: the actual craft remains unchanged.",
+                        },
+                    ],
+                },
+                {
+                    id: 14,
+                    name: "Engine specifications",
+                    items: [
+                        {
+                            id: "14.1",
+                            text: "Use Place > Part Specs or right-click > Add engine specs in main and exploded views.",
+                        },
+                        {
+                            id: "14.2",
+                            text: "Test Compact table and Stacked metrics.",
+                        },
+                        {
+                            id: "14.3",
+                            text: "Show VAC only, ASL only, then both.",
+                        },
+                        {
+                            id: "14.4",
+                            text: "Toggle each field: name, quantity, thrust, Isp, propellants, throttle, gimbal, flow and dry mass.",
+                        },
+                        {
+                            id: "14.5",
+                            text: "Test grouping identical engines.",
+                        },
+                        {
+                            id: "14.6",
+                            text: "Compare per-engine and combined-group ratings.",
+                        },
+                        {
+                            id: "14.7",
+                            text: "Test value inside bar, value before bar and value only.",
+                        },
+                        {
+                            id: "14.8",
+                            text: "Override an individual metric’s style and bar maximum.",
+                        },
+                        {
+                            id: "14.9",
+                            text: "Return bar maximum to automatic.",
+                        },
+                        {
+                            id: "14.10",
+                            text: "Gimbal diagrams show the main nozzle limits and fit beside the throttle/gimbal text.",
+                        },
+                        {
+                            id: "14.11",
+                            text: "Toggle border, paper background and reference notes; change text size.",
+                        },
+                        {
+                            id: "14.12",
+                            text: "Enable a leader; move the block around the craft.",
+                        },
+                        {
+                            id: "14.13",
+                            text: "Check clear routing, up to two bends and a horizontal block approach.",
+                        },
+                        {
+                            id: "14.14",
+                            text: "Resize narrowly: values remain readable or fall back to text.",
+                        },
+                        {
+                            id: "14.15",
+                            text: "Right-click to edit; cancel, apply, delete and undo/redo.",
+                        },
+                    ],
+                },
+                {
+                    id: 15,
+                    name: "Vehicle performance",
+                    items: [
+                        {
+                            id: "15.1",
+                            text: "Use Place > Vehicle Specs to add a vehicle block; remove it through its context settings.",
+                        },
+                        {
+                            id: "15.2",
+                            text: "Try all-installed, each available stage and custom-engine scopes.",
+                        },
+                        {
+                            id: "15.3",
+                            text: "Select/deselect engines in custom scope.",
+                        },
+                        {
+                            id: "15.4",
+                            text: "Toggle mass, stored substances, thrust, Isp, TWR, burn duration and delta-v.",
+                        },
+                        {
+                            id: "15.5",
+                            text: "Toggle dimensions, part count and substance loading.",
+                        },
+                        {
+                            id: "15.6",
+                            text: "Exercise the same formats, bars and appearance controls as engine blocks.",
+                        },
+                        {
+                            id: "15.7",
+                            text: "Unavailable estimates say unavailable rather than showing invented numbers.",
+                        },
+                        {
+                            id: "15.8",
+                            text: "Compare displayed ratings against KSA where comparable.",
+                        },
+                        {
+                            id: "15.9",
+                            text: "Move, resize, snap, remove and undo/redo.",
+                        },
+                        {
+                            id: "15.10",
+                            text: "Regenerate: scope, fields and placement survive.",
+                        },
+                    ],
+                },
+                {
+                    id: 16,
+                    name: "Height dimensions and scale references",
+                    items: [
+                        {
+                            id: "16.1",
+                            text: "Place a height dimension on each eligible view.",
+                        },
+                        {
+                            id: "16.2",
+                            text: "Check metre value and bracket endpoints.",
+                        },
+                        {
+                            id: "16.3",
+                            text: "Drag by the number, bracket and end ticks.",
+                        },
+                        {
+                            id: "16.4",
+                            text: "Move it across the craft or between views; measurement stays attached to its source.",
+                        },
+                        {
+                            id: "16.5",
+                            text: "Adjust gap, cancel a drag, remove and undo/redo.",
+                        },
+                        {
+                            id: "16.6",
+                            text: "Add kittens through Place > Kitten for Scale with Side and Isometric projections.",
+                        },
+                        {
+                            id: "16.7",
+                            text: "Test Solid silhouette and Blueprint outline.",
+                        },
+                        {
+                            id: "16.8",
+                            text: "Check helmet-free appearance and scale relative to the craft.",
+                        },
+                        {
+                            id: "16.9",
+                            text: "Move kittens; change an existing kitten’s projection/style.",
+                        },
+                        {
+                            id: "16.10",
+                            text: "Remove, undo/redo and regenerate without losing them.",
+                        },
+                        {
+                            id: "16.11",
+                            text: "Add an upright 40 cm banana through Place > Banana for Scale.",
+                        },
+                        {
+                            id: "16.12",
+                            text: "Right-click Side, Three-quarter and Isometric views: Place kitten for scale matches each view.",
+                        },
+                        {
+                            id: "16.13",
+                            text: "Use F to flip a selected or hovered scale reference left/right.",
+                        },
+                        {
+                            id: "16.14",
+                            text: "Use the context menu to flip a reference up/down.",
+                        },
+                        {
+                            id: "16.15",
+                            text: "Delete both kitten and banana with Delete; undo/redo restores or removes each.",
+                        },
+                    ],
+                },
+                {
+                    id: 17,
+                    name: "Text boxes and formatting",
+                    items: [
+                        {
+                            id: "17.1",
+                            text: "Choose Place > Text Box, drag a rectangle, then enter multiline text with blank lines.",
+                        },
+                        {
+                            id: "17.2",
+                            text: "Select one word and make only that word bold.",
+                        },
+                        {
+                            id: "17.3",
+                            text: "Select one line and underline only that line.",
+                        },
+                        { id: "17.4", text: "Italicize another selection." },
+                        {
+                            id: "17.5",
+                            text: "Combine bold, italic and underline on the same selection.",
+                        },
+                        {
+                            id: "17.6",
+                            text: "Toggle one style off without removing the others.",
+                        },
+                        {
+                            id: "17.7",
+                            text: "With nothing selected, toggle a style and type new text.",
+                        },
+                        {
+                            id: "17.8",
+                            text: "Insert text before, inside and after formatted words.",
+                        },
+                        {
+                            id: "17.9",
+                            text: "Replace/delete formatted selections; neighboring styles stay intact.",
+                        },
+                        {
+                            id: "17.10",
+                            text: "The editor displays the actual styled text; there is no separate preview pane.",
+                        },
+                        {
+                            id: "17.11",
+                            text: "Change the size of selected text independently and test Left/Center/Right alignment.",
+                        },
+                        {
+                            id: "17.12",
+                            text: "Change whole-box size and Left/Center/Right alignment.",
+                        },
+                        {
+                            id: "17.13",
+                            text: "Accept places text in the drawn rectangle; Cancel discards the draft.",
+                        },
+                        {
+                            id: "17.14",
+                            text: "Resize width and height; text wraps and formatting survives, while boxes too small for the text are rejected.",
+                        },
+                        {
+                            id: "17.15",
+                            text: "Move and resize wrapping width; styles survive wrapping.",
+                        },
+                        {
+                            id: "17.16",
+                            text: "Double-click and right-click to edit an existing box.",
+                        },
+                        {
+                            id: "17.17",
+                            text: "Deselect, delete, undo/redo and regenerate.",
+                        },
+                        {
+                            id: "17.18",
+                            text: "Export: partial formatting matches the preview.",
+                        },
+                        {
+                            id: "17.19",
+                            text: "Use Ctrl+B, Ctrl+I and Ctrl+U on selected text and on newly typed text.",
+                        },
+                        {
+                            id: "17.20",
+                            text: "Use several font sizes within one box and verify export matches the editor.",
+                        },
+                        {
+                            id: "17.21",
+                            text: "Snap text-box edges to frames, tables and other text boxes.",
+                        },
+                        {
+                            id: "17.22",
+                            text: "Toggle Outline: snapping still uses the full box rectangle.",
+                        },
+                        {
+                            id: "17.23",
+                            text: "Overlapping placement or resizing is rejected without losing the previous text.",
+                        },
+                        {
+                            id: "17.24",
+                            text: "The text editor opens centered on the KSA window.",
+                        },
+                    ],
+                },
+                {
+                    id: 18,
+                    name: "Title block, branding and logos",
+                    items: [
+                        {
+                            id: "18.1",
+                            text: "Test Title / Signoffs / Company tab order.",
+                        },
+                        {
+                            id: "18.2",
+                            text: "Edit company, title, subtitle and revision.",
+                        },
+                        {
+                            id: "18.3",
+                            text: "Check title/subtitle/scale alignment and centered, equal-size REV cells.",
+                        },
+                        {
+                            id: "18.4",
+                            text: "Test calculated scale and custom scale text.",
+                        },
+                        {
+                            id: "18.5",
+                            text: "Edit creator/approver names, dates and initials independently.",
+                        },
+                        {
+                            id: "18.6",
+                            text: "Test every handwriting option and both initials-size controls.",
+                        },
+                        {
+                            id: "18.7",
+                            text: "Initials barely overlap the end of INITIAL rather than obscuring it.",
+                        },
+                        {
+                            id: "18.8",
+                            text: "Try blank and invalid dates; invalid input gets a useful message.",
+                        },
+                        { id: "18.9", text: "Import PNG logos (transparent, monochrome and colour)." },
+                        {
+                            id: "18.10",
+                            text: "Use Company > Open logo folder to add a file, then Scan logo folder for new files.",
+                        },
+                        {
+                            id: "18.11",
+                            text: "Try wide, square and tall logos: preserved proportions, no cropping.",
+                        },
+                        {
+                            id: "18.12",
+                            text: "Check suggested logo pixel dimensions.",
+                        },
+                        {
+                            id: "18.13",
+                            text: "Pure black/white single-color logos follow all four themes.",
+                        },
+                        {
+                            id: "18.14",
+                            text: "Two-color logos retain their colors.",
+                        },
+                        {
+                            id: "18.15",
+                            text: "Remove a logo; cancel file selection; try an invalid file.",
+                        },
+                        {
+                            id: "18.16",
+                            text: "Check the fixed four-paw branding and fully italic generation credit.",
+                        },
+                        {
+                            id: "18.17",
+                            text: "Check current version and export date on the saved drawing.",
+                        },
+                        {
+                            id: "18.18",
+                            text: "Type percent signs and Unicode in title, subtitle, revision and names; Tab between fields without a crash.",
+                        },
+                        {
+                            id: "18.19",
+                            text: "Generate and export with long titles and company names; content fits its cells.",
+                        },
+                    ],
+                },
+                {
+                    id: 19,
+                    name: "Regeneration, history and export",
+                    items: [
+                        {
+                            id: "19.1",
+                            text: "Build a sheet containing views, labels, flagnotes, tables, details, poses, specs, heights, scale references and text.",
+                        },
+                        {
+                            id: "19.2",
+                            text: "Generate PawPrint: every compatible item and its placement survives.",
+                        },
+                        {
+                            id: "19.3",
+                            text: "Change theme and regenerate: all objects remain.",
+                        },
+                        {
+                            id: "19.4",
+                            text: "Change paper shape/ratio and generate: views fit the new page while keeping their identities and links; incompatible content retains the previous print.",
+                        },
+                        {
+                            id: "19.5",
+                            text: "Undo/redo a mixed sequence of moves, edits, additions and deletions before regenerating.",
+                        },
+                        {
+                            id: "19.6",
+                            text: "Save PNG and open its folder through View exported drawings.",
+                        },
+                        {
+                            id: "19.7",
+                            text: "Check actual pixel dimensions, especially custom desktop sizes.",
+                        },
+                        {
+                            id: "19.8",
+                            text: "Compare exported positions, text, colors, leaders and detail against the preview.",
+                        },
+                        {
+                            id: "19.9",
+                            text: "Confirm selection outlines, handles and alignment guides are absent.",
+                        },
+                        {
+                            id: "19.10",
+                            text: "Save again: confirm the new output is accessible and correct.",
+                        },
+                        {
+                            id: "19.11",
+                            text: "Undo and redo a paper orientation/ratio change after the updated print is accepted.",
+                        },
+                    ],
+                },
+                {
+                    id: 20,
+                    name: "Longer-session behavior",
+                    items: [
+                        {
+                            id: "20.1",
+                            text: "Open and close PawPrints repeatedly.",
+                        },
+                        {
+                            id: "20.2",
+                            text: "Generate several prints and repeatedly edit text, pose parts and move details.",
+                        },
+                        {
+                            id: "20.3",
+                            text: "Watch for increasing lag, memory growth or a permanently busy state.",
+                        },
+                        {
+                            id: "20.4",
+                            text: "Switch between the three craft and check for stale names, geometry or part references.",
+                        },
+                        {
+                            id: "20.5",
+                            text: "Return to ordinary game use: input, fonts and responsiveness remain normal.",
+                        },
+                        {
+                            id: "20.6",
+                            text: "After restarting, drawn-by name/initials, company and logo persist; approver resets to Dymnd H. K. with DHK initials.",
+                        },
+                    ],
+                },
+                {
+                    id: 21,
+                    name: "Preferences and shortcuts",
+                    items: [
+                        {
+                            id: "21.1",
+                            text: "Live preview updates defaults off for a new profile.",
+                        },
+                        {
+                            id: "21.2",
+                            text: "With live updates off, menu changes wait for Generate PawPrint.",
+                        },
+                        {
+                            id: "21.3",
+                            text: "With live updates on, background, title and menu changes update after a short pause or slider release.",
+                        },
+                        {
+                            id: "21.4",
+                            text: "Placement and accepted object edits update immediately in either mode.",
+                        },
+                        {
+                            id: "21.5",
+                            text: "The live-update preference survives a game restart.",
+                        },
+                        {
+                            id: "21.6",
+                            text: "Snapping, leader styles, endpoints and projection settings are in Preferences.",
+                        },
+                        {
+                            id: "21.7",
+                            text: "Hotkeys match the listed actions; typing in a text field does not delete or flip canvas objects.",
+                        },
+                        {
+                            id: "21.8",
+                            text: "Escape is not consumed as a PawPrints editing shortcut.",
+                        },
+                    ],
+                },
+                {
+                    id: 22,
+                    name: "Export destination and diagnostics",
+                    items: [
+                        {
+                            id: "22.1",
+                            text: "A new profile prompts for an export folder on first opening.",
+                        },
+                        {
+                            id: "22.2",
+                            text: "Cancel the folder prompt: editing remains available, and saving asks for a destination.",
+                        },
+                        {
+                            id: "22.3",
+                            text: "Choose a folder, save a PNG, and confirm the destination survives a game restart.",
+                        },
+                        {
+                            id: "22.4",
+                            text: "Change export folder selects a new destination without moving previous exports.",
+                        },
+                        {
+                            id: "22.5",
+                            text: "A missing or disconnected destination produces a popup and leaves existing files intact.",
+                        },
+                        {
+                            id: "22.6",
+                            text: "Saving twice creates distinct files without overwriting the earlier print.",
+                        },
+                        {
+                            id: "22.7",
+                            text: "View exported drawings opens the selected destination.",
+                        },
+                        {
+                            id: "22.8",
+                            text: "After an error, inspect logs/PawPrints.log: actions are useful and typed drawing text is absent.",
+                        },
+                    ],
+                },
+            ];
+            // Retain results for removed checks in backups without counting them as current tests.
+            const archivedIds = new Set([
+                "2.4",
+                "3.6",
+                "4.5",
+                "4.7",
+                "9.1",
+                "9.2",
+                "9.3",
+                "9.4",
+                "9.5",
+                "9.6",
+            ]);
+            const tasks = sections.flatMap((s) => s.items),
+                ids = new Set(tasks.map((t) => t.id));
+            const KEY = "pawprints-manual-tests-v1",
+                SCHEMA = "pawprints-manual-tests-v1";
+            const $ = (id) => document.getElementById(id),
+                labels = {
+                    pending: "Untested",
+                    pass: "Passed",
+                    fail: "Failed",
+                    skip: "Skipped",
+                };
+            let state = {
+                    schema: SCHEMA,
+                    updated: "",
+                    build: "",
+                    craft: "Lander 1",
+                    sessionNotes: "",
+                    section: 1,
+                    results: {},
+                },
+                storageOK = true;
+            function validate(raw) {
+                if (
+                    !raw ||
+                    raw.schema !== SCHEMA ||
+                    !raw.results ||
+                    typeof raw.results !== "object" ||
+                    Array.isArray(raw.results)
+                )
+                    throw Error("This is not a PawPrints checklist backup.");
+                const out = {
+                    schema: SCHEMA,
+                    updated: typeof raw.updated === "string" ? raw.updated : "",
+                    build: String(raw.build ?? "").slice(0, 80),
+                    craft: [
+                        "Lander 1",
+                        "Gemini",
+                        "Rocket",
+                        "Other / mixed",
+                    ].includes(raw.craft)
+                        ? raw.craft
+                        : "Other / mixed",
+                    sessionNotes: String(raw.sessionNotes ?? "").slice(
+                        0,
+                        100000,
+                    ),
+                    section:
+                        raw.section === 0 ||
+                        sections.some((s) => s.id === raw.section)
+                            ? raw.section
+                            : 1,
+                    results: {},
+                };
+                for (const [id, r] of Object.entries(raw.results)) {
+                    if (!ids.has(id) && !archivedIds.has(id))
+                        throw Error(
+                            "Unknown test " +
+                                id +
+                                ". This backup may need a newer checklist.",
+                        );
+                    if (
+                        !r ||
+                        !Object.hasOwn(labels, r.status) ||
+                        typeof r.notes !== "string"
+                    )
+                        throw Error("Invalid result for " + id + ".");
+                    out.results[id] = {
+                        status: r.status,
+                        notes: r.notes.slice(0, 100000),
+                        build: String(r.build ?? "").slice(0, 80),
+                        craft: String(r.craft ?? "").slice(0, 80),
+                        updated: String(r.updated ?? "").slice(0, 80),
+                    };
+                }
+                return out;
+            }
+            try {
+                const embedded = JSON.parse($("embedded-progress").textContent);
+                if (embedded) state = validate(embedded);
+            } catch (e) {
+                $("notice").textContent =
+                    "Embedded backup could not be read: " + e.message;
+            }
+            try {
+                const saved = localStorage.getItem(KEY);
+                if (saved) {
+                    const local = validate(JSON.parse(saved));
+                    if (!state.updated || local.updated >= state.updated)
+                        state = local;
+                }
+            } catch (e) {
+                storageOK = false;
+                $("notice").textContent =
+                    "Browser storage is unavailable or unreadable. Use Export progress or Save portable HTML before closing.";
+            }
+            function result(id) {
+                return (
+                    state.results[id] || {
+                        status: "pending",
+                        notes: "",
+                        build: "",
+                        craft: "",
+                        updated: "",
+                    }
+                );
+            }
+            function save() {
+                state.updated = new Date().toISOString();
+                try {
+                    localStorage.setItem(KEY, JSON.stringify(state));
+                    storageOK = true;
+                    $("saveState").textContent =
+                        "Saved in this browser · " +
+                        new Date().toLocaleTimeString();
+                } catch (e) {
+                    storageOK = false;
+                    $("saveState").textContent =
+                        "Not saved locally — export a backup";
+                    $("notice").textContent =
+                        "Automatic saving failed. Your changes are still on this page. Export progress or save portable HTML before closing.";
+                }
+            }
+            function update(id, patch) {
+                state.results[id] = {
+                    ...result(id),
+                    ...patch,
+                    build: state.build,
+                    craft: state.craft,
+                    updated: new Date().toISOString(),
+                };
+                save();
+                summary();
+            }
+            function el(tag, cls, text) {
+                const n = document.createElement(tag);
+                if (cls) n.className = cls;
+                if (text !== undefined) n.textContent = text;
+                return n;
+            }
+            function summary() {
+                const count = { pending: 0, pass: 0, fail: 0, skip: 0 };
+                tasks.forEach((t) => count[result(t.id).status]++);
+                const archived = Object.keys(state.results).filter((id) =>
+                    archivedIds.has(id),
+                ).length;
+                $("archiveState").textContent = archived
+                    ? `${archived} saved ${archived === 1 ? "result from a retired check is" : "results from retired checks are"} retained in backups.`
+                    : "";
+                const done = tasks.length - count.pending;
+                $("total").textContent = `${done} / ${tasks.length} reviewed`;
+                $("progress").max = tasks.length;
+                $("progress").value = done;
+                $("counts").replaceChildren(
+                    ...["pass", "fail", "skip"].flatMap((k, i) => [
+                        ...(i ? [document.createTextNode(" · ")] : []),
+                        el("span", k, `${count[k]} ${labels[k].toLowerCase()}`),
+                    ]),
+                );
+                document.querySelectorAll("nav button").forEach((b) => {
+                    const s = sections.find(
+                            (s) => s.id === Number(b.dataset.section),
+                        ),
+                        pool = s ? s.items : tasks;
+                    const d = pool.filter(
+                        (t) => result(t.id).status !== "pending",
+                    ).length;
+                    b.querySelector(".count").textContent =
+                        `${d}/${pool.length}`;
+                    b.classList.toggle(
+                        "active",
+                        Number(b.dataset.section) === state.section,
+                    );
+                    b.setAttribute(
+                        "aria-current",
+                        Number(b.dataset.section) === state.section
+                            ? "page"
+                            : "false",
+                    );
+                });
+                document.querySelectorAll(".section").forEach((node) => {
+                    const s = sections.find(
+                            (s) => s.id === Number(node.dataset.section),
+                        ),
+                        shown = node.querySelectorAll(".task").length;
+                    node.querySelector(".section-progress").textContent =
+                        `${s.items.filter((t) => result(t.id).status !== "pending").length} of ${s.items.length} reviewed${shown < s.items.length ? ` · ${shown} shown` : ""}`;
+                });
+            }
+            function go(section) {
+                state.section = section;
+                $("search").value = "";
+                save();
+                render();
+                window.scrollTo(0, 0);
+            }
+            function nav() {
+                const node = $("navigation");
+                node.replaceChildren();
+                for (const s of [{ id: 0, name: "All tests" }, ...sections]) {
+                    const b = el("button");
+                    b.dataset.section = s.id;
+                    b.append(el("span", "", s.name), el("span", "count"));
+                    b.onclick = () => go(s.id);
+                    node.append(b);
+                }
+            }
+            function stamp(r) {
+                return r.updated
+                    ? `${r.build ? "v" + r.build + " · " : ""}${r.craft} · ${new Date(r.updated).toLocaleString()}`
+                    : "";
+            }
+            function card(t) {
+                const r = result(t.id),
+                    article = el("article", "task");
+                article.id = "test-" + t.id;
+                article.dataset.status = r.status;
+                const head = el("div", "task-head"),
+                    check = el("input");
+                check.type = "checkbox";
+                check.id = "check-" + t.id;
+                check.checked = r.status === "pass";
+                check.setAttribute("aria-label", `Mark ${t.id} passed`);
+                const title = el("label", "task-title");
+                title.htmlFor = check.id;
+                title.append(
+                    el("span", "id", t.id),
+                    document.createTextNode(t.text),
+                );
+                head.append(check, title);
+                const tools = el("div", "task-tools"),
+                    select = el("select");
+                select.setAttribute("aria-label", `Result for ${t.id}`);
+                for (const [v, label] of Object.entries(labels)) {
+                    const o = el("option", "", label);
+                    o.value = v;
+                    select.append(o);
+                }
+                select.value = r.status;
+                const noteButton = el(
+                        "button",
+                        "",
+                        r.notes ? "Edit notes" : "Add notes",
+                    ),
+                    time = el("span", "stamp", stamp(r)),
+                    notes = el("div", "notes");
+                notes.id = "notes-" + t.id;
+                notes.hidden = true;
+                noteButton.setAttribute("aria-expanded", "false");
+                noteButton.setAttribute("aria-controls", notes.id);
+                const caption = el("label", "", "Notes / reproduction steps");
+                caption.htmlFor = "note-" + t.id;
+                const area = el("textarea");
+                area.id = caption.htmlFor;
+                area.value = r.notes;
+                area.placeholder =
+                    "What happened? Which craft or setting? Screenshot filename?";
+                area.maxLength = 100000;
+                area.oninput = () => {
+                    update(t.id, { notes: area.value });
+                    noteButton.textContent = area.value
+                        ? "Edit notes"
+                        : "Add notes";
+                    time.textContent = stamp(result(t.id));
+                };
+                noteButton.onclick = () => {
+                    notes.hidden = !notes.hidden;
+                    noteButton.setAttribute(
+                        "aria-expanded",
+                        String(!notes.hidden),
+                    );
+                    if (!notes.hidden) area.focus();
+                };
+                notes.append(caption, area);
+                function setStatus(status) {
+                    update(t.id, { status });
+                    article.dataset.status = status;
+                    select.value = status;
+                    check.checked = status === "pass";
+                    time.textContent = stamp(result(t.id));
+                    if ($("filter").value !== "all") render();
+                }
+                check.onchange = () =>
+                    setStatus(check.checked ? "pass" : "pending");
+                select.onchange = () => setStatus(select.value);
+                tools.append(select, noteButton, time);
+                article.append(head, tools, notes);
+                return article;
+            }
+            function render() {
+                const q = $("search").value.trim().toLowerCase(),
+                    f = $("filter").value;
+                const host = $("tests");
+                host.replaceChildren();
+                let shown = 0;
+                for (const s of sections) {
+                    if (!q && state.section && s.id !== state.section) continue;
+                    const matched = s.items.filter((t) => {
+                        const r = result(t.id);
+                        return (
+                            (!q ||
+                                `${t.id} ${s.name} ${t.text} ${r.notes}`
+                                    .toLowerCase()
+                                    .includes(q)) &&
+                            (f === "all" ||
+                                (f === "notes" && r.notes.trim()) ||
+                                r.status === f)
+                        );
+                    });
+                    if (!matched.length) continue;
+                    const section = el("section", "section");
+                    section.dataset.section = s.id;
+                    section.append(
+                        el("h2", "section-title", s.name),
+                        el("p", "section-progress"),
+                    );
+                    matched.forEach((t) => section.append(card(t)));
+                    host.append(section);
+                    shown += matched.length;
+                }
+                if (!shown)
+                    host.append(
+                        el(
+                            "p",
+                            "empty",
+                            "No tests match this view. Change the filter or select All tests.",
+                        ),
+                    );
+                const current = sections.findIndex(
+                    (s) => s.id === state.section,
+                );
+                $("previous").disabled = current <= 0;
+                $("following").disabled =
+                    current < 0 || current >= sections.length - 1;
+                summary();
+            }
+            function applyState() {
+                $("build").value = state.build;
+                $("craft").value = state.craft;
+                $("sessionNotes").value = state.sessionNotes;
+                nav();
+                render();
+            }
+            $("build").oninput = () => {
+                state.build = $("build").value;
+                save();
+            };
+            $("craft").onchange = () => {
+                state.craft = $("craft").value;
+                save();
+            };
+            $("sessionNotes").oninput = () => {
+                state.sessionNotes = $("sessionNotes").value;
+                save();
+            };
+            $("search").oninput = render;
+            $("filter").onchange = render;
+            $("previous").onclick = () =>
+                go(
+                    sections[
+                        Math.max(
+                            0,
+                            sections.findIndex((s) => s.id === state.section) -
+                                1,
+                        )
+                    ].id,
+                );
+            $("following").onclick = () =>
+                go(
+                    sections[
+                        Math.min(
+                            sections.length - 1,
+                            sections.findIndex((s) => s.id === state.section) +
+                                1,
+                        )
+                    ].id,
+                );
+            $("next").onclick = () => {
+                const start = sections.findIndex((s) => s.id === state.section);
+                const order = [
+                    ...sections.slice(Math.max(0, start)),
+                    ...sections.slice(0, Math.max(0, start)),
+                ];
+                for (const s of order) {
+                    const t = s.items.find(
+                        (t) => result(t.id).status === "pending",
+                    );
+                    if (t) {
+                        $("filter").value = "pending";
+                        go(s.id);
+                        const target = $("test-" + t.id);
+                        target?.scrollIntoView({
+                            block: "center",
+                            behavior: "smooth",
+                        });
+                        target
+                            ?.querySelector("input")
+                            .focus({ preventScroll: true });
+                        return;
+                    }
+                }
+                $("notice").textContent =
+                    "Every test has a result. Use Failed or Skipped to review follow-up work.";
+            };
+            function snapshot() {
+                return {
+                    ...state,
+                    checklistVersion: "0.5.38",
+                    exportedAt: new Date().toISOString(),
+                    catalog: sections,
+                };
+            }
+            function download(contents, type, name) {
+                const url = URL.createObjectURL(new Blob([contents], { type }));
+                const a = el("a");
+                a.href = url;
+                a.download = name;
+                document.body.append(a);
+                a.click();
+                a.remove();
+                setTimeout(() => URL.revokeObjectURL(url), 10000);
+            }
+            function filename(ext) {
+                return (
+                    "pawprints-test-progress-" +
+                    new Date().toISOString().replace(/[:.]/g, "-") +
+                    "." +
+                    ext
+                );
+            }
+            $("export").onclick = () => {
+                download(
+                    JSON.stringify(snapshot(), null, 2),
+                    "application/json",
+                    filename("json"),
+                );
+                $("notice").textContent =
+                    "Progress backup downloaded. Keep it to restore your checklist, or attach it to a bug report.";
+            };
+            $("portable").onclick = () => {
+                const copy = document.documentElement.cloneNode(true);
+                copy.querySelector("#embedded-progress").textContent =
+                    JSON.stringify(snapshot()).replace(/</g, "\\u003c");
+                copy.querySelector("#tests").replaceChildren();
+                copy.querySelector("#navigation").replaceChildren();
+                copy.querySelector("#notice").textContent = "";
+                download(
+                    "<!doctype html>\n" + copy.outerHTML,
+                    "text/html",
+                    filename("html"),
+                );
+                $("notice").textContent =
+                    "Portable HTML downloaded with your current progress embedded. Open that file to continue elsewhere.";
+            };
+            $("import").onclick = () => $("file").click();
+            $("file").onchange = async () => {
+                try {
+                    const file = $("file").files[0];
+                    if (!file) return;
+                    if (file.size > 10000000)
+                        throw Error("Backup is too large (maximum 10 MB).");
+                    const imported = validate(JSON.parse(await file.text()));
+                    if (
+                        !confirm(
+                            "Replace this checklist’s current progress with the imported backup? Export first if you want to keep both.",
+                        )
+                    )
+                        return;
+                    state = imported;
+                    $("filter").value = "all";
+                    $("search").value = "";
+                    save();
+                    applyState();
+                    $("notice").textContent = "Progress imported and saved.";
+                } catch (e) {
+                    $("notice").textContent =
+                        "Import not applied: " + e.message;
+                } finally {
+                    $("file").value = "";
+                }
+            };
+            window.addEventListener("storage", (e) => {
+                if (e.key === KEY && e.newValue)
+                    $("notice").textContent =
+                        "Another checklist tab saved changes. Export any unsaved differences here, then reload to use the latest saved progress.";
+            });
+            applyState();
+            $("saveState").textContent = storageOK
+                ? state.updated
+                    ? "Saved progress restored"
+                    : "Ready · changes save automatically"
+                : "Export a backup before closing";
+        </script>
+    </body>
+</html>

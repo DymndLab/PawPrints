@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="../part-support.json" LogicalName="PawPrints.PartSupport.json" />
+    <None Include="../part-support.json" Link="part-support.json" CopyToOutputDirectory="PreserveNewest" />
+    <EmbeddedResource Include="../assets/fonts/mrdafoe/MrDafoe-Regular.ttf" LogicalName="PawPrints.Fonts.mrdafoe.ttf" />
+    <EmbeddedResource Include="../assets/fonts/kristi/Kristi-Regular.ttf" LogicalName="PawPrints.Fonts.kristi.ttf" />
+    <EmbeddedResource Include="../assets/fonts/reeniebeanie/ReenieBeanie.ttf" LogicalName="PawPrints.Fonts.reeniebeanie.ttf" />
+    <EmbeddedResource Include="../assets/fonts/nothingyoucoulddo/NothingYouCouldDo.ttf" LogicalName="PawPrints.Fonts.nothingyoucoulddo.ttf" />
+    <EmbeddedResource Include="../assets/fonts/zeyada/Zeyada.ttf" LogicalName="PawPrints.Fonts.zeyada.ttf" />
+    <EmbeddedResource Include="../assets/fonts/labelleaurore/LaBelleAurore.ttf" LogicalName="PawPrints.Fonts.labelleaurore.ttf" />
+
+    <Compile Include="Program.cs" />
+    <Compile Include="PartSupportChecks.cs" />
+    <Compile Include="../src/LogoPicker.cs" />
+    <Compile Include="../src/Storage/*.cs" />
+    <Compile Include="../src/Rendering/*.cs" />
+    <Compile Include="AnnotationChecks.cs" />
+    <Compile Include="BorderLayoutChecks.cs" />
+    <Compile Include="CompanyLogoChecks.cs" />
+    <Compile Include="PngFixture.cs" />
+    <Compile Include="ImageDecodingChecks.cs" />
+    <Compile Include="DrawingPlacementChecks.cs" />
+    <Compile Include="ExplodedChecks.cs" />
+    <Compile Include="FixtureChecks.cs" />
+    <Compile Include="FreeTextChecks.cs" />
+    <Compile Include="InputChecks.cs" />
+    <Compile Include="KittenChecks.cs" />
+    <Compile Include="PageChecks.cs" />
+    <Compile Include="PanelChecks.cs" />
+    <Compile Include="PerformanceChecks.cs" />
+    <Compile Include="PoseChecks.cs" />
+    <Compile Include="PreviewUpdateChecks.cs" />
+    <Compile Include="ProfileStorageChecks.cs" />
+    <Compile Include="ScaleReferenceChecks.cs" />
+    <Compile Include="TemplateChecks.cs" />
+    <Compile Include="TitleLayoutChecks.cs" />
+    <PackageReference Include="BCnEncoder.Net" Version="2.3.0" />
+  </ItemGroup>
+</Project>

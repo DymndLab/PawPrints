@@ -1,0 +1,7 @@
+<Project>
+ <Import Project="../Directory.Build.props" />
+ <PropertyGroup>
+  <BaseIntermediateOutputPath>obj/$(MSBuildProjectName)/</BaseIntermediateOutputPath>
+  <NuGetLockFilePath>$(MSBuildProjectName).packages.lock.json</NuGetLockFilePath>
+ </PropertyGroup>
+</Project>
