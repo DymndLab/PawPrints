@@ -12,18 +12,25 @@ static class PerformanceCapture
         var engines = new List<EngineRating>();
         foreach (var engine in tree.Modules.Get<EngineController>())
         {
-            RocketControllerData.ComputeFromCores(engine.Cores.AsSpan(), 0, 101325, 1, out var vacuum, out var asl);
+            RocketControllerData.ComputeFromRockets(engine.Rockets.AsSpan(), 0, 101325, 1, out var vacuum, out var asl);
             var owner = engine.Parent.StructuralPart;
             var nozzles = new List<NozzleGimbal>();
-            foreach (var core in engine.Cores)
+            var propellants = new List<string>();
+            // 5901 assigns cores and their nozzles through each Rocket. Use the
+            // rocket's virtual conditions API, as the native aggregate does.
+            foreach (var rocket in engine.Rockets)
             {
-                var conditions = core.ComputeConditions(1);
-                foreach (var nozzle in core.Rocket.Nozzles)
+                foreach (var core in rocket.Cores)
                 {
-                    var gimbal = nozzle.Parent.GimbalAsmb;
-                    nozzles.Add(new(nozzle.ComputePerformance(in conditions, 0).GetTotalThrust(),
-                        gimbal == null ? 0 : (double)gimbal.AxisY.MaxAngle * 180 / Math.PI,
-                        gimbal == null ? 0 : (double)gimbal.AxisZ.MaxAngle * 180 / Math.PI));
+                    propellants.AddRange(core.Reaction.ReactantPhases.Select(p => p.Name));
+                    var conditions = rocket.ComputeCoreConditions(core, 1);
+                    foreach (var nozzle in core.Nozzles)
+                    {
+                        var gimbal = nozzle.Parent.GimbalAsmb;
+                        nozzles.Add(new(nozzle.ComputePerformance(in conditions, 0).GetTotalThrust(),
+                            gimbal == null ? 0 : (double)gimbal.AxisY.MaxAngle * 180 / Math.PI,
+                            gimbal == null ? 0 : (double)gimbal.AxisZ.MaxAngle * 180 / Math.PI));
+                    }
                 }
             }
             var main = NozzleGimbal.Primary(nozzles);
@@ -32,7 +39,7 @@ static class PerformanceCapture
                 if (m.Parent.StructuralPart == owner)
                     mass += m.MassPropertiesAsmb.Props.Mass;
             bool oneController = owner.SubtreeModules.Get<EngineController>().ToArray().Count(e => e.Parent.StructuralPart == owner) == 1;
-            string prop = string.Join(" + ", engine.Cores.SelectMany(c => c.Reaction.ReactantPhases).Select(p => p.Name).Distinct());
+            string prop = string.Join(" + ", propellants.Distinct());
             engines.Add(new(engine.Parent.InstanceId + "/" + engine.TemplateId, owner.InstanceId, PartNames.Display(owner.Template.Id, owner.Template.DisplayName, support), owner.Template.Id, engine.Sequence,
                 new(vacuum.ThrustMax.X, vacuum.ThrustMax.Y, vacuum.ThrustMax.Z), new(asl.ThrustMax.X, asl.ThrustMax.Y, asl.ThrustMax.Z), vacuum.MassFlowRateMax, asl.MassFlowRateMax, engine.MinimumThrottle, prop, main.Y, main.Z, oneController ? mass : null));
         }

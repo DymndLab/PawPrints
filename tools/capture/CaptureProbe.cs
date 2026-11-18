@@ -44,8 +44,8 @@ public sealed class CaptureProbe
         try
         {
             var hash = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(typeof(VehicleEditor).Assembly.Location)));
-            if (hash != "3A9B34894446A419193A1D9810A0902AA8EAA8B8AC910F04F687DC647818E586")
-                throw new NotSupportedException("This capture probe requires inspected KSA 5801.");
+            if (hash != "170C28AA34845026195C89A23C0F3C241DB00EA4A8B86EF60EC097C32A7F8A39")
+                throw new NotSupportedException("This capture probe requires inspected KSA 5901.");
             harmony = new Harmony(Owner);
             harmony.PatchAll(typeof(CaptureProbe).Assembly);
             File.WriteAllText(Path.Combine(output, "probe-status.txt"), "Loaded; waiting for named editor craft: " + string.Join(", ", allowedCraft));
@@ -197,7 +197,7 @@ public sealed class CaptureProbe
                 var snapshot = new
                 {
                     craft = __instance.EditingSpace.Id,
-                    build = "2026.11.10.5801",
+                    build = "2026.11.16.5901",
                     capturedUtc = DateTime.UtcNow,
                     legs,
                     warnings,

@@ -44,6 +44,62 @@ static class PerformanceAcceptance
         Mod.Assembly.GetType("Blueprint.Rendering.Png")!.GetMethod("Write")!.Invoke(null, [path, Get(sheet, "PixelWidth"), Get(sheet, "PixelHeight"), Get(sheet, "Rgb"), null]);
     }
 
+    static void Near(double actual, double expected, double tolerance, string label)
+    {
+        if (!double.IsFinite(actual) || !double.IsFinite(expected) || Math.Abs(actual - expected) > tolerance)
+            throw new Exception($"{label}: captured={actual}, native={expected}");
+    }
+
+    // Real 5901 objects, independently enumerated: the portable renderer tests
+    // cannot catch dropping a rocket/core or using another nozzle's gimbal.
+    static object CheckEngine(EngineController engine, object captured)
+    {
+        RocketControllerData.ComputeFromRockets(engine.Rockets.AsSpan(), 0, 101325, 1, out var vac, out var asl);
+        Near((double)captured.GetType().GetMethod("Thrust")!.Invoke(captured, [false])!, vac.ThrustMax.Length(), .5, "Vacuum thrust");
+        Near((double)captured.GetType().GetMethod("Thrust")!.Invoke(captured, [true])!, asl.ThrustMax.Length(), .5, "Sea-level thrust");
+        Near((double)Get(captured, "FlowVac"), vac.MassFlowRateMax, .001, "Vacuum flow");
+        Near((double)Get(captured, "FlowAsl"), asl.MassFlowRateMax, .001, "Sea-level flow");
+        Near((double)Get(captured, "MinimumThrottle"), engine.MinimumThrottle, .000001, "Minimum throttle");
+        var candidates = new List<(RocketNozzle Nozzle, float Thrust)>();
+        var propellants = new HashSet<string>(StringComparer.Ordinal);
+        int cores = 0;
+        foreach (var rocket in engine.Rockets)
+        {
+            foreach (var core in rocket.Cores)
+            {
+                cores++;
+                foreach (var phase in core.Reaction.ReactantPhases)
+                    propellants.Add(phase.Name);
+                var conditions = rocket.ComputeCoreConditions(core, 1);
+                foreach (var nozzle in core.Nozzles)
+                {
+                    float thrust = nozzle.ComputePerformance(in conditions, 0).GetTotalThrust();
+                    if (float.IsFinite(thrust) && thrust > 0)
+                        candidates.Add((nozzle, thrust));
+                }
+            }
+        }
+        var main = candidates.OrderByDescending(n => n.Thrust).FirstOrDefault().Nozzle;
+        var gimbal = main?.Parent.GimbalAsmb;
+        Near((double)Get(captured, "GimbalY"), gimbal == null ? 0 : (double)gimbal.AxisY.MaxAngle * 180 / Math.PI, .000001, "Main nozzle Y");
+        Near((double)Get(captured, "GimbalZ"), gimbal == null ? 0 : (double)gimbal.AxisZ.MaxAngle * 180 / Math.PI, .000001, "Main nozzle Z");
+        string[] labels = ((string)Get(captured, "Propellants")).Split(" + ", StringSplitOptions.RemoveEmptyEntries);
+        if (labels.Length != propellants.Count || !propellants.SetEquals(labels))
+            throw new Exception("Missing, duplicate or unexpected propellant labels");
+        return new
+        {
+            id = engine.Parent.InstanceId + "/" + engine.TemplateId,
+            rockets = engine.Rockets.Length,
+            cores,
+            positiveNozzles = candidates.Count,
+            solidRockets = engine.Rockets.Count(r => r is SolidRocket),
+            mainNozzle = main?.TemplateId,
+            gimbalVerified = true,
+            propellantsVerified = true,
+            flowsVerified = true
+        };
+    }
+
     public static void Tick(string instance)
     {
         if (finished)
@@ -86,16 +142,19 @@ static class PerformanceAcceptance
                 if (captured.Length != tree.Modules.Get<EngineController>().Length || captured.Length == 0)
                     throw new Exception("Engine capture count");
                 double maxError = 0;
+                var engineContracts = new List<object>();
                 foreach (var e in tree.Modules.Get<EngineController>())
                 {
                     var c = captured.Single(c => (string)Get(c, "Id") == e.Parent.InstanceId + "/" + e.TemplateId);
-                    RocketControllerData.ComputeFromCores(e.Cores.AsSpan(), 0, 101325, 1, out var vac, out var asl);
+                    engineContracts.Add(CheckEngine(e, c));
+                    RocketControllerData.ComputeFromRockets(e.Rockets.AsSpan(), 0, 101325, 1, out var vac, out var asl);
                     maxError = Math.Max(maxError, Math.Abs((double)c.GetType().GetMethod("Thrust")!.Invoke(c, [false])! - vac.ThrustMax.Length()));
                     maxError = Math.Max(maxError, Math.Abs((double)c.GetType().GetMethod("Thrust")!.Invoke(c, [true])! - asl.ThrustMax.Length()));
                     if (Math.Abs((double)Get(c, "FlowVac") - vac.MassFlowRateMax) > .001)
                         throw new Exception("Flow mismatch");
                 }
                 double nativeMass = (double)tree.ComputeInertMassPropertiesAsmb().Props.Mass + tree.ComputePropellantMassPropertiesAsmb().Props.Mass;
+                Near((double)Get(data, "WetMass"), nativeMass, .001, "Wet mass");
                 if (Math.Abs((double)Get(data, "WetMass") - nativeMass) > .001 || maxError > .5)
                     throw new Exception($"Rating/mass mismatch: captured={(double)Get(data, "WetMass")}, now={nativeMass}, thrust error={maxError}");
                 var stages = (Array)Get(data, "Stages");
@@ -108,6 +167,7 @@ static class PerformanceAcceptance
                     stages = stages.Length,
                     nativeRatingMaxErrorN = maxError,
                     massKg = nativeMass,
+                    engineContracts,
                     ratings = captured.Select(c => new { name = Get(c, "Name"), vacN = c.GetType().GetMethod("Thrust")!.Invoke(c, [false]), aslN = c.GetType().GetMethod("Thrust")!.Invoke(c, [true]), flow = Get(c, "FlowVac"), gimbalY = Get(c, "GimbalY"), gimbalZ = Get(c, "GimbalZ") })
                 });
                 original = State();

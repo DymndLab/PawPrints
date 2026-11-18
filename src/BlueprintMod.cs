@@ -14,12 +14,13 @@ namespace Blueprint;
 public sealed partial class BlueprintMod
 {
     const string Owner = "blueprint.exporter.5801";
-    public const string SupportedHash = "3A9B34894446A419193A1D9810A0902AA8EAA8B8AC910F04F687DC647818E586";
+    public const string SupportedHash = "170C28AA34845026195C89A23C0F3C241DB00EA4A8B86EF60EC097C32A7F8A39";
     static readonly string[] Views = ["Three-quarter", "Front", "Side", "Top", "Isometric"];
     static readonly string[] Themes = ["Blue", "White", "Cream", "Charcoal"];
     static readonly string[] GridWeights = ["Uniform", "Every 5 squares", "Every 5 and 10 squares"];
     Harmony? harmony;
     static bool enabled, open;
+    static readonly PrintWorkspaceFocus workspaceFocus = new();
     static int view = 0, theme, emphasis = 2;
     static bool grid = true;
     static int archivalWear;
@@ -38,12 +39,14 @@ public sealed partial class BlueprintMod
 
 
     static bool HasEditorVehicle => KSA.Program.Editor?.EditingSpace.Parts is { } tree && tree.Parts.Length > 0;
+    static bool NativeDialogOpen => GameSettings.Show || GameSaves.IsOpen || VehicleSaves.IsOpen;
 
     internal static void OpenExport()
     {
         if (!enabled || !HasEditorVehicle)
             return;
         open = true;
+        workspaceFocus.Request();
     }
     static VehicleEditor? sourceEditor;
     static string? sourceCraft;
@@ -70,7 +73,7 @@ public sealed partial class BlueprintMod
         {
             var hash = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(typeof(VehicleEditor).Assembly.Location)));
             if (hash != SupportedHash)
-                throw new NotSupportedException("Paw Prints requires inspected KSA build 5801; no patches applied.");
+                throw new NotSupportedException("Paw Prints requires inspected KSA build 5901; no patches applied.");
             // StarMap resolves both -InstancePath and its environment override here.
             // Reading the environment first would bypass its precedence rules.
             PrintDiagnostics.Start(Path.Combine(KSA.Constants.DocumentsFolderPath, "logs"), PrintIdentity.Version);
@@ -80,7 +83,7 @@ public sealed partial class BlueprintMod
             harmony.PatchAll(typeof(BlueprintMod).Assembly);
             enabled = true;
             PrintDiagnostics.Record("mod.loaded");
-            Console.WriteLine("[Paw Prints] V" + PrintIdentity.Version + " loaded for KSA 5801. PNG destination: " + exportFolder);
+            Console.WriteLine("[Paw Prints] V" + PrintIdentity.Version + " loaded for KSA 5901. PNG destination: " + exportFolder);
         }
         catch (Exception e) { PrintDiagnostics.Error("mod.load", e); Console.WriteLine("[PawPrints] Disabled: " + e); harmony?.UnpatchAll(Owner); }
     }
@@ -456,6 +459,13 @@ public sealed partial class BlueprintMod
             exportSetupOpen = exportFolder == null;
         }
         EnsureWorkspace(editor);
+        if (!workspaceFocus.Prepare(new float2(viewport.Size.X, viewport.Size.Y), NativeDialogOpen))
+        {
+            annotationKeysActive = false;
+            spaceHeld = false;
+            panning = false;
+            return;
+        }
         ImGui.SetNextWindowViewport(viewport.ImGuiId);
         // Full editor workspace below KSA's native menu bar. No floating or
         // movable root window; pointer gestures belong to the print canvas.
@@ -545,7 +555,7 @@ public sealed partial class BlueprintMod
             if (key == GlfwKey.P && action == GlfwKeyAction.Press && ((int)mods & 2) != 0)
                 Console.WriteLine($"[Paw Prints] Shortcut input: {key} {action} mods={(int)mods}; enabled={enabled} editor={KSA.Program.Editor != null} console={KSA.Program.ConsoleWindow.IsOpen} settings={GameSettings.Show} popup={Popup.AnyOpen}");
             if (!enabled || !ExportShortcut.Matches(key == GlfwKey.P, action == GlfwKeyAction.Press, (int)mods,
-                (open || HasEditorVehicle), KSA.Program.ConsoleWindow.IsOpen || GameSettings.Show || Popup.AnyOpen))
+                (open || HasEditorVehicle), KSA.Program.ConsoleWindow.IsOpen || NativeDialogOpen || Popup.AnyOpen))
                 return true;
             if (open)
                 CloseExport();
@@ -599,6 +609,21 @@ public sealed partial class BlueprintMod
         }
     }
 
+
+    // These native panels may appear after capture has started, independently
+    // of window focus. Do not submit their UI while the print owns the editor.
+    // Keep VehicleEditor.OnDrawUi itself running for dialogs and lifecycle work.
+    [HarmonyPatch(typeof(ResourcesPanel), nameof(ResourcesPanel.DrawEditor))]
+    static class EditorResourcesPatch
+    {
+        static bool Prefix() => !enabled || !open;
+    }
+
+    [HarmonyPatch(typeof(VehicleEditingSpace), nameof(VehicleEditingSpace.DrawStageWindow))]
+    static class EditorStagingPatch
+    {
+        static bool Prefix() => !enabled || !open;
+    }
 
     [HarmonyPatch(typeof(VehicleEditor), nameof(VehicleEditor.OnDrawUi))]
     static class EditorPatch

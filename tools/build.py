@@ -39,7 +39,7 @@ project = root
 game = game_dir()
 if not args.stage:
     assert_no_game()
-expected = "3A9B34894446A419193A1D9810A0902AA8EAA8B8AC910F04F687DC647818E586"
+expected = "170C28AA34845026195C89A23C0F3C241DB00EA4A8B86EF60EC097C32A7F8A39"
 if hashlib.sha256((game / "KSA.dll").read_bytes()).hexdigest().upper() != expected:
     raise SystemExit("Installed KSA changed. Inspect the new build before packaging.")
 subprocess.run(
