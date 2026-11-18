@@ -58,7 +58,7 @@ public sealed partial class BlueprintMod
             spaceHeld = false;
             return true;
         }
-        if (!open || !annotationKeysActive || !ReferenceEquals(sourceEditor, KSA.Program.Editor) || KSA.Program.Editor == null || KSA.Program.ConsoleWindow.IsOpen || GameSettings.Show || Popup.AnyOpen)
+        if (!open || !annotationKeysActive || !ReferenceEquals(sourceEditor, KSA.Program.Editor) || KSA.Program.Editor == null || KSA.Program.ConsoleWindow.IsOpen || NativeDialogOpen || Popup.AnyOpen)
             return false;
         if (key == GlfwKey.Space && canvasHovered && !partMenuOpen)
         {

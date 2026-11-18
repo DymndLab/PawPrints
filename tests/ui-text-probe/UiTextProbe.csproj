@@ -13,6 +13,7 @@
     <Reference Include="$(GameDir)/Brutal.Numerics.dll" Private="true" />
     <Reference Include="$(GameDir)/Brutal.Core.dll" Private="true" />
     <Compile Include="../../src/PrintUiText.cs" Link="PrintUiText.cs" />
+    <Compile Include="../../src/PrintWorkspaceFocus.cs" Link="PrintWorkspaceFocus.cs" />
     <Compile Include="../../src/PrintDiagnostics.cs" Link="PrintDiagnostics.cs" />
   </ItemGroup>
 </Project>

@@ -1,6 +1,6 @@
 # Development
 
-PawPrints is a Windows x64 game mod. Source builds need the .NET 10 SDK, Python 3.11 or newer, KSA 2026.11.10.5801 and StarMap 0.5.4. Node.js 22 or newer is needed only for the HTML checklist tests. Players need only the packaged mod, the game and its loader.
+PawPrints is a Windows x64 game mod. Source builds need the .NET 10 SDK, Python 3.11 or newer, KSA 2026.11.16.5901 and StarMap 0.5.4. Node.js 22 or newer is needed only for the HTML checklist tests. Players need only the packaged mod, the game and its loader.
 
 ## Configure native prerequisites
 
@@ -16,7 +16,7 @@ This writes ignored `.local/development.json` and `.local/Development.props`. Al
 python tools/build.py --stage
 ```
 
-The build checks the inspected KSA and toolkit hashes, restores locked dependencies, builds Release and writes `dist/PawPrints-0.5.38-preview.zip`. Its only install root is `PawPrints/`. No game is launched or updated by `--stage`. Build outputs and packages stay ignored. The main KSA and toolkit assembly fingerprints are intentional compatibility gates, not automatic update detectors to bypass.
+The build checks the inspected KSA and toolkit hashes, restores locked dependencies, builds Release and writes `dist/PawPrints-0.5.39-preview.zip`. Its only install root is `PawPrints/`. No game is launched or updated by `--stage`. Build outputs and packages stay ignored. The main KSA and toolkit assembly fingerprints are intentional compatibility gates, not automatic update detectors to bypass.
 
 ## Portable checks
 
@@ -39,6 +39,8 @@ After the workflow is committed and has completed once on GitHub, protect `main`
 The browser checklist and its Node test dependencies are contained in `tests/manual/`. Open [checklist.html](tests/manual/checklist.html) directly to record manual results across sessions; Node is needed only to test the checklist itself.
 
 The test project is a console runner, not xUnit; `dotnet test` is not the entry point. The default runs all portable suites. Run a focused suite by appending `-- --free-text`, `-- --drawing-placement`, `-- --exploded`, `-- --performance`, `-- --poses`, `-- --panels`, `-- --border-layout`, `-- --live-preview`, `-- --logos`, `-- --scale-references`, `-- --input`, `-- --templates`, `-- --part-support` or `-- --profile-storage`. Outputs are in ignored `tests/output/`.
+
+For the 5901 migration, follow [the testing handoff](docs/ksa-5901-testing.md). The optional `tests/host-probe/HostProbe.csproj` checks the actual game metadata and runs the production menu transpiler over real host IL without installing patches or starting the game. It requires explicit game, loader and built mod paths; it is separate from portable CI. Its success does not establish native editor or GPU behavior.
 
 With native prerequisites configured, run `python tools/check_ui_text.py`. This headless ImGui probe checks literal percent text, native call guards and bounded private diagnostics without opening KSA. Its optional `--reproduce-unsafe` deliberately crashes a separate child probe to reproduce the unsafe native call; it is not a release check.
 

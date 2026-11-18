@@ -45,6 +45,74 @@ try
     ImGui.End();
     ImGui.Render();
     Console.WriteLine($"PASS {cases.Length} native wrapped-text/tooltip cases, with exact literal text dimensions.");
+
+    var focus = new PrintWorkspaceFocus();
+    void FocusFrame(float2 size, bool otherFocus, bool expectedFocus)
+    {
+        ImGui.NewFrame();
+        if (otherFocus)
+            ImGui.SetNextWindowFocus();
+        ImGui.Begin("Native editor panel"u8);
+        ImGui.End();
+        focus.Prepare(size);
+        ImGui.Begin("Print workspace"u8);
+        if (ImGui.IsWindowFocused() != expectedFocus)
+            throw new Exception("Print workspace focus routing failed.");
+        ImGui.End();
+        ImGui.Render();
+    }
+    FocusFrame(new float2(1440, 1000), true, true);
+    FocusFrame(new float2(1440, 1000), true, true);
+    FocusFrame(new float2(1440, 1000), true, false);
+    FocusFrame(new float2(3440, 1440), true, true);
+    FocusFrame(new float2(1440, 1000), true, true);
+    focus.Request();
+    FocusFrame(new float2(1440, 1000), true, true);
+    FocusFrame(new float2(1440, 1000), true, true);
+    FocusFrame(new float2(1440, 1000), true, false);
+    ImGui.NewFrame();
+    ImGui.Begin("Print workspace"u8);
+    ImGui.OpenPopup("Test dialog"u8);
+    if (!ImGui.BeginPopup("Test dialog"u8))
+        throw new Exception("Focus fixture popup did not open.");
+    ImGui.EndPopup();
+    ImGui.End();
+    ImGui.Render();
+    ImGui.NewFrame();
+    focus.Request();
+    focus.Prepare(new float2(1600, 1000));
+    ImGui.Begin("Print workspace"u8);
+    if (ImGui.IsWindowFocused())
+        throw new Exception("Resize stole focus from an open popup.");
+    if (!ImGui.BeginPopup("Test dialog"u8))
+        throw new Exception("Resize dismissed the popup.");
+    ImGui.CloseCurrentPopup();
+    ImGui.EndPopup();
+    ImGui.End();
+    ImGui.Render();
+    FocusFrame(new float2(1600, 1000), true, true);
+    // Native settings/save windows are not popups and are submitted before the
+    // editor. They must remain available even with a pending resize/reopen focus.
+    foreach (var size in new[] { new float2(1600, 1000), new float2(3440, 1440), new float2(1440, 1000) })
+    {
+        ImGui.NewFrame();
+        ImGui.SetNextWindowFocus();
+        ImGui.Begin("Native settings window"u8);
+        PrintUiText.Wrapped("Settings remain interactive");
+        ImGui.End();
+        if (focus.Prepare(size, nativeDialogOpen: true))
+            throw new Exception("Print workspace covered a native settings/save window.");
+        ImGui.Begin("Native settings window"u8);
+        if (!ImGui.IsWindowFocused())
+            throw new Exception("Print workspace stole native settings/save input focus.");
+        ImGui.End();
+        ImGui.Render();
+    }
+    FocusFrame(new float2(1440, 1000), true, true);
+    FocusFrame(new float2(1440, 1000), true, true);
+    FocusFrame(new float2(1440, 1000), true, false);
+    Console.WriteLine("PASS native settings/save-window suspension across resize and bounded workspace restoration.");
+    Console.WriteLine("PASS native workspace entry, resize/restore, reopen, popup deferral and non-stealing steady-state focus.");
 }
 finally
 {

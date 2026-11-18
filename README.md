@@ -8,7 +8,7 @@ Part poses affect the drawing without changing your craft. Rendering runs locall
 
 ## Get started
 
-**Preview 0.5.38** supports **Windows x64**, **KSA 2026.11.10.5801** and **StarMap 0.5.4**. Other versions are unsupported. The editor workflow may change during development.
+**Preview 0.5.39** targets **Windows x64**, **KSA 2026.11.16.5901** and **StarMap 0.5.4**. See [5901 verification and remaining coverage](docs/ksa-5901-testing.md) for the tested scope. Other versions are unsupported. The editor workflow may change during development.
 
 1. Download the mod ZIP from [Releases](https://github.com/DymndLab/PawPrints/releases) and follow the [installation instructions](INSTALL.md).
 2. Load a craft in the Vehicle Editor, then choose **Editor > Open PawPrint Editor** or press **Ctrl+Alt+P**.
