@@ -17,6 +17,11 @@ from pathlib import Path, PurePosixPath
 from acceptance import validate_release_archive
 
 ROOT = Path(__file__).resolve().parents[1]
+# Reviewed public artwork only; other generated/exported images stay private.
+APPROVED_ARTWORK = {
+    "images/listing/icon.jpg":
+        "6d7b1fda2270c5ba065855e224063ce6f25071df5dcab4de5c1301c4fda6db1a",
+}
 PRIVATE_DIRS = {
     ".agents",
     ".claude",
@@ -232,7 +237,12 @@ def main():
                 {"file": name, "reason": "unexpected binary, key, log or archive"}
             )
         data = contents(name)
-        if path.suffix.lower() != ".ttf":
+        if name in APPROVED_ARTWORK:
+            if hashlib.sha256(data).hexdigest() != APPROVED_ARTWORK[name]:
+                findings.append(
+                    {"file": name, "reason": "reviewed artwork hash mismatch"}
+                )
+        elif path.suffix.lower() != ".ttf":
             try:
                 data.decode("utf-8")
             except UnicodeError:
