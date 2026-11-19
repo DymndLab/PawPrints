@@ -96,6 +96,8 @@ The [architecture map](docs/architecture.md) explains ownership boundaries. C# f
 
 ## Part support definitions
 
+See [Modded part support](docs/modded-part-support.md) for local installation steps, finding the correct subpart IDs, and contributing rules with regression checks.
+
 Edit the root `part-support.json` to add surface rules or fallback labels. The same file is packaged beside `PawPrints.dll` and embedded as a recovery default. Each Generate PawPrint reads a fresh immutable copy from that DLL's directory. Existing captures keep their original rules; normal live appearance updates do not reload them. No recompilation is needed to edit the installed file. Mod-manager updates may replace that installed copy, so keep custom definitions backed up or contribute them upstream.
 
 Each rule selects exactly one of `templateId` (exact), `templatePrefix` or `templateContains`. Matches are literal and case-sensitive. For each setting, exact matches win; otherwise the first matching pattern in file order wins. A rule may specify `surface` (`structure`, `solar`, `foil`), `fallbackLabel`, or both. A native display name always wins over a fallback label. Unknown parts receive ordinary structure treatment and readable names. `labelCategories` controls which mechanically formatted name categories are retained as prefixes.
@@ -104,4 +106,4 @@ Each rule selects exactly one of `templateId` (exact), `templatePrefix` or `temp
 {"templateId": "ExampleMod_HeliosCell", "surface": "solar", "fallbackLabel": "Helios array"}
 ```
 
-Append that object to `rules` for the actual template ID being supported. The shipped rules preserve existing stock behavior. Missing files use the embedded stock rules; invalid files reject generation through the normal warning popup while retaining the previous print. Parsing has byte, depth, rule-count and string-length limits; unknown fields, duplicate selectors and unsupported versions are rejected. This config describes naming and surface treatment, not arbitrary game APIs or custom renderers. Real third-party part packs still require native compatibility testing.
+Append that object to `rules` for the actual template ID being supported. The shipped rules preserve existing stock behavior. Missing files use the embedded bundled rules; invalid files reject generation through the normal warning popup while retaining the previous print. Parsing has byte, depth, rule-count and string-length limits; unknown fields, duplicate selectors and unsupported versions are rejected. This config describes naming and surface treatment, not arbitrary game APIs or custom renderers. Real third-party part packs still require native compatibility testing.

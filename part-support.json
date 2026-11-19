@@ -6,6 +6,14 @@
   ],
   "rules": [
     {
+      "templateId": "TesseraPanelA_Subpart_WallCells",
+      "surface": "solar"
+    },
+    {
+      "templateId": "TesseraPanelA_Subpart_HalfCells",
+      "surface": "solar"
+    },
+    {
       "templateContains": "SolarPanelA_CellA",
       "surface": "solar"
     },

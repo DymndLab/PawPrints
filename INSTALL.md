@@ -1,13 +1,13 @@
 # Installation
 
-PawPrints **0.5.39 preview** requires **Windows x64**, **KSA 2026.11.16.5901** and **StarMap 0.5.4**. It refuses unsupported game builds.
+PawPrints **0.5.39** requires **Windows x64**, **KSA 2026.11.16.5901** and **StarMap 0.5.4**. It refuses unsupported game builds and is available in Borea's Stable channel.
 
-This is a development preview. Native drawing, performance and pose scenarios and focused editor checks have passed on 5901. See [verification and remaining coverage](https://github.com/DymndLab/PawPrints/blob/main/docs/ksa-5901-testing.md) for the tested scope.
+PawPrints remains under active development. Native drawing, performance and pose scenarios and focused editor checks have passed on 5901. See [verification and remaining coverage](https://github.com/DymndLab/PawPrints/blob/v0.5.39/docs/ksa-5901-testing.md) for the tested scope.
 
 ## Install with StarMap
 
 1. Close KSA.
-2. Download `PawPrints-0.5.39-preview.zip` from [Releases](https://github.com/DymndLab/PawPrints/releases). Use the mod ZIP; GitHub's source archives contain development files.
+2. Download `PawPrints-0.5.39.zip` from [Releases](https://github.com/DymndLab/PawPrints/releases). Use the mod ZIP; GitHub's source archives contain development files.
 3. Extract its `PawPrints` folder into your StarMap profile's `mods` directory. Keep the packaged libraries and licenses together.
 4. Enable `PawPrints` in that profile's `manifest.toml`, updating an existing entry if present:
 
