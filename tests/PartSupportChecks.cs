@@ -14,6 +14,19 @@ static class PartSupportChecks
             ("UnknownMod_Panel", "structure"), ("unknown_foil", "structure")
         })
             check(stock.Surface(template) == expected, "Stock surface behavior: " + template);
+        check(File.Exists(Path.Combine(AppContext.BaseDirectory, "part-support.json")), "External bundled definitions accompany the test build");
+        foreach (var definitions in new[] { stock, PartSupport.Load(AppContext.BaseDirectory) })
+        {
+            foreach (string template in new[] { "TesseraPanelA_Subpart_WallCells", "TesseraPanelA_Subpart_HalfCells" })
+                check(definitions.Surface(template) == "solar", "Tessera cell subpart receives solar treatment: " + template);
+            foreach (string template in new[]
+            {
+                "TesseraPanelA_Subpart_WallFrame", "TesseraPanelA_Subpart_HalfFrame",
+                "TesseraPanelA_Subpart_WallRadiator", "TesseraPanelA_Subpart_HalfSkin",
+                "TesseraStructA_Prefab_SolarWallPanelA", "OtherMod_Subpart_WallCells"
+            })
+                check(definitions.Surface(template) == "structure", "Cell rules leave other surfaces structural: " + template);
+        }
         check(PartNames.Display("CoreServiceModuleA_Prefab_SetA2DoubleA", null) == "Service Module / Set A2 Double A", "Stock service-module name retains its category and variant");
         check(PartNames.Display("CoreFuelTankA_Prefab_LF3W6HC", null) == "Fuel Tank / LF3W6HC", "Stock fuel-tank name retains its category and variant");
         const string customJson = """

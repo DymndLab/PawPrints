@@ -34,6 +34,7 @@ foreach (var (patch, type, name, parameters) in new[]
     ("ShutdownPatch", "KSA.Program", "Dispose", Array.Empty<string>()),
     ("EditorClosedPatch", "KSA.VehicleEditor", "Dispose", Array.Empty<string>()),
     ("ShortcutPatch", "KSA.Program", "OnKey", new[] { "Brutal.GlfwApi.GlfwWindow", "Brutal.GlfwApi.GlfwKey", "System.Int32", "Brutal.GlfwApi.GlfwKeyAction", "Brutal.GlfwApi.GlfwModifier" }),
+    ("VehicleSwitchPatch", "KSA.Program", "DispatchKeyEvent", new[] { "RenderCore.Input.GlfwKeyEvent&" }),
     ("MenuPatch", "KSA.Program", "DrawMenuBar", new[] { "KSA.IGameViewport", "System.Int32" }),
     ("EditorPatch", "KSA.VehicleEditor", "OnDrawUi", new[] { "KSA.IGameViewport" }),
     ("EditorResourcesPatch", "KSA.ResourcesPanel", "DrawEditor", new[] { "KSA.PartTree", "Brutal.Numerics.float2" }),
@@ -43,14 +44,14 @@ foreach (var (patch, type, name, parameters) in new[]
     var methods = host.GetType(type, true)!.GetMethods(flags).Where(m => m.Name == name).ToArray();
     Require(methods.Length == 1, type + "." + name + " is unambiguous");
     var target = methods.Single();
-    Require(target.IsStatic == (patch == "EditorResourcesPatch") && target.ReturnType == typeof(void), name + " static/instance/return contract");
+    Require(target.IsStatic == (patch == "EditorResourcesPatch") && target.ReturnType == (patch == "VehicleSwitchPatch" ? typeof(bool) : typeof(void)), name + " static/instance/return contract");
     Require(target.GetParameters().Select(p => p.ParameterType.FullName).SequenceEqual(parameters), name + " parameter types: " + string.Join(", ", target.GetParameters().Select(p => p.ParameterType.FullName)));
     var patchType = modType.GetNestedType(patch, BindingFlags.NonPublic)!;
     var patchMethod = patchType.GetMethods(flags).Single(m => m.Name is "Prefix" or "Postfix" or "Transpiler");
     if (patchMethod.Name != "Transpiler")
         foreach (var p in patchMethod.GetParameters())
         {
-            var native = p.Name == "__instance" ? target.DeclaringType : target.GetParameters().SingleOrDefault(n => n.Name == p.Name)?.ParameterType;
+            var native = p.Name == "__result" ? target.ReturnType.MakeByRefType() : p.Name == "__instance" ? target.DeclaringType : target.GetParameters().SingleOrDefault(n => n.Name == p.Name)?.ParameterType;
             Require(native == p.ParameterType, patch + " binds " + p.Name + " with its exact host type");
         }
     targets.Add(patch, target);
@@ -85,6 +86,79 @@ finally
     enabledField.SetValue(null, savedState[0]);
     openField.SetValue(null, savedState[1]);
     busyField.SetValue(null, savedState[2]);
+}
+// Exercise the production guard against the host's real binding matcher. This
+// process never starts the game or writes settings; the editor is an inert
+// uninitialized sentinel and key bindings are temporary in-memory settings.
+var programType = host.GetType("KSA.Program", true)!;
+var editorField = programType.GetField("Editor", flags)!;
+var settingsType = host.GetType("KSA.GameSettings", true)!;
+var currentSettings = settingsType.GetProperty("Current", flags)!;
+var originalSettings = currentSettings.GetValue(null);
+var originalEditor = editorField.GetValue(null);
+var keyEventType = targets["VehicleSwitchPatch"].GetParameters()[0].ParameterType.GetElementType()!;
+var eventConstructor = keyEventType.GetConstructors().Single(c => c.GetParameters().Length == 4
+    && c.GetParameters()[0].ParameterType.FullName == "Brutal.GlfwApi.GlfwWindow"
+    && c.GetParameters()[1].ParameterType.FullName == "Brutal.GlfwApi.GlfwKeyAction");
+var eventParameters = eventConstructor.GetParameters();
+var guard = modType.GetNestedType("VehicleSwitchPatch", BindingFlags.NonPublic)!.GetMethod("Prefix", flags)!;
+var inputType = host.GetType("KSA.Input", true)!;
+object FreshSettings()
+{
+    var settings = System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(settingsType);
+    settingsType.GetField("KeyBindings")!.SetValue(settings, inputType.GetMethod("GenerateDefault")!.Invoke(null, null));
+    return settings;
+}
+void CheckSwitch(string key, string action, int modifiers, bool blocked)
+{
+    object keyEvent = eventConstructor.Invoke(new[] {
+        eventParameters[0].ParameterType.IsValueType ? Activator.CreateInstance(eventParameters[0].ParameterType) : null,
+        Enum.Parse(eventParameters[1].ParameterType, action),
+        Enum.Parse(eventParameters[2].ParameterType, key),
+        Enum.ToObject(eventParameters[3].ParameterType, modifiers) });
+    object?[] call = { keyEvent, false };
+    bool runNative = (bool)guard.Invoke(null, call)!;
+    Require(runNative == !blocked && (bool)call[1]! == blocked,
+        $"Vehicle switch {key}/{action}/mods={modifiers}: blocked={blocked}");
+}
+try
+{
+    currentSettings.SetValue(null, FreshSettings());
+    var sentinelEditor = System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(editorField.FieldType);
+    foreach (bool active in new[] { false, true })
+    foreach (bool visible in new[] { false, true })
+    foreach (bool editing in new[] { false, true })
+    {
+        enabledField.SetValue(null, active);
+        openField.SetValue(null, visible);
+        editorField.SetValue(null, editing ? sentinelEditor : null);
+        foreach (string key in new[] { "LeftBracket", "RightBracket" })
+        foreach (string action in new[] { "Press", "Release", "Repeat" })
+            CheckSwitch(key, action, 0, active && visible && editing && action == "Press");
+    }
+    CheckSwitch("RightBracket", "Press", 48, true); // lock keys
+    CheckSwitch("RightBracket", "Press", 2, false);
+    CheckSwitch("Escape", "Press", 0, false);
+    CheckSwitch("P", "Press", 6, false);
+    var rebound = FreshSettings();
+    var bindings = (System.Collections.IDictionary)settingsType.GetField("KeyBindings")!.GetValue(rebound)!;
+    var keyBindingType = host.GetType("KSA.KeyBindingValue", true)!;
+    var keyBinding = Activator.CreateInstance(keyBindingType, Enum.Parse(eventParameters[2].ParameterType, "F8"), Enum.ToObject(eventParameters[3].ParameterType, 2));
+    var bindingType = host.GetType("KSA.BindingValue", true)!;
+    var convert = bindingType.GetMethods().Single(m => m.Name == "op_Implicit" && m.GetParameters()[0].ParameterType == keyBindingType);
+    bindings[Enum.Parse(host.GetType("KSA.InputAction", true)!, "VesselNext")] = convert.Invoke(null, new[] { keyBinding });
+    currentSettings.SetValue(null, rebound);
+    CheckSwitch("RightBracket", "Press", 0, false);
+    CheckSwitch("F8", "Press", 0, false);
+    CheckSwitch("F8", "Press", 2, true);
+    CheckSwitch("F8", "Release", 2, false);
+}
+finally
+{
+    currentSettings.SetValue(null, originalSettings);
+    editorField.SetValue(null, originalEditor);
+    enabledField.SetValue(null, savedState[0]);
+    openField.SetValue(null, savedState[1]);
 }
 var gimbal = host.GetType("KSA.PartTreeRenderData", true)!.GetMethods(flags).Where(m => m.Name == "ApplyGimbal").ToArray();
 Require(gimbal.Length == 1 && gimbal[0].IsStatic && gimbal[0].ReturnType.FullName == "Brutal.Numerics.double4x4"
