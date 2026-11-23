@@ -8,9 +8,7 @@ Part poses affect the drawing without changing your craft. Rendering runs locall
 
 ## Get started
 
-**Release 0.5.39** targets **Windows x64**, **KSA 2026.11.16.5901** and **StarMap 0.5.4** and is available in Borea's Stable channel. See [5901 verification and remaining coverage](docs/ksa-5901-testing.md) for the tested scope. Other versions are unsupported. The editor workflow may change during development.
-
-The source branch also contains [unreleased fixes and their remaining acceptance checks](docs/unreleased-fixes.md). Those changes are not included in the published 0.5.39 download.
+**Release 0.5.39** targets **Windows x64**, **KSA 2026.11.16.5901** and **StarMap 0.5.4** and is available in Borea's Stable channel. Drawing, performance, pose and Borea-profile PNG export checks passed on this build. Other versions are unsupported. The editor workflow may change during development.
 
 Native Linux support is open to community contributions and testing. The current release uses Windows APIs for font rendering, PNG logo loading and file dialogs. There is no Linux release date; interested contributors and testers can [open or join a Linux support discussion in Issues](https://github.com/DymndLab/PawPrints/issues). Please discuss the approach before starting a substantial port.
 
@@ -21,6 +19,10 @@ Native Linux support is open to community contributions and testing. The current
 Exports are images. Save PNG before loading another craft, leaving the Vehicle Editor or ending the game: editable sheets are not saved across those transitions. **Back to editor** keeps the sheet while the same craft stays open. Large craft and high-resolution sheets can use substantial memory; compatibility with third-party parts varies with their implementation.
 
 For problems, [open an issue](https://github.com/DymndLab/PawPrints/issues) with reproduction steps and your PawPrints, KSA and StarMap versions. See [security and local data](SECURITY.md) before sharing logs or files.
+
+## Development status
+
+The next release, **0.5.40**, is in local testing. See the [testing scope](docs/release-0.5.40-testing.md) and [roadmap](docs/roadmap.md) for implemented changes and future work.
 
 ## Contributing
 

@@ -98,7 +98,10 @@ public sealed partial class BlueprintMod
                 ImGui.Text($"Scale 1:{Math.Clamp(sizeStartRatio * 100 / sizePercent, .01f, 1000000):0.##}");
                 if (sizeFit is { } limit)
                 {
-                    PrintUiStyle.Warning(limit.Maximum < 400 ? $"Max fit here: {limit.Maximum:0.0}%" : "Fits through 400%");
+                    PrintUiStyle.Warning(limit.Maximum < 400
+                        ? $"Max fit{(sizeView < 1000 ? " for all main views" : " here")}: {limit.Maximum:0.0}%" : "Fits through 400%");
+                    if (limit.Maximum < 400 && limit.Warning.Length > 0)
+                        PrintUiStyle.Warning(limit.Warning);
                     if (limit.Maximum < 400 && ImGui.Button("Use max fit"u8))
                     {
                         sizePercent = limit.Maximum;
@@ -112,7 +115,9 @@ public sealed partial class BlueprintMod
                 }
             }
             finally { ImGui.EndDisabled(); }
-            ImGui.Text(sizeView < 1000 ? "Changes all main views. Positions stay fixed." : "Changes this detail's parts. Frame and group centres stay fixed.");
+            PrintUiText.Wrapped(sizeView < 1000
+                ? "Changes every main view together, including views moved away from a template. Centres stay fixed. Move the limiting views inward or farther apart, then reopen Adjust Scale."
+                : "Changes this detail's parts. Frame and group centres stay fixed.");
             bool tooLarge = sizeFit is { } max && sizePercent > max.Maximum;
             if (update && !busy && !measuring && !tooLarge)
             {

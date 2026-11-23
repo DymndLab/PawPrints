@@ -5,7 +5,7 @@ PawPrints has one runtime assembly, `PawPrints.dll`, installed under `mods/PawPr
 ## Data flow
 
 1. `BlueprintMod.cs` registers the mod, menu and shortcut, manages the fullscreen editor and owns render-job cancellation and preview lifetime.
-2. `CraftCapture.cs`, `PoseCapture.cs` and `PerformanceCapture.cs` read the loaded craft into detached drawing data. Capture depends on the inspected native KSA APIs.
+2. `CraftCapture.cs`, `FuelHoseCapture.cs`, `PoseCapture.cs` and `PerformanceCapture.cs` read the loaded craft into detached drawing data. Fuel hoses use private native routes and copied samples because they have no ordinary part-model mesh. Capture depends on the inspected native KSA APIs.
 3. `Rendering/` projects that data, plans placement and scale, extracts linework and composes page backgrounds, drawings, annotations and the title block.
 4. The editor uploads the rendered preview, handles interaction and saves PNGs. Print-only poses and explosions do not alter live craft transforms.
 
@@ -15,7 +15,7 @@ PawPrints has one runtime assembly, `PawPrints.dll`, installed under `mods/PawPr
 
 | Area | Entry points |
 | --- | --- |
-| Generation and template selection | `WorkspaceHeader.cs`, `GenerationControls.cs`, `TemplateGallery.cs`, `BoxLayoutControls.cs` |
+| Generation, recovery and template selection | `WorkspaceHeader.cs`, `GenerationControls.cs`, `PrintRecoveryControls.cs`, `TemplateGallery.cs`, `BoxLayoutControls.cs` |
 | Main views, projection links and scale | `DrawingControls.cs`, `ViewSizeControls.cs`, `ViewAlignmentControls.cs` |
 | Annotations and tables | `PlacementControls.cs`, `PreferencesControls.cs`, `AnnotationEditor.cs`, `AnnotationActions.cs`, `TableEditor.cs` |
 | Exploded views and print-only movement | `ExplodedEditor.cs`, `PoseControls.cs` |
@@ -27,11 +27,13 @@ The renderer's document/history operations and the editor's transient gestures h
 ## Rendering code
 
 - `BlueprintRenderer.cs` and `Sheet.cs` coordinate rendering and sheet data.
+- `PrintGeneration.cs` renders detached candidates for ordinary regeneration or an explicitly confirmed fresh drawing. `PrintRecoveryControls.cs` restores accepted settings without rendering when pending changes block editing. Failed candidates retain the previous print.
 - `PartSupport.cs` loads the shared `part-support.json` definitions once per capture. `CraftCapture`, `PartNames`, pose labels and engine labels use that same immutable rule set.
 - `DrawingPlacement.cs`, `ViewAlignment.cs` and `ScaleAdjustment.cs` handle main-view placement, projection relationships and fit limits. Main views share one physical scale; details have their own scale.
 - `ExplodedDetail.cs`, `ExplodedPainting.cs` and `DetailPartSizing.cs` keep assembly spread separate from part size.
 - `Annotations.cs`, `LeaderPainting.cs` and `SpecLeaderRouting.cs` handle annotation geometry and consistent leader styling.
 - `PartPoses.cs` applies captured movement to detached geometry, including scope and symmetry.
+- `FuelHoseGeometry.cs` converts captured native spline frames into bounded tube geometry. `Mesh.ConnectedParts` records endpoint/connector pose dependencies; incompatible independent print poses fail instead of showing a false connection. Exploded hoses follow their owning first fuel port.
 - `PerformanceData.cs` and `PerformancePainting.cs` separate captured metrics from their presentation. Main-nozzle gimbal uses both axes from the same highest-thrust nozzle; aggregate thrust and efficiency retain all contributing nozzles.
 - `PageLayout.cs`, `FrameLayout.cs`, `SheetZones.cs` and the title-block files define paper geometry and metadata presentation.
 

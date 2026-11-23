@@ -1,0 +1,34 @@
+# PawPrints roadmap
+
+Updated November 22, 2026. PawPrints 0.5.40 is in local testing. The items below are future work, with no promised release dates. They are separate from the implemented changes in the [0.5.40 testing scope](release-0.5.40-testing.md).
+
+## Large stations and complex craft
+
+Support craft that exceed the current one-million-vertex capture limit, including stations with many repeated components. Work includes capture diagnostics, shared source geometry, lower allocation costs, measured memory and rendering budgets, and responsive cancellation. Initial diagnostics and source sharing are in the next test candidate; the export ceiling remains unchanged. Full large-station support requires real-craft measurements and validation before a higher limit is offered.
+
+## Craft updates and drawing recovery
+
+Refresh drawings more naturally after editing the craft, preserve references to surviving parts, and explain annotations removed when their source parts disappear. Decide how missing detail sources should behave. The current recovery controls do not complete this workflow redesign.
+
+## Layout and placement
+
+- Allow intentional overlap and clipping, with a nonblocking notice when content extends beyond the sheet.
+- Let empty space inside exploded details show underlying drawings.
+- Show a centered, resizable view preview before placement and make selection feedback consistent.
+- Add direct resizing for main views, with agreed controls for resizing in place or scaling the arrangement while preserving shared physical scale.
+
+## Dimensions
+
+Simplify placement to selecting a view and clicking to place the preview. Improve hover and selection legibility and use clearer Delete labels. Add custom dimensions between two selected points as a later extension.
+
+## Exploded views
+
+Investigate actual attachment points and placement axes for guide origins and disassembly directions. Separate assembly-guide style from annotation-leader preferences. Revisit hoses whose endpoints separate during explosion; this is lower priority than assembled hose correctness.
+
+## Linework refinement
+
+Reduce residual specks around curved transitions while preserving genuine shoulders, collars, boundaries and silhouettes across different craft.
+
+## Feedback
+
+Please include the PawPrints footer version, KSA version, reproduction steps, and whether the issue affects the preview, exported PNG, or both. Review logs and craft files for private information before sharing them. Roadmap items describe intended improvements, not features already available in the current release.

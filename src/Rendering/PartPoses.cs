@@ -50,6 +50,12 @@ static class PartPoses
         if (transforms.Count == 0)
             return source.Assembly;
         var a = source.Assembly;
+        foreach (var mesh in a.Geometry.Meshes.Where(m => m.ConnectedParts.Length > 1))
+        {
+            var movements = mesh.ConnectedParts.Select(id => transforms.GetValueOrDefault(id, Matrix4x4.Identity)).ToArray();
+            if (movements.Skip(1).Any(m => m != movements[0]))
+                throw new InvalidOperationException("A fuel hose connects parts with different print poses. Reset those poses, or pose the craft in the editor and generate again. The previous print is unchanged.");
+        }
         var meshes = a.Geometry.Meshes.Select((m, i) =>
         {
             if (!transforms.TryGetValue(a.MeshNodes[i], out var matrix))

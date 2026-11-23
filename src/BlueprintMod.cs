@@ -173,7 +173,7 @@ public sealed partial class BlueprintMod
 
 
 
-    internal static void Generate(VehicleEditor editor)
+    internal static void Generate(VehicleEditor editor, bool startFresh = false)
     {
         EnsureDrawingTitle(editor);
         if (busy || !ValidTitleDates())
@@ -200,12 +200,7 @@ public sealed partial class BlueprintMod
             if (previous != null)
                 previous = PendingStyle(previous);
             renderAppliesSettings = true;
-            if (previous?.Scene?.Drawing != null && options.Drawing != null && previous.Options.Page != options.Page)
-                options = options with
-                {
-                    Drawing = DrawingPlacements.Repage(previous.Scene, options)
-                };
-            renderKeepsDocument = previous != null;
+            renderKeepsDocument = !startFresh && previous != null;
             sourceEditor = editor;
             sourceCraft = capture.Name;
             cancellation?.Dispose();
@@ -221,30 +216,9 @@ public sealed partial class BlueprintMod
                     token.ThrowIfCancellationRequested();
                     maps.Add(pair.Key, pair.Value.Decode(token));
                 }
-                var poses = previous?.Scene?.Poses ?? [];
                 var poseSource = new PoseSource(capture.Assembly!, capture.Poses, capture.Geometry.Meshes.Length, parts, maps, capture.Performance);
-                PartPoses.Validate(poseSource, poses, SheetLayout.Plan(capture.Geometry, options).Select(v => v.Id).Concat(previous?.Details.Select(d => d.ViewId) ?? []));
-                if (previous != null && previous.Options.Page != options.Page && options.Drawing is { } repaged)
-                {
-                    var envelope = poses.Length == 0 ? capture.Geometry : new Capture(repaged.Views.SelectMany(v =>
-                        PartPoses.Exterior(poseSource, PartPoses.Apply(poseSource, poses, v.Id)).Meshes).ToArray());
-                    options = options with
-                    {
-                        Drawing = DrawingPlacements.FitToPage(envelope, options, repaged, CompositionRegeneration.RepageObstacles(previous.Scene!, options))
-                    };
-                }
-                var result = PosePainting.RenderMain(poseSource, capture.Name, options, capture.Warnings, poses, token, composeAnnotations: previous == null);
-                if (options.Drawing == null)
-                    result = PosePainting.RenderMain(poseSource, capture.Name, options with
-                    {
-                        Drawing = DrawingPlacements.FromScene(result.Scene!)
-                    }, capture.Warnings, poses, token, composeAnnotations: previous == null);
-                if (previous != null)
-                {
-                    Volatile.Write(ref progress, "Restoring notes and detail frames");
-                    return CompositionRegeneration.Rebuild(result, previous, token);
-                }
-                return result;
+                return PrintGeneration.Render(poseSource, capture.Geometry, capture.Name, options,
+                    capture.Warnings, previous, startFresh, token);
             }, token);
         }
         catch (Exception e) { renderAppliesSettings = false; PrintDiagnostics.Error("generate.capture", e); ReportFailure("Export unavailable: " + e.Message); Console.WriteLine("[PawPrints] " + e); }
@@ -306,6 +280,8 @@ public sealed partial class BlueprintMod
                         defaultLine = (int)(firstLabel?.Line ?? firstSpec!.Line);
                         defaultTip = (int)(firstLabel?.Tip ?? firstSpec!.Tip);
                     }
+                    else if (result.Details.FirstOrDefault() is { } firstDetail)
+                        defaultLine = (int)firstDetail.GuideLine;
                     SaveTitlePreferences();
                 }
                 if (renderAppliesSettings)
@@ -331,6 +307,7 @@ public sealed partial class BlueprintMod
                     ResetDetailEditor();
                     templatesOpen = false;
                     beforeTemplates = null;
+                    beforeDrawing = null;
                 }
                 if (regenerated != null)
                 {
@@ -339,6 +316,7 @@ public sealed partial class BlueprintMod
                         boxLayout = result.Options.Boxes;
                     templatesOpen = false;
                     beforeTemplates = null;
+                    beforeDrawing = null;
                 }
                 if (regenerated != null && document != null && result.Scene != null)
                     document.Regenerate(result.Scene, result.Labels, result.Details);
@@ -366,7 +344,7 @@ public sealed partial class BlueprintMod
                 PrintDiagnostics.Record("preview.ready");
                 Console.WriteLine("[PawPrints] Preview ready: " + sheet.Title);
             }
-            catch (OperationCanceledException) { status = "Preview cancelled."; }
+            catch (OperationCanceledException) { KeepAcceptedPrintEditable(); status = "Preview cancelled. Your drawing is still available."; }
             catch (Exception e)
             {
                 if (detailCommitQueued)
@@ -524,6 +502,7 @@ public sealed partial class BlueprintMod
                     DrawViewSizeDialog();
                     DrawSpecDialog();
                     DrawTextDialog();
+                    DrawNewDrawingDialog(editor);
                     DrawWarningDialog();
                     DrawExportFolderDialog();
                     PollLivePreview();

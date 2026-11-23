@@ -4,6 +4,7 @@ namespace Blueprint.Rendering;
 static class ExplodedPainting
 {
     public const int Limit = 4;
+    public const int CaptionSpace = 144;
 
 
     public static Box ClampFrame(Box b, PrintOptions options)
@@ -21,7 +22,6 @@ static class ExplodedPainting
         int w = original.PixelWidth, h = original.PixelHeight;
         var colors = SheetLayout.Colors(original.Options.Theme);
         var canvas = new Canvas((byte[])baseline.BaseRgb.Clone(), w, h, colors.Ink);
-        var paper = new Canvas(w, h, colors.Paper, colors.Ink, original.Options);
         var owners = (int[])baseline.Owners.Clone();
         var meshOwners = (int[])baseline.MeshOwners!.Clone();
         var viewOwners = Enumerable.Repeat(-1, w * h).ToArray();
@@ -40,8 +40,6 @@ static class ExplodedPainting
             token.ThrowIfCancellationRequested();
             if (detail.Bounds != ClampFrame(detail.Bounds, original.Options) || !PageLayout.Fits(detail.Bounds, original.Options))
                 throw new InvalidOperationException("Keep the detail frame inside the drawing area.");
-            if (details.Any(other => other.Id != detail.Id && detail.Bounds.Overlaps(other.Bounds)))
-                throw new InvalidOperationException("Keep exploded detail frames clear of one another.");
             // Movement reuses the exact tile; geometry edits/resize rerender only this detail.
             var poses = baseline.Poses;
             bool samePose = displayed.Scene != null && !displayed.Scene.detailsCacheInvalid && displayed.Scene.Poses.SequenceEqual(poses);
@@ -54,52 +52,55 @@ static class ExplodedPainting
                 Bounds = detail.Bounds,
                 Caption = detail.Caption,
                 Camera = detail.Camera
-            } == detail && prior.Pixels.Width == (int)detail.Bounds.Width - 24 && prior.Pixels.Height == (int)detail.Bounds.Height - 100
+            } == detail && prior.Pixels.Width == (int)detail.Bounds.Width - 24 && prior.Pixels.Height == (int)detail.Bounds.Height - CaptionSpace
                 ? prior with
                 {
                     Definition = detail
                 } : ExplodedGeometry.Render(original.PoseSource is { } poseSource ? new ExplodedSource(PartPoses.Apply(poseSource, poses, detail.ViewId), source.Maps) : source, detail, token, original.Options);
             var box = detail.Bounds;
-            PageLayout.ClearPanel(canvas, paper, box, original.Options);
-            for (int y = (int)box.Y; y < box.Bottom; y++)
-                for (int x = (int)box.X; x < box.Right; x++)
-                {
-                    int q = y * w + x;
-                    owners[q] = -1;
-                    meshOwners[q] = -1;
-                    viewOwners[q] = detail.ViewId;
-                }
             int left = (int)box.X + 12, top = (int)box.Y + 12;
-            int inkLeft = tile.Pixels.Width, inkRight = 0, inkBottom = 0;
+            int inkLeft = tile.Pixels.Width, inkRight = -1, inkBottom = -1;
+            // Only ink is composited. Empty pixels preserve lower views and picking.
+            for (int y = 0; y < tile.Pixels.Height; y++)
+                for (int x = 0; x < tile.Pixels.Width; x++)
+                {
+                    int q = y * tile.Pixels.Width + x;
+                    if (tile.Pixels.MeshOwners[q] < 0 && tile.Pixels.Ink[q] == 0) continue;
+                    inkLeft = Math.Min(inkLeft, x);
+                    inkRight = Math.Max(inkRight, x);
+                    inkBottom = Math.Max(inkBottom, y);
+                }
             for (int y = 0; y < tile.Pixels.Height; y++)
                 for (int x = 0; x < tile.Pixels.Width; x++)
                 {
                     int q = y * tile.Pixels.Width + x, index = (top + y) * w + left + x;
                     canvas.Ink(left + x, top + y, tile.Pixels.Ink[q] / 255f);
                     int mesh = tile.Pixels.MeshOwners[q];
-                    if (mesh < 0)
+                    if (mesh < 0 || tile.Pixels.Ink[q] == 0)
                         continue;
                     inkLeft = Math.Min(inkLeft, x);
                     inkRight = Math.Max(inkRight, x);
                     inkBottom = Math.Max(inkBottom, y);
+                    viewOwners[index] = detail.ViewId;
                     owners[index] = partIds[tile.Groups[mesh]];
                     meshOwners[index] = tile.Meshes[mesh];
                 }
             views.Add(new(detail.ViewId, SheetLayout.ViewName(detail.ViewId), new(left, top, tile.Pixels.Width, tile.Pixels.Height), tile.Frame));
-            string caption = $"{SheetLayout.ViewName(detail.ViewId)} - {AnnotationText.Clean(detail.Caption, 60)}";
-            int font = Math.Min(ViewCaption.DefaultSize, Math.Max(12, (int)((box.Width - 32) / Math.Max(1, caption.Length * .62f))));
+            string heading = SheetLayout.ViewName(detail.ViewId);
+            string caption = AnnotationText.Clean(detail.Caption, 60);
+            int longest = Math.Max(heading.Length, caption.Length);
+            int font = Math.Min(40, Math.Max(12, (int)((box.Width - 32) / Math.Max(1, longest * .62f))));
             float center = inkLeft <= inkRight ? left + (inkLeft + inkRight) * .5f : box.Center.X;
-            float textWidth = caption.Length * NativeText.MonoWidth(font);
-            int captionX = (int)Math.Clamp(center - textWidth / 2, box.X + 8, Math.Max(box.X + 8, box.Right - 8 - textWidth));
-            int captionY = top + inkBottom + 18;
-            canvas.Text(caption, captionX, captionY, font, 1);
             string scale = "SCALE " + PrintScale.Ratio(tile.Frame, original.Options);
-            canvas.Text(scale, (int)(center - scale.Length * NativeText.MonoWidth(15) / 2), captionY + font + 4, 15, 1);
-            reserved.Add(new(box.X, captionY, box.Width, font + 23));
-            rendered.Add(tile with
-            {
-                CaptionBounds = new(captionX, captionY, textWidth, font + 23)
-            });
+            float textWidth = Math.Max(longest * NativeText.MonoWidth(font), scale.Length * NativeText.MonoWidth(15));
+            center = Math.Clamp(center, box.X + 8 + textWidth / 2, Math.Max(box.X + 8 + textWidth / 2, box.Right - 8 - textWidth / 2));
+            int captionY = top + Math.Max(0, inkBottom) + 18;
+            canvas.Text(heading, (int)(center - heading.Length * NativeText.MonoWidth(font) / 2), captionY, font, 1);
+            canvas.Text(caption, (int)(center - caption.Length * NativeText.MonoWidth(font) / 2), captionY + font + 4, font, 1);
+            canvas.Text(scale, (int)(center - scale.Length * NativeText.MonoWidth(15) / 2), captionY + 2 * font + 8, 15, 1);
+            var captionBounds = new Box(center - textWidth / 2, captionY, textWidth, 2 * font + 27);
+            reserved.Add(captionBounds);
+            rendered.Add(tile with { CaptionBounds = captionBounds, CaptionFont = font });
         }
         NativeText.Apply(canvas.Pixels, w, h, canvas.Runs);
         var scene = new RenderScene(canvas.Pixels, owners, parts, views.ToArray(), reserved.ToArray(), original.Options, viewOwners)

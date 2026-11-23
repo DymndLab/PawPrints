@@ -116,6 +116,33 @@ static class DrawingPlacementChecks
             Camera = 0
         }, 1, 3)) == "Auxiliary", "An oblique source produces an honestly named auxiliary projection");
         var source = new PoseSource(assembly, [], 1, [new(0, "Craft", "craft", [0], NodeId: 1)], new Dictionary<string, Texture>());
+        // A roomy isometric view still shares scale with an edge-bound front
+        // view. Template metadata must not impose hidden cell limits after moving.
+        var groupedOptions = new PrintOptions(Orientation: 2, Boxes: new(6, 1, 2, 4));
+        var grouped = new DrawingPlacement(400, [new(100, 4, .25f, .45f), new(101, 1, .6f, .3f), new(102, 2, .8f, .3f)]);
+        var initialGroup = DrawingPlacements.Plan(capture, groupedOptions, grouped);
+        float top = DrawingPlacements.Area(groupedOptions).Y;
+        grouped = grouped with { Views = grouped.Views.Select(v => v.Id == 100 ? v : v with
+        {
+            Y = (top + initialGroup.Single(p => p.Id == v.Id).Bounds.Height / 2) / groupedOptions.Page.Height
+        }).ToArray() };
+        ScaleFit GroupFit(DrawingPlacement placement, PrintOptions settings)
+        {
+            settings = settings with { Drawing = placement };
+            var regions = DrawingPlacements.Plan(capture, settings, placement);
+            DrawingPlacements.Validate(regions, settings);
+            var scene = new RenderScene([], Enumerable.Repeat(-1, settings.Page.Width * settings.Page.Height).ToArray(), [], regions, options: settings);
+            return ScaleAdjustment.ForMain(source, scene, placement, []);
+        }
+        var edgeFit = GroupFit(grouped, groupedOptions);
+        var soloFit = GroupFit(grouped with { Views = [grouped.Views[0]] }, groupedOptions);
+        // Pixel rounding permits a fraction of a percent at the opening edge.
+        check(edgeFit.Maximum < 101 && edgeFit.Warning.Contains("FRONT") && soloFit.Maximum > 110,
+            $"Shared scale names an edge-bound view despite room around ISOMETRIC (group {edgeFit.Maximum}%, solo {soloFit.Maximum}%): {edgeFit.Warning}");
+        var movedGroup = grouped with { Views = grouped.Views.Select(v => v.Id == 100 ? v : v with { Y = .4f }).ToArray() };
+        var movedFit = GroupFit(movedGroup, groupedOptions);
+        check(movedFit.Maximum > 110 && movedFit.Maximum == GroupFit(movedGroup, groupedOptions with { Boxes = null }).Maximum,
+            "Moving the limiting views inward permits growth; old template cells impose no hidden scale restriction");
         // Compare the advertised marker to production footprint validation,
         // including the next increment beyond it, without rasterizing sheets.
         foreach (int shape in new[] { 0, 1, 2 })

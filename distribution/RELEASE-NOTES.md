@@ -1,6 +1,22 @@
+# PawPrints 0.5.40 candidate
+
+Local testing is underway. This is not a publication announcement.
+
+- Cleaner curved-part linework and solar sketch detail, including Tessera solar cells.
+- Fuel hoses included in drawings.
+- Drawing recovery controls, dimension selection/deletion, clearer shared-scale limits, and editor interaction fixes.
+- Editable performance-block vehicle headings and updated exploded assembly-guide preferences.
+- Capture diagnostics and shared source mesh storage for repeated components.
+
+Large stations that exceed one million captured vertices remain unsupported. Full large-craft export and broader workflow changes are tracked in the [roadmap](../docs/roadmap.md). Review [remaining release checks](../docs/release-0.5.40-testing.md) before promoting this candidate.
+
+Requires Windows x64, KSA **2026.11.16.5901** and StarMap **0.5.4**.
+
+---
+
 # PawPrints 0.5.39 preview
 
-Updated for KSA 5901: engine ratings, main-nozzle gimbal selection and propellant labels now use the game's rocket/core API. The exact game-build guard remains enforced. Drawing, performance and pose scenarios plus focused editor and Borea-profile export checks passed on the supported build. See [verification and remaining coverage](../docs/ksa-5901-testing.md).
+Updated for KSA 5901: engine ratings, main-nozzle gimbal selection and propellant labels now use the game's rocket/core API. The exact game-build guard remains enforced. Drawing, performance and pose scenarios plus focused editor and Borea-profile export checks passed on the supported build.
 
 The print workspace keeps native editor resources and staging panels out of the drawing, restores focus after resizing, and yields to native settings and save/load dialogs.
 

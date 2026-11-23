@@ -21,12 +21,12 @@ static class CompositionRegeneration
             {
                 Bounds = Map(spec.Bounds)
             };
-            if (previous.Performance is { } data && PerformancePainting.Font(data, b) == 0)
+            if (previous.Performance is { } data && PerformancePainting.Font(data, b, options.TitleBlock?.Title) == 0)
                 b = b with
                 {
                     Bounds = FrameLayout.Clamp(b.Bounds with
                     {
-                        Height = PerformancePainting.Height(data, b, 14)
+                        Height = PerformancePainting.Height(data, b, 14, options.TitleBlock?.Title)
                     }, options)
                 };
             boxes.Add(b.Bounds);
@@ -67,11 +67,11 @@ static class CompositionRegeneration
         bool repaging = fresh.Options.Page != previous.Options.Page;
         var specs = before.Specs.Select(b => b with { Bounds = FrameLayout.Clamp(MapBox(b.Bounds), fresh.Options) }).ToArray();
         if (repaging && after.Performance is { } performance)
-            specs = specs.Select(b => PerformancePainting.Font(performance, b) > 0 ? b : b with
+            specs = specs.Select(b => PerformancePainting.Font(performance, b, fresh.Options.TitleBlock?.Title) > 0 ? b : b with
             {
                 Bounds = FrameLayout.Clamp(b.Bounds with
                 {
-                    Height = PerformancePainting.Height(performance, b, 14)
+                    Height = PerformancePainting.Height(performance, b, 14, fresh.Options.TitleBlock?.Title)
                 }, fresh.Options)
             }).ToArray();
         var tables = new TableLayout(Table(before.Tables.Parts, 0), Table(before.Tables.Flagnotes, 1));
@@ -89,7 +89,7 @@ static class CompositionRegeneration
                 return placed;
             }
             details = details.Select(d => d with { Bounds = Place(d.Bounds) }).ToArray();
-            specs = specs.Select(b => b with { Bounds = Place(b.Bounds, candidate => after.Performance != null && PerformancePainting.Font(after.Performance, b with { Bounds = candidate }) > 0) }).ToArray();
+            specs = specs.Select(b => b with { Bounds = Place(b.Bounds, candidate => after.Performance != null && PerformancePainting.Font(after.Performance, b with { Bounds = candidate }, fresh.Options.TitleBlock?.Title) > 0) }).ToArray();
             foreach (int id in new[] { 0, 1 })
             {
                 if (id == 0 ? !fresh.Options.PartsTable : !fresh.Options.FlagTable)

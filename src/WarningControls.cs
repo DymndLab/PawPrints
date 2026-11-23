@@ -12,6 +12,10 @@ public sealed partial class BlueprintMod
 
     static void ReportFailure(string message)
     {
+        if (message.StartsWith("Preview failed:", StringComparison.Ordinal)
+            || message.StartsWith("Invalid page size:", StringComparison.Ordinal)
+            || message.StartsWith("Export unavailable:", StringComparison.Ordinal))
+            KeepAcceptedPrintEditable();
         PrintDiagnostics.Record("warning.shown");
         status = message;
         warningNotice = message;
@@ -32,8 +36,8 @@ public sealed partial class BlueprintMod
             partMenuOpen = true;
             PrintUiStyle.Warning(warningNotice);
             if (sheet != null && (warningNotice.StartsWith("Preview failed:", StringComparison.Ordinal) || warningNotice.StartsWith("Invalid page size:", StringComparison.Ordinal)))
-                PrintUiText.Wrapped("Your previous print has been kept.");
-            if (warningNotice.StartsWith("Save failed:", StringComparison.Ordinal))
+                PrintUiText.Wrapped("Your drawing is still available to edit and export. The failed changes were not applied.");
+            if (warningNotice?.StartsWith("Save failed:", StringComparison.Ordinal) == true)
             {
                 if (ImGui.Button("Choose export folder..."))
                 {

@@ -16,6 +16,10 @@
     <EmbeddedResource Include="../assets/fonts/labelleaurore/LaBelleAurore.ttf" LogicalName="PawPrints.Fonts.labelleaurore.ttf" />
 
     <Compile Include="Program.cs" />
+    <Compile Include="../src/CaptureStats.cs" />
+    <Compile Include="../src/PrintDiagnostics.cs" />
+    <Compile Include="CaptureStatsChecks.cs" />
+    <Compile Include="CurvatureChecks.cs" />
     <Compile Include="PartSupportChecks.cs" />
     <Compile Include="../src/LogoPicker.cs" />
     <Compile Include="../src/Storage/*.cs" />
@@ -36,6 +40,8 @@
     <Compile Include="PerformanceChecks.cs" />
     <Compile Include="PoseChecks.cs" />
     <Compile Include="PreviewUpdateChecks.cs" />
+    <Compile Include="GenerationRecoveryChecks.cs" />
+    <Compile Include="FuelHoseChecks.cs" />
     <Compile Include="ProfileStorageChecks.cs" />
     <Compile Include="ScaleReferenceChecks.cs" />
     <Compile Include="TemplateChecks.cs" />

@@ -25,11 +25,12 @@ public sealed partial class BlueprintMod
         PrintUiStyle.Help("Align nearby captions, frames, tables, views and text-box edges during placement.");
         ImGui.Separator();
         ImGui.BeginDisabled(ControlsLocked);
-        ImGui.Text("Leader lines");
+        ImGui.Text("Leader and assembly guide lines");
         int printLine = defaultLine;
         ImGui.SetNextItemWidth(-1);
         if (ImGui.Combo("##Print leader"u8, ref printLine, LineNames, LineNames.Length))
             ApplyPrintStyle(printLine, defaultTip);
+        PrintUiStyle.Help("Applies to note leaders, performance leaders and exploded assembly guides. Assembly guides stay subdued and have no endpoint symbol.");
         ImGui.Text("Endpoints");
         int printTip = defaultTip;
         ImGui.SetNextItemWidth(-1);

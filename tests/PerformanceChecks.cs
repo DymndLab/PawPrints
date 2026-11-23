@@ -108,6 +108,46 @@ static class PerformanceChecks
         var paper = new Canvas(options.Page.Width, options.Page.Height, colors.Paper, colors.Ink, options);
         var owners = Enumerable.Repeat(-1, options.Page.Width * options.Page.Height).ToArray();
         var scene = new RenderScene(paper.Pixels, owners, [], [], options: options).WithPerformance(data);
+        var namedData = data with { CraftName = "NewRocket_1" };
+        var namedOptions = options with { TitleBlock = new(Title: "Moon Lander") };
+        var namedBlock = vehicle with { Fields = SpecField.Name | SpecField.Thrust };
+        var namedScene = scene.WithPerformance(namedData).WithOptions(namedOptions).WithSpecs([namedBlock]);
+        check(SpecMetrics.Title(namedData, namedBlock, "Moon Lander") == "VEHICLE PERFORMANCE / MOON LANDER"
+            && SpecMetrics.Title(namedData, namedBlock, " ") == "VEHICLE PERFORMANCE / NEWROCKET_1",
+            "Vehicle heading follows the drawing title and falls back to captured craft name only for a blank title");
+        var customBlock = namedBlock with { VehicleName = "Lander / ascent unit" };
+        check(SpecMetrics.Title(namedData, customBlock, "Different title") == "VEHICLE PERFORMANCE / LANDER / ASCENT UNIT"
+            && SpecMetrics.Title(namedData, customBlock with { VehicleName = null }, "Different title") == "VEHICLE PERFORMANCE / DIFFERENT TITLE",
+            "Per-block vehicle-name override stays independent and can return to following the title");
+        check(SpecMetrics.Title(namedData, engine, "Moon Lander") == SpecMetrics.Title(data, engine)
+            && SpecMetrics.Rows(namedData, customBlock).SequenceEqual(SpecMetrics.Rows(namedData, namedBlock)),
+            "Vehicle display names do not rename engines or alter performance calculations");
+        Canvas PaintNamed(RenderScene s)
+        {
+            var c = new Canvas(options.Page.Width, options.Page.Height, colors.Paper, colors.Ink, s.Options);
+            PerformancePainting.Paint(c, s, []);
+            return c;
+        }
+        check(PaintNamed(namedScene).Runs.Any(r => r.Text == "VEHICLE PERFORMANCE / MOON LANDER")
+            && PaintNamed(namedScene.WithOptions(namedOptions with { TitleBlock = new(Title: "Lander Two") }))
+                .Runs.Any(r => r.Text == "VEHICLE PERFORMANCE / LANDER TWO"),
+            "Printed vehicle heading resolves the current scene title rather than the captured file name");
+        var customScene = namedScene.WithSpecs([customBlock]);
+        var nameHistory = new AnnotationDocument(namedScene);
+        nameHistory.Rebind(customScene, [], []);
+        nameHistory.Undo();
+        check(nameHistory.Scene.Specs.Single().VehicleName == null, "Undo restores title-following vehicle-name mode");
+        nameHistory.Redo();
+        check(nameHistory.Scene.Specs.Single().VehicleName == customBlock.VehicleName, "Redo restores the per-block vehicle name");
+        var nameSheet = new Sheet("Moon Lander", namedOptions, paper.Pixels, Sheet.MakePreview(paper.Pixels), []) { Scene = namedScene };
+        var nameRegenerated = CompositionRegeneration.Rebuild(nameSheet, nameSheet with { Scene = customScene }, default);
+        check(nameRegenerated.Scene!.Specs.Single().VehicleName == customBlock.VehicleName
+            && PaintNamed(nameRegenerated.Scene).Runs.Any(r => r.Text == "VEHICLE PERFORMANCE / LANDER / ASCENT UNIT"),
+            "Regeneration preserves and prints the custom performance-block name");
+        var narrowName = namedBlock with { Bounds = new(200, 300, 330, 1000) };
+        string longName = string.Join(" ", Enumerable.Repeat("Long vehicle title", 8));
+        check(PerformancePainting.Height(namedData, narrowName, 24, longName) > PerformancePainting.Height(namedData, narrowName, 24, "Short"),
+            "Performance block sizing accounts for wrapping the resolved drawing title");
         var routeOwners = Enumerable.Repeat(-1, owners.Length).ToArray();
         void Rect(int id, int x, int y, int w, int h)
         {

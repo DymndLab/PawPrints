@@ -79,9 +79,15 @@ static class PreviewUpdates
 
     public static Sheet Render(Sheet previous, Sheet main, PrintOptions desired, CancellationToken token)
     {
-        // A line/endpoint-only edit can reuse even the composed craft background.
+        // Label/endpoint edits reuse the background. Assembly guide patterns
+        // are in detail tiles, so a changed definition must rebuild those tiles.
         if (previous.Options == desired)
+        {
+            if (previous.Scene != null && !previous.Details.SequenceEqual(previous.Scene.Details.Select(d => d.Definition)))
+                return ExplodedPainting.Compose(main, previous, previous.Details, previous.Labels, token,
+                    tables: previous.Scene.Tables, captions: previous.Scene.Captions);
             return AnnotationPainting.Compose(previous, previous.Labels, token);
+        }
         var options = desired;
         bool cached = CanRepaint(main, options);
         Sheet fresh;
@@ -112,4 +118,16 @@ static class PreviewUpdates
             Notice = "Preview updated. Ctrl+Z undoes the change."
         };
     }
+}
+
+// Apply a pending print-wide style to detached composition data. Accepted
+// scene/detail pixels stay untouched until the replacement render succeeds.
+static class PrintStyles
+{
+    public static Sheet Apply(Sheet current, LeaderLine line, LeaderTip tip) => current.Scene == null ? current : current with
+    {
+        Labels = current.Labels.Select(l => l with { Line = line, Tip = tip, ManualPlacement = true }).ToArray(),
+        Details = current.Details.Select(d => d with { GuideLine = line }).ToArray(),
+        Scene = current.Scene.WithSpecs(current.Scene.Specs.Select(s => s with { Line = line, Tip = tip }).ToArray())
+    };
 }

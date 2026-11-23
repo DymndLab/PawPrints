@@ -8,7 +8,7 @@ sealed record ExplodedSource(AssemblyCapture Assembly, IReadOnlyDictionary<strin
 sealed record ExplodedGroup(uint Node, Vector3 Offset, bool Hidden = false, int Axis = 0);
 sealed record DetailSizing(float Ratio, float? Spread = null, Vector3? Center = null, int Width = 0, int Height = 0);
 sealed record ExplodedDetail(int Id, uint Scope, Box Bounds, string Caption, int View = 4, float Separation = 1, int Axis = 0, bool IncludeInternal = false,
-    bool Guides = true, uint[]? Expanded = null, ExplodedGroup[]? Groups = null, ProjectionFrame? Camera = null, uint? Seed = null, DetailSizing? Sizing = null)
+    bool Guides = true, uint[]? Expanded = null, ExplodedGroup[]? Groups = null, ProjectionFrame? Camera = null, uint? Seed = null, DetailSizing? Sizing = null, LeaderLine GuideLine = LeaderLine.Dotted)
 {
     public int ViewId => 1000 + Id;
 }
@@ -21,6 +21,7 @@ sealed record DetailGeometry(Capture Capture, int[] OriginalMeshes, uint[] Group
 }
 sealed record RenderedDetail(ExplodedDetail Definition, ProjectionFrame Frame, int[] Meshes, uint[] Groups, ViewPixels Pixels)
 {
+    public int CaptionFont { get; init; }
     public uint? Anchor
     {
         get; init;
@@ -259,7 +260,7 @@ static class ExplodedGeometry
     public static RenderedDetail Render(ExplodedSource source, ExplodedDetail detail, CancellationToken token, PrintOptions? options = null)
     {
         var geometry = Build(source.Assembly, detail);
-        int w = (int)detail.Bounds.Width - 24, h = (int)detail.Bounds.Height - 100;
+        int w = (int)detail.Bounds.Width - 24, h = (int)detail.Bounds.Height - ExplodedPainting.CaptionSpace;
         var basis = SheetLayout.Basis(detail.View);
         var points = geometry.Capture.Meshes.SelectMany(m => m.Vertices).Select(World).ToArray();
         var center = (points.Aggregate(new Vector3(float.PositiveInfinity), Vector3.Min) + points.Aggregate(new Vector3(float.NegativeInfinity), Vector3.Max)) * .5f;
@@ -296,26 +297,12 @@ static class ExplodedGeometry
         var pixels = DetailSampling.Render(geometry.Capture, source.Maps, detail.Caption, detail.View, frame, token);
         if (detail.Guides)
         {
-            var ink = (byte[])pixels.Ink.Clone();
             Vector2 Project(Vector3 p) => new(w * .5f + Vector3.Dot(p - frame.Center, frame.Right) * frame.Scale, h * .5f - Vector3.Dot(p - frame.Center, frame.Up) * frame.Scale);
-            foreach (var i in Enumerable.Range(0, geometry.GroupNodes.Length).DistinctBy(i => geometry.GroupNodes[i]))
-            {
-                var a = Project(geometry.OriginalCenters[i]);
-                var b = Project(geometry.MovedCenters[i]);
-                float length = Vector2.Distance(a, b);
-                for (float t = 0; t < length; t += 12)
-                {
-                    var p = Vector2.Lerp(a, b, t / Math.Max(length, 1));
-                    int x = (int)p.X, y = (int)p.Y;
-                    if (x >= 0 && y >= 0 && x < w && y < h && pixels.MeshOwners[y * w + x] < 0)
-                        ink[y * w + x] = Math.Max(ink[y * w + x], (byte)90);
-                }
-            }
-            pixels = pixels with
-            {
-                Ink = ink
-            };
+            var paths = Enumerable.Range(0, geometry.GroupNodes.Length).DistinctBy(i => geometry.GroupNodes[i])
+                .Select(i => (Project(geometry.OriginalCenters[i]), Project(geometry.MovedCenters[i])));
+            pixels = AssemblyGuidePainting.Paint(pixels, paths, detail.GuideLine, token);
         }
+
         return new(detail, frame, geometry.OriginalMeshes, geometry.GroupNodes, pixels)
         {
             Anchor = geometry.Anchor,

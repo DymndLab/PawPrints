@@ -7,20 +7,20 @@ public sealed partial class BlueprintMod
 {
 
 
-    static string? GenerationBlock(VehicleEditor editor) => GenerationAvailability.Reason(
+    static string? GenerationBlock(VehicleEditor editor, bool startFresh = false) => GenerationAvailability.Reason(
         editor.EditingSpace.Parts is { } tree && tree.Parts.Length > 0, busy, ControlsLocked && !busy,
-        Options.Drawing != null || FixedViewLayouts.Cameras(Options).Length > 0);
+        (!startFresh && Options.Drawing != null) || FixedViewLayouts.Cameras(Options).Length > 0);
 
 
-    static void TryGenerate(VehicleEditor editor)
+    static void TryGenerate(VehicleEditor editor, bool startFresh = false)
     {
-        var reason = GenerationBlock(editor);
+        var reason = GenerationBlock(editor, startFresh);
         if (reason != null)
         {
             ReportFailure(reason);
             return;
         }
-        Generate(editor);
+        Generate(editor, startFresh);
     }
 
 

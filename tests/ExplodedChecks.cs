@@ -125,6 +125,30 @@ static class ExplodedChecks
 
     public static void Run(Action<bool, string> check, string output)
     {
+        var guidePixels = new ViewPixels(160, 40, new byte[160 * 40], Enumerable.Repeat(-1, 160 * 40).ToArray());
+        for (int y = 0; y < 40; y++)
+            for (int x = 70; x < 80; x++)
+            {
+                guidePixels.MeshOwners[y * 160 + x] = 0;
+                guidePixels.Ink[y * 160 + x] = 200;
+            }
+        var guidePaths = new[] { (new Vector2(10, 20), new Vector2(150, 20)) };
+        var guideStyles = Enum.GetValues<LeaderLine>().Select(line => AssemblyGuidePainting.Paint(guidePixels, guidePaths, line, default)).ToArray();
+        check(!guideStyles[0].Ink.SequenceEqual(guideStyles[1].Ink) && !guideStyles[1].Ink.SequenceEqual(guideStyles[2].Ink),
+            "Assembly guide dots, dashes and solid lines produce distinct patterns");
+        check(guideStyles.All(p => Enumerable.Range(0, p.Ink.Length).Where(i => p.MeshOwners[i] >= 0).All(i => p.Ink[i] == guidePixels.Ink[i]))
+            && guideStyles.All(p => ReferenceEquals(p.MeshOwners, guidePixels.MeshOwners)),
+            "Every guide pattern preserves geometry ink and picking ownership");
+        check(Enumerable.Range(10, 140).Where(x => x < 70 || x >= 80).All(x => guideStyles[2].Ink[20 * 160 + x] > 0)
+            && guidePixels.Ink.Where((v, i) => guidePixels.MeshOwners[i] < 0).All(v => v == 0),
+            "Solid guides fill the unobscured path without mutating captured pixels");
+        using (var canceledGuide = new CancellationTokenSource())
+        {
+            canceledGuide.Cancel();
+            try { AssemblyGuidePainting.Paint(guidePixels, guidePaths, LeaderLine.Solid, canceledGuide.Token); check(false, "Canceled guide update must stop"); }
+            catch (OperationCanceledException) { check(true, "Guide painting observes render cancellation"); }
+        }
+
         var capture = new Capture(new[] { Cube("Root", 0, 0, 0), Cube("Bay", 0, 2, 0), Cube("Payload", 0, 3, 0), Cube("Panel", 0, -2, 0), Cube("Internal", 0, 2, 1) });
         AssemblyNode[] nodes = [new(1, null, "Root", "root", false), new(2, 1, "Bay", "bay", false), new(3, 2, "Payload", "payload", true), new(4, 1, "Panel", "panel", false), new(5, 2, "Internal", "inner", true)];
         var assembly = new AssemblyCapture(capture, nodes, [1, 2, 3, 4, 5], [false, false, false, false, true]);
@@ -253,6 +277,34 @@ static class ExplodedChecks
         };
         original.Scene!.MeshNodes = assembly.MeshNodes;
         var initial = ExplodedPainting.Compose(original, original, [detail], [], default, true);
+        // A distinctive background pixel in the unused frame margin must survive.
+        int marginPixel = ((int)detail.Bounds.Y + 2) * original.PixelWidth + (int)detail.Bounds.X + 2;
+        int rgbIndex = marginPixel * 3;
+        byte priorPixel = original.Scene!.BaseRgb[rgbIndex];
+        original.Scene.BaseRgb[rgbIndex] = 123;
+        var cropped = ExplodedPainting.Compose(original, initial, [detail], [], default);
+        check(cropped.Scene!.BaseRgb[rgbIndex] == 123, "Unused detail frame margin preserves underlying drawing pixels");
+        original.Scene.BaseRgb[rgbIndex] = priorPixel;
+        var transparentTile = initial.Scene!.Details.Single().Pixels;
+        int blank = Enumerable.Range(0, transparentTile.Ink.Length).First(q =>
+            q / transparentTile.Width > transparentTile.Height / 3
+            && q / transparentTile.Width < transparentTile.Height * 2 / 3
+            && q % transparentTile.Width > transparentTile.Width / 3
+            && q % transparentTile.Width < transparentTile.Width * 2 / 3
+            && transparentTile.Ink[q] == 0 && transparentTile.MeshOwners[q] < 0);
+        int hole = (((int)detail.Bounds.Y + 12 + blank / transparentTile.Width) * original.PixelWidth
+            + (int)detail.Bounds.X + 12 + blank % transparentTile.Width) * 3;
+        byte priorHole = original.Scene.BaseRgb[hole];
+        original.Scene.BaseRgb[hole] = 123;
+        var transparent = ExplodedPainting.Compose(original, initial, [detail], [], default);
+        check(transparent.Scene!.BaseRgb[hole] == 123, "Empty pixels inside exploded geometry preserve lower drawing layers");
+        original.Scene.BaseRgb[hole] = priorHole;
+
+        var renamed = ExplodedPainting.Compose(original, initial, [detail with { Caption = "A longer assembly caption" }], [], default);
+        var captionTile = renamed.Scene!.Details.Single();
+        check(ReferenceEquals(captionTile.Pixels, initial.Scene!.Details.Single().Pixels), "Caption length does not resize or rerender exploded geometry");
+        check(captionTile.CaptionBounds.Height == 2 * captionTile.CaptionFont + 27,
+            "Exploded caption reserves separate heading, centered name and scale lines");
         var freeNote = FreeTextPainting.Fit(new(42, "Assembly handling note", new(1700, 150, 500, 100), 32, true, true, true, 2), options);
         var noteSpace = TextBoxPlacement.Space(initial.Scene!, [], []);
         freeNote = freeNote with
@@ -265,6 +317,40 @@ static class ExplodedChecks
         {
             Scene = initial.Scene!.WithFreeText([freeNote])
         }, [], default);
+        var styledRequest = PrintStyles.Apply(notedDetail, LeaderLine.Solid, LeaderTip.None);
+        var styledDetail = PreviewUpdates.Render(styledRequest, original, styledRequest.Options, default);
+        check(styledDetail.Details.Single().GuideLine == LeaderLine.Solid
+            && !styledDetail.Scene!.Details[0].Pixels.Ink.SequenceEqual(notedDetail.Scene!.Details[0].Pixels.Ink),
+            "Line-only live update redraws existing exploded guide pixels instead of reusing dotted tiles");
+        check(styledDetail.Scene!.Details[0].Frame == notedDetail.Scene!.Details[0].Frame
+            && styledDetail.Scene.Details[0].Pixels.MeshOwners.SequenceEqual(notedDetail.Scene.Details[0].Pixels.MeshOwners)
+            && styledDetail.Scene.FreeText.Single() == freeNote,
+            "Guide style update preserves geometry, camera, picking and independent text");
+        var regeneratedStyle = CompositionRegeneration.Rebuild(original, styledRequest, default);
+        check(regeneratedStyle.Rgb.SequenceEqual(styledDetail.Rgb), "Manual regeneration and live guide style update produce identical pixels");
+        var styleHistory = new AnnotationDocument(notedDetail.Scene!, notedDetail.Labels);
+        styleHistory.Rebind(notedDetail.Scene!, notedDetail.Labels, notedDetail.Details, false);
+        styleHistory.Rebind(styledDetail.Scene!, styledDetail.Labels, styledDetail.Details);
+        styleHistory.Undo();
+        var undoneStyle = PreviewUpdates.Render(styledDetail with
+        {
+            Scene = styleHistory.Scene, Details = styleHistory.Details, Labels = styleHistory.Labels
+        }, original, styleHistory.Scene.Options, default);
+        check(styleHistory.Details.Single().GuideLine == LeaderLine.Dotted && undoneStyle.Rgb.SequenceEqual(notedDetail.Rgb),
+            "Undo recomposes the original guide pattern and exact pixels");
+        styleHistory.Rebind(undoneStyle.Scene!, undoneStyle.Labels, undoneStyle.Details, false);
+        styleHistory.Redo();
+        var redoneStyle = PreviewUpdates.Render(undoneStyle with
+        {
+            Scene = styleHistory.Scene, Details = styleHistory.Details, Labels = styleHistory.Labels
+        }, original, styleHistory.Scene.Options, default);
+        check(styleHistory.Details.Single().GuideLine == LeaderLine.Solid && redoneStyle.Rgb.SequenceEqual(styledDetail.Rgb),
+            "Redo recomposes solid assembly guides and exact pixels");
+        check(notedDetail.Details.Single().GuideLine == LeaderLine.Dotted, "Pending global styles leave the accepted detail definition untouched");
+        var hiddenGuides = detail with { Guides = false };
+        var hiddenDots = ExplodedGeometry.Render(source, hiddenGuides, default, options);
+        var hiddenSolid = ExplodedGeometry.Render(source, hiddenGuides with { GuideLine = LeaderLine.Solid }, default, options);
+        check(hiddenDots.Pixels.Ink.SequenceEqual(hiddenSolid.Pixels.Ink), "Disabled assembly guides remain hidden for every line preference");
         var appearance = original.Options with
         {
             Theme = 1,
@@ -528,17 +614,15 @@ static class ExplodedChecks
         document.Rebind(restored.Scene!, restored.Labels, restored.Details);
         check(document.Labels.Length == 1 && document.Details.Length == 1, "Undo deletion restores frame and annotations after geometry regeneration");
         var size = ExplodedPainting.Compose(original, restored, [movedDetail with { Bounds = movedDetail.Bounds with { Width = 1000, Height = 900 } }], document.Labels, default, true);
-        check(size.Scene!.Details[0].Pixels.Width == 976 && size.Scene.Details[0].Pixels.Height == 800, "Resizing detail rerenders its actual viewport resolution with space for a lower caption");
+        check(size.Scene!.Details[0].Pixels.Width == 976 && size.Scene.Details[0].Pixels.Height == 900 - ExplodedPainting.CaptionSpace, "Resizing detail rerenders its actual viewport resolution with space for a lower caption");
         var allShapes = Enumerable.Range(0, 3).SelectMany(o => Enumerable.Range(0, 6).Select(a => options with { Orientation = o, Aspect = a }));
         check(allShapes.All(o => { var b = ExplodedPainting.ClampFrame(new(-999, -999, 9999, 9999), o); var a = FrameLayout.Area(o); return b.X >= a.X && b.Y >= a.Y && b.Right <= a.Right && b.Bottom <= a.Bottom; }), "Movable frame stays in drawable paper for every orientation and ratio");
-        try
-        {
-            ExplodedPainting.Compose(original, initial, [detail, detail with { Id = 2 }], [], default);
-            throw new Exception("Overlapping detail accepted");
-        }
-        catch (InvalidOperationException) { check(true, "Overlapping detail frames are rejected without publishing a partial result"); }
+        var stacked = ExplodedPainting.Compose(original, initial, [detail, detail with { Id = 2 }], [], default);
+        check(stacked.Details.Length == 2, "Transparent exploded details may occupy the same frame");
         string folder = Path.Combine(output, "exploded-fixture");
         Directory.CreateDirectory(folder);
         PrintFiles.Save(size, folder);
+        Png.Write(Path.Combine(folder, "guides-dotted.png"), notedDetail.PixelWidth, notedDetail.PixelHeight, notedDetail.Rgb);
+        Png.Write(Path.Combine(folder, "guides-solid.png"), styledDetail.PixelWidth, styledDetail.PixelHeight, styledDetail.Rgb);
     }
 }

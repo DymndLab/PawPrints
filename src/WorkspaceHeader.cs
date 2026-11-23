@@ -18,7 +18,7 @@ public sealed partial class BlueprintMod
     {
         ImGui.Text("PawPrints");
         string[] actions = ["Generate PawPrint", "Save PNG", "View exported drawings", "Back to editor"];
-        float width = actions.Sum(label => ImGui.CalcTextSize(label).X + 28);
+        float width = actions.Concat(new[] { "New drawing..." }).Sum(label => ImGui.CalcTextSize(label).X + 28);
         if (ImGui.GetContentRegionAvail().X > width + 120)
         {
             ImGui.SameLine();
@@ -38,6 +38,11 @@ public sealed partial class BlueprintMod
         if (PrintUiStyle.PrimaryButton("Save PNG"))
             Save();
         ImGui.EndDisabled();
+        ImGui.EndDisabled();
+        Next("New drawing...");
+        ImGui.BeginDisabled(ControlsLocked);
+        if (ImGui.Button("New drawing..."))
+            newDrawingDialog = true;
         ImGui.EndDisabled();
         Next(actions[2]);
         ImGui.BeginDisabled(ControlsLocked || exportFolder == null);

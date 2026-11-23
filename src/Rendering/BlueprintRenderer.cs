@@ -2,7 +2,11 @@ using System.Numerics;
 namespace Blueprint.Rendering;
 
 record Capture(Mesh[] Meshes);
-record Mesh(string Name, double[][] Vertices, int[] Indices, double[][] SourceVertices, double[][] SourceNormals, double[][] UV, string Surface, TextureInfo? NormalTexture, TextureInfo? DiffuseTexture);
+record Mesh(string Name, double[][] Vertices, int[] Indices, double[][] SourceVertices, double[][] SourceNormals, double[][] UV, string Surface, TextureInfo? NormalTexture, TextureInfo? DiffuseTexture)
+{
+    public Vector3? SolarDirection { get; init; }
+    public uint[] ConnectedParts { get; init; } = [];
+}
 record TextureInfo(string Path, int Width, int Height);
 record Texture(TextureInfo Info, byte[] Pixels)
 {
@@ -23,10 +27,13 @@ record Texture(TextureInfo Info, byte[] Pixels)
         return Vector3.Lerp(Vector3.Lerp(P(ix, iy), P(ix + 1, iy), fx), Vector3.Lerp(P(ix, iy + 1), P(ix + 1, iy + 1), fx), fy);
     }
 }
-record Triangle(int Mesh, Vector3 Face);
+record Triangle(int Mesh, Vector3 Face, int Source);
 record HatchEdgeVariant(string Label, float ShadowShift = 0, float Feather = 0, bool CrossOnly = false, int Clearance = 6, int EdgeFade = 0, int EndTaper = 0, int SmoothRadius = 0, float TaperPower = 1, bool TaperCrossOnly = false, bool TaperBoundaryOnly = false);
 sealed partial class BlueprintRenderer
 {
+    CurvatureLines? curvature;
+    readonly Dictionary<int, Vector4> solarBounds = new();
+    float[]? solarInk;
     readonly int W, H;
     readonly int sampleRate;
     readonly Vector2 inkOrigin, referenceSize;
@@ -115,6 +122,8 @@ sealed partial class BlueprintRenderer
             float area = 0;
             for (int j = 0; j < m.Indices.Length; j += 3)
             {
+                if ((j / 3 & 16383) == 0)
+                    token.ThrowIfCancellationRequested();
                 int i0 = m.Indices[j], i1 = m.Indices[j + 1], i2 = m.Indices[j + 2];
                 float test = Vector3.Cross(src[i1] - src[i0], src[i2] - src[i0]).LengthSquared();
                 if (test > area)
@@ -187,6 +196,7 @@ sealed partial class BlueprintRenderer
             cancellation.ThrowIfCancellationRequested();
             var m = capture.Meshes[mi];
             var g = geometry[mi];
+            var solarAxis = m.Surface == "solar" ? m.SolarDirection ?? SolarSketch.SingleSidedAxis(m) : null;
             var pp = g.Pos.Select(Project).ToArray();
             for (int ti = 0; ti < m.Indices.Length; ti += 3)
             {
@@ -201,8 +211,21 @@ sealed partial class BlueprintRenderer
                 if (Math.Abs(det) < .00001)
                     continue;
                 var fn = Unit(Vector3.Cross(g.Pos[b] - g.Pos[a], g.Pos[c] - g.Pos[a]));
+                bool cellFace = false;
+                if (m.Surface == "solar")
+                {
+                    // Keep the geometric plane for crisp rim rejection even with smoothed vertex normals.
+                    var ab = V(m.SourceVertices[b]) - V(m.SourceVertices[a]);
+                    var ac = V(m.SourceVertices[c]) - V(m.SourceVertices[a]);
+                    var plane = Vector3.Cross(ab, ac);
+                    var outward = V(m.SourceNormals[a]) + V(m.SourceNormals[b]) + V(m.SourceNormals[c]);
+                    if (Vector3.Dot(plane, outward) < 0)
+                        plane = -plane;
+                    cellFace = solarAxis is { } axis && Vector3.Dot(plane, axis) > .85f * plane.Length()
+                        && Vector3.Dot(g.Norm[a] + g.Norm[b] + g.Norm[c], toward) > 0;
+                }
                 int id = Triangles.Count;
-                Triangles.Add(new(mi, fn));
+                Triangles.Add(new(mi, fn, ti / 3));
                 var dpdx = ((g.Pos[b] - g.Pos[a]) * e2.Y - (g.Pos[c] - g.Pos[a]) * e1.Y) / det;
                 var dpdy = (-(g.Pos[b] - g.Pos[a]) * e2.X + (g.Pos[c] - g.Pos[a]) * e1.X) / det;
                 var duvdx = ((g.UV[b] - g.UV[a]) * e2.Y - (g.UV[c] - g.UV[a]) * e1.Y) / det;
@@ -224,6 +247,20 @@ sealed partial class BlueprintRenderer
                         face[q] = id;
                         var n = Unit(g.Norm[a] * u + g.Norm[b] * v + g.Norm[c] * w);
                         var uv = g.UV[a] * u + g.UV[b] * v + g.UV[c] * w;
+                        if (cellFace)
+                        {
+                            solarInk ??= new float[W * H];
+                            if (!solarBounds.TryGetValue(mi, out var bounds))
+                            {
+                                bounds = new((float)m.UV.Min(p => p[0]), (float)m.UV.Min(p => p[1]),
+                                    (float)m.UV.Max(p => p[0]), (float)m.UV.Max(p => p[1]));
+                                solarBounds.Add(mi, bounds);
+                            }
+                            var size = new Vector2(Math.Max(.00001f, bounds.Z - bounds.X), Math.Max(.00001f, bounds.W - bounds.Y));
+                            solarInk[q] = SolarSketch.Ink((uv - new Vector2(bounds.X, bounds.Y)) / size, duvdx / size, duvdy / size);
+                        }
+                        else if (solarInk != null)
+                            solarInk[q] = 0;
                         surfaceNormal[q] = n;
                         normalDeviation[q] = default;
                         tone[q] = 0;
@@ -263,6 +300,7 @@ sealed partial class BlueprintRenderer
     {
         // Restore the original High study's 10-degree geometry threshold on ALL
         // materials. Material detail is additive and never substitutes for edges.
+        curvature ??= CurvatureLines.Build(capture, cancellation);
         creaseDegrees = degrees;
         Array.Clear(structuralLines);
         float cos = MathF.Cos(degrees * MathF.PI / 180);
@@ -284,7 +322,7 @@ sealed partial class BlueprintRenderer
                         continue;
                     }
                     var other = Triangles[face[j]];
-                    if (t.Mesh != other.Mesh || Vector3.Dot(t.Face, other.Face) < cos)
+                    if (t.Mesh != other.Mesh || (Vector3.Dot(t.Face, other.Face) < cos && !curvature.Smooth(t.Mesh, t.Source, other.Source, cos)))
                         line = Math.Max(line, .8f);
                 }
                 structuralLines[q] = line;

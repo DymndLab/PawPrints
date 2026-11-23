@@ -103,7 +103,7 @@ sealed partial class BlueprintRenderer
                         }
                     }
                     if (m.Surface == "solar")
-                        line = Math.Max(line, Math.Max(tone[q], Math.Clamp((nd - .025f) * 2.8f + (ld - .025f) * 2, 0, .78f)));
+                        line = Math.Max(line, solarInk?[q] ?? 0);
                     line = Math.Max(line, HatchInk(q, x, y, 5));
                 }
                 float neighbor = Math.Max(Math.Max(structuralLines[q - 1], structuralLines[q + 1]), Math.Max(structuralLines[q - W], structuralLines[q + W]));

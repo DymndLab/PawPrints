@@ -189,6 +189,9 @@ for (int i = 0; i < after.Length; i++)
         throw new InvalidDataException("Unexpected menu rewrite at instruction " + i);
 }
 Require(after.Count(i => i.Calls(replacement)) == callCount, "Production menu transpiler rewrites only matching calls");
+PrintRecoveryChecks.Run(modType, mod, Require);
+SelectionChecks.Run(modType, Require);
+FuelHoseCaptureChecks.Run(host, mod, Require);
 Console.WriteLine("PASS host contracts and real-IL menu rewrite. No patches installed; native game acceptance remains separate.");
 
 bool IsExitLabel(FieldInfo field)

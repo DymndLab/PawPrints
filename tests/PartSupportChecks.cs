@@ -1,3 +1,4 @@
+using System.Numerics;
 using System.Text;
 using System.Text.Json;
 using Blueprint.Rendering;
@@ -6,11 +7,12 @@ static class PartSupportChecks
 {
     public static void Run(Action<bool, string> check, string output)
     {
+        CheckSolarFaces(check);
         var stock = PartSupport.Bundled;
         foreach (var (template, expected) in new[]
         {
             ("CoreSolarPanelA_CellA", "solar"), ("CoreSolarPanelA_CellAFoil", "solar"),
-            ("CoreCapsule_Cloth", "foil"), ("CoreFoilA", "foil"),
+            ("CoreElectricalA_Subpart_SolarPanelB_CellA", "solar"), ("CoreCapsule_Cloth", "foil"), ("CoreFoilA", "foil"),
             ("UnknownMod_Panel", "structure"), ("unknown_foil", "structure")
         })
             check(stock.Surface(template) == expected, "Stock surface behavior: " + template);
@@ -103,6 +105,41 @@ static class PartSupportChecks
             check(Rejects(() => PartSupport.Load(folder)), "Oversized external files are rejected before parsing");
         }
         finally { Directory.Delete(folder, recursive: true); }
+    }
+
+    static void CheckSolarFaces(Action<bool, string> check)
+    {
+        double[][] uv = [[0, 0], [1, 0], [1, 1], [0, 1]];
+        var positions = new List<double[]>();
+        var normals = new List<double[]>();
+        foreach (int sign in new[] { -1, 1 })
+            foreach (var corner in uv)
+            {
+                positions.Add([corner[0] - .5, corner[1] - .5, sign * .04]);
+                normals.Add([0, 0, sign]);
+            }
+        var mesh = new Mesh("panel", positions.ToArray(), [0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7],
+            positions.ToArray(), normals.ToArray(), [.. uv, .. uv], "solar", null, null);
+        int InteriorInk(Mesh m, int side)
+        {
+            // The renderer maps source +Z to drawing +Y.
+            var frame = new ProjectionFrame(128, 128, 100, Vector3.Zero, Vector3.UnitX, Vector3.UnitZ, side * Vector3.UnitY);
+            var pixels = new BlueprintRenderer(new([m]), new Dictionary<string, Texture>(), "panel", 1, default, frame)
+                .RenderView(_ => { });
+            int marks = 0;
+            for (int y = 32; y < 96; y++)
+                for (int x = 32; x < 96; x++)
+                    if (pixels.Ink[y * 128 + x] > 0)
+                        marks++;
+            return marks;
+        }
+        var powered = mesh with { SolarDirection = Vector3.UnitZ };
+        check(InteriorInk(powered, 1) > 0, "Selected cell face receives solar ink");
+        check(InteriorInk(powered, -1) == 0, "Backing occludes the hatched face without retaining its ink");
+        check(InteriorInk(mesh with { SolarDirection = Vector3.UnitX }, 1) == 0, "Faces perpendicular to the module axis stay clear");
+        check(SolarSketch.SingleSidedAxis(mesh) == null, "Two-sided panel without a module has no inferred front");
+        check(SolarSketch.SingleSidedAxis(mesh with { Indices = [4, 5, 6, 4, 6, 7] }) == Vector3.UnitZ,
+            "Single-sided decorative panel supplies its own facing direction");
     }
 
     static PartSupport Parse(string text) => PartSupport.Parse(Encoding.UTF8.GetBytes(text));

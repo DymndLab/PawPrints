@@ -6,10 +6,28 @@ namespace Blueprint;
 
 public sealed partial class BlueprintMod
 {
+    static int selectedHeight = -1;
     static int heightViewIndex, heightGap = 90, heightControlsView = -1;
     static HeightDimension? heightControlsValue;
     static HeightDimension? dragHeight;
     static float heightGrabOffset;
+
+
+    static void SelectHeight(int viewId)
+    {
+        SelectLabel(-1);
+        SelectDetail(-1);
+        selectedCanvasView = selectedText = selectedKitten = selectedSpec = selectedTable = -1;
+        selectedHeight = viewId;
+    }
+
+    static void DeleteHeight(int viewId)
+    {
+        if (!CanEditAnnotations || document?.Scene.Dimensions.Any(d => d.ViewId == viewId) != true)
+            return;
+        QueueHeight(null, viewId);
+        selectedHeight = -1;
+    }
 
 
     static void QueueHeight(HeightDimension? dimension, int viewId)
@@ -83,9 +101,9 @@ public sealed partial class BlueprintMod
             {
                 ImGui.SameLine();
                 if (ImGui.Button("Remove height"u8))
-                    QueueHeight(null, viewId);
+                    DeleteHeight(viewId);
             }
-            PrintUiText.Wrapped("Drag the number or bracket left/right, including between views. Ticks stay aligned to this view's actual craft height. Gap fine-tunes spacing on its current side. Ctrl+Z / Ctrl+Y undo or redo.");
+            PrintUiText.Wrapped("Click the number or bracket to select; Delete removes it. Drag left/right, including between views. Ticks stay aligned to this view's actual craft height. Gap fine-tunes spacing on its current side. Ctrl+Z / Ctrl+Y undo or redo.");
         }
         finally { ImGui.EndDisabled(); }
     }
@@ -109,6 +127,8 @@ public sealed partial class BlueprintMod
             draw.AddLine(Screen(mark.X - 22, mark.Bottom), Screen(mark.X + 22, mark.Bottom), color, 1.5f);
             draw.AddText(ImGui.GetFont(), HeightDimensions.Font * factor, Screen(mark.TextBounds.X, mark.TextBounds.Y), color, mark.Text);
         }
+        if (scene.Dimensions.FirstOrDefault(d => d.ViewId == selectedHeight) is { } selected)
+            DrawMark(HeightDimensions.Place(scene, selected), 0xFF88D8FF);
         if (dragHeight is { } dragging)
         {
             if (ImGui.IsMouseClicked(ImGuiMouseButton.Right))
@@ -143,12 +163,12 @@ public sealed partial class BlueprintMod
         var current = HeightDimensions.Place(scene, hit);
         DrawMark(current, 0xFFFFDD99);
         ImGui.SetMouseCursor(ImGuiMouseCursor.ResizeEW);
-        PrintUiText.Tooltip("Drag height left/right - " + scene.Views.Single(v => v.Id == hit.ViewId).Name);
+        PrintUiText.Tooltip("Click to select; Delete removes. Drag height left/right - " + scene.Views.Single(v => v.Id == hit.ViewId).Name);
         if (ImGui.IsMouseClicked(ImGuiMouseButton.Left))
         {
             dragHeight = hit;
             heightGrabOffset = current.X - point.X;
-            SelectLabel(-1);
+            SelectHeight(hit.ViewId);
             heightViewIndex = Array.FindIndex(scene.Views.Where(HeightDimensions.Eligible).ToArray(), v => v.Id == hit.ViewId);
             heightControlsView = hit.ViewId;
             heightGap = hit.Gap;

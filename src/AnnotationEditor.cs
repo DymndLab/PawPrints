@@ -27,10 +27,11 @@ public sealed partial class BlueprintMod
 
     static void CancelPlacement()
     {
-        selectedCanvasView = -1;
+        selectedCanvasView = selectedHeight = -1;
         placingText = false;
         textBoxStart = null;
         warningNotice = null;
+        newDrawingDialog = false;
         CancelTextPreview();
         textDraft = null;
         dragText = null;
@@ -58,6 +59,8 @@ public sealed partial class BlueprintMod
 
     static void SelectLabel(int id)
     {
+        if (id >= 0)
+            selectedHeight = -1;
         selectedSpec = -1;
         selectedLabel = id;
         labelText.SetValue((document?.Labels.FirstOrDefault(l => l.Id == id)?.Text ?? "").AsSpan());
@@ -113,7 +116,7 @@ public sealed partial class BlueprintMod
         else
             ReportFailure(reason);
     }
-    static bool ControlsLocked => placingText || exportSetupOpen || warningNotice != null || viewSizeDialog || textDraft != null || dragText != null || GhostActive || viewDraft != null || dragView != null || specDraft != null || dragSpec != null || poseDialog || busy || dragKitten != null || dragHeight != null || dragLabel != null || pendingLabel != null || flagnotePlacement != null || DetailGesture;
+    static bool ControlsLocked => newDrawingDialog || placingText || exportSetupOpen || warningNotice != null || viewSizeDialog || textDraft != null || dragText != null || GhostActive || viewDraft != null || dragView != null || specDraft != null || dragSpec != null || poseDialog || busy || dragKitten != null || dragHeight != null || dragLabel != null || pendingLabel != null || flagnotePlacement != null || DetailGesture;
 
 
     static void DrawControls(VehicleEditor editor)
@@ -429,6 +432,8 @@ public sealed partial class BlueprintMod
         var point = new Vec((mouse.X - origin.X) / factor, (mouse.Y - origin.Y) / factor);
         bool editable = !busy && PrintIsCurrent && document != null;
         bool hovered = ImGui.IsItemHovered();
+        if (hovered && ImGui.IsMouseClicked(ImGuiMouseButton.Left))
+            selectedHeight = -1;
         if (hovered && ImGui.IsMouseClicked(ImGuiMouseButton.Left) && document != null
             && !document.Scene.Captions.Any(c => c.ViewId < 1000 && c.Bounds.Contains(point)))
             selectedCanvasView = -1;

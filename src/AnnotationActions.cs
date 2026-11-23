@@ -9,7 +9,7 @@ namespace Blueprint;
 public sealed partial class BlueprintMod
 {
     static bool annotationKeysActive, canvasHovered, spaceHeld, panning;
-    static int hoveredLabel = -1, requestedEdit, requestedDelete = -1, requestedViewDelete = -1;
+    static int hoveredLabel = -1, requestedEdit, requestedDelete = -1, requestedViewDelete = -1, requestedHeightDelete = -1;
     static Vec panMouse, panScroll;
     static RenderScene? partMenuScene;
     static int partMenuView, partMenuPart;
@@ -17,7 +17,7 @@ public sealed partial class BlueprintMod
     static FlagnotePlacement? flagnotePlacement;
     static RenderScene? flagnoteScene;
     static string flagnoteError = "";
-    static bool CanEditAnnotations => !placingText && !exportSetupOpen && warningNotice == null && !viewSizeDialog && textDraft == null && dragText == null && !GhostActive && viewDraft == null && dragView == null && specDraft == null && dragSpec == null && !poseDialog && !busy && document != null && sheet?.Options == Options && dragKitten == null && dragHeight == null && dragLabel == null && pendingLabel == null && flagnotePlacement == null && !panning && !DetailGesture;
+    static bool CanEditAnnotations => !newDrawingDialog && !placingText && !exportSetupOpen && warningNotice == null && !viewSizeDialog && textDraft == null && dragText == null && !GhostActive && viewDraft == null && dragView == null && specDraft == null && dragSpec == null && !poseDialog && !busy && document != null && sheet?.Options == Options && dragKitten == null && dragHeight == null && dragLabel == null && pendingLabel == null && flagnotePlacement == null && !panning && !DetailGesture;
 
 
     static void DeleteAnnotation(int id)
@@ -46,7 +46,7 @@ public sealed partial class BlueprintMod
             document.Undo();
         SelectLabel(-1);
         selectedText = -1;
-        selectedCanvasView = -1;
+        selectedCanvasView = selectedHeight = -1;
         Repaint();
     }
 
@@ -70,12 +70,21 @@ public sealed partial class BlueprintMod
             return false;
         if (action == GlfwKeyAction.Press && CanEditAnnotations && !partMenuOpen)
         {
-            requestedEdit = edit;
-            requestedViewDelete = selectedCanvasView;
-            requestedReference = selectedCanvasView >= 0 ? -1 : hoveredKitten >= 0 ? hoveredKitten : hoveredText < 0 && hoveredSpec < 0 && hoveredLabel < 0 ? selectedKitten : -1;
-            requestedDelete = selectedCanvasView >= 0 ? -1 : hoveredText >= 0 ? -2000 - hoveredText : hoveredSpec >= 0 ? -1000 - hoveredSpec : hoveredLabel >= 0 ? hoveredLabel : selectedText >= 0 ? -2000 - selectedText : selectedSpec >= 0 ? -1000 - selectedSpec : selectedLabel;
+            RequestAnnotationEdit(edit);
         }
         return true;
+    }
+
+
+    // Snapshot the target at key press; process it on the UI thread's toolbar pass.
+    static void RequestAnnotationEdit(int edit)
+    {
+        requestedEdit = edit;
+        requestedHeightDelete = selectedHeight;
+        requestedViewDelete = selectedCanvasView;
+        bool canvasSelection = selectedHeight >= 0 || selectedCanvasView >= 0;
+        requestedReference = canvasSelection ? -1 : hoveredKitten >= 0 ? hoveredKitten : hoveredText < 0 && hoveredSpec < 0 && hoveredLabel < 0 ? selectedKitten : -1;
+        requestedDelete = canvasSelection ? -1 : hoveredText >= 0 ? -2000 - hoveredText : hoveredSpec >= 0 ? -1000 - hoveredSpec : hoveredLabel >= 0 ? hoveredLabel : selectedText >= 0 ? -2000 - selectedText : selectedSpec >= 0 ? -1000 - selectedSpec : selectedLabel;
     }
 
 
@@ -317,7 +326,9 @@ public sealed partial class BlueprintMod
             requestedEdit = 0;
             if (edit == 1)
             {
-                if (requestedReference >= 0)
+                if (requestedHeightDelete >= 0)
+                    DeleteHeight(requestedHeightDelete);
+                else if (requestedReference >= 0)
                     DeleteReference(requestedReference);
                 else if (requestedDelete <= -2000)
                     DeleteTextBox(-2000 - requestedDelete);
@@ -336,10 +347,12 @@ public sealed partial class BlueprintMod
                 UndoAnnotations(edit == 3);
         }
         ImGui.BeginDisabled(!CanEditAnnotations);
-        ImGui.BeginDisabled(selectedLabel < 0 && selectedDetail < 0 && selectedSpec < 0 && selectedText < 0 && selectedKitten < 0 && selectedCanvasView < 0);
-        if (ImGui.Button(selectedCanvasView >= 0 ? "Delete view" : "Delete selected"))
+        ImGui.BeginDisabled(selectedLabel < 0 && selectedDetail < 0 && selectedSpec < 0 && selectedText < 0 && selectedKitten < 0 && selectedCanvasView < 0 && selectedHeight < 0);
+        if (ImGui.Button(selectedHeight >= 0 ? "Delete dimension" : selectedCanvasView >= 0 ? "Delete view" : "Delete selected"))
         {
-            if (selectedKitten >= 0)
+            if (selectedHeight >= 0)
+                DeleteHeight(selectedHeight);
+            else if (selectedKitten >= 0)
                 DeleteReference(selectedKitten);
             else if (selectedText >= 0)
                 DeleteTextBox(selectedText);

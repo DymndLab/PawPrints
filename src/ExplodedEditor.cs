@@ -64,7 +64,7 @@ public sealed partial class BlueprintMod
     static void SelectDetail(int id)
     {
         if (id >= 0)
-            selectedTable = -1;
+            selectedTable = selectedHeight = -1;
         selectedDetail = id;
         selectedLabel = -1;
         detailEdit = document?.Details.FirstOrDefault(d => d.Id == id);
@@ -174,7 +174,7 @@ public sealed partial class BlueprintMod
                 {
                     int id = Enumerable.Range(1, ExplodedPainting.Limit).First(i => !document!.Details.Any(d => d.Id == i));
                     var area = PageLayout.Drawing(Options);
-                    pendingDetail = new(id, scope, ExplodedPainting.ClampFrame(new(area.X, area.Y, Math.Min(900, area.Width), Math.Min(800, area.Height)), Options), node.Name, Seed: detailAncestors[0]);
+                    pendingDetail = new(id, scope, ExplodedPainting.ClampFrame(new(area.X, area.Y, Math.Min(900, area.Width), Math.Min(800, area.Height)), Options), node.Name, Seed: detailAncestors[0], GuideLine: (LeaderLine)defaultLine);
                     var draft = pendingDetail;
                     pendingDetail = null;
                     PreviewDetail(draft);
@@ -229,7 +229,8 @@ public sealed partial class BlueprintMod
             Caption = detail.Caption,
             Camera = detail.Camera,
             Sizing = detail.Sizing,
-            Guides = detail.Guides
+            Guides = detail.Guides,
+            GuideLine = detail.GuideLine
         } != detail)
             detail = detail with
             {
@@ -523,7 +524,7 @@ public sealed partial class BlueprintMod
                 if (!resizeDetail)
                 {
                     var mark = sheet!.Scene!.Details.Single(d => d.Definition.Id == dragging.Id);
-                    var anchor = ViewAlignment.Anchor(mark.CaptionBounds, (int)mark.CaptionBounds.Height - 23) - new Vec(dragging.Bounds.X, dragging.Bounds.Y);
+                    var anchor = ViewAlignment.Anchor(mark.CaptionBounds, mark.CaptionFont) - new Vec(dragging.Bounds.X, dragging.Bounds.Y);
                     var area = FrameLayout.Area(Options);
                     b = SnapCaptionBox(b, anchor, dragging.ViewId, factor, false, false,
                         proposed => proposed.X >= area.X && proposed.Y >= area.Y && proposed.Right <= area.Right && proposed.Bottom <= area.Bottom && PanelClear(proposed, dragging.Id));

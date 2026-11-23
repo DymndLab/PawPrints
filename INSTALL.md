@@ -2,7 +2,7 @@
 
 PawPrints **0.5.39** requires **Windows x64**, **KSA 2026.11.16.5901** and **StarMap 0.5.4**. It refuses unsupported game builds and is available in Borea's Stable channel.
 
-PawPrints remains under active development. Native drawing, performance and pose scenarios and focused editor checks have passed on 5901. See [verification and remaining coverage](https://github.com/DymndLab/PawPrints/blob/v0.5.39/docs/ksa-5901-testing.md) for the tested scope.
+PawPrints remains under active development. Native drawing, performance and pose scenarios and focused editor checks have passed on 5901.
 
 ## Install with StarMap
 
@@ -42,4 +42,4 @@ Company logos and title defaults are stored under `<active profile>/PawPrints/Lo
 
 PawPrints requires a loaded craft. An empty editor shows **No vehicle loaded** when hovering its menu entry.
 
-The local diagnostic log is `<active profile>/logs/PawPrints.log`. It records recent actions and error stacks without typed drawing text. Include reproduction steps and the exact PawPrints, KSA and StarMap versions when [reporting a bug](https://github.com/DymndLab/PawPrints/issues). Review [security and local data](https://github.com/DymndLab/PawPrints/blob/main/SECURITY.md) before sharing game logs or crash dumps.
+The local diagnostic log is `<active profile>/logs/PawPrints.log`. It records recent actions, capture geometry counts and part template IDs, and error stacks without typed drawing text. Include reproduction steps and the exact PawPrints, KSA and StarMap versions when [reporting a bug](https://github.com/DymndLab/PawPrints/issues). Review [security and local data](https://github.com/DymndLab/PawPrints/blob/main/SECURITY.md) before sharing game logs or crash dumps.

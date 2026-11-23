@@ -11,10 +11,14 @@ string output = Path.GetFullPath("tests/output");
 Directory.CreateDirectory(output);
 var suites = new Dictionary<string, Action>
 {
+    ["capture-stats"] = () => CaptureStatsChecks.Run(Check),
+    ["curvature"] = () => CurvatureChecks.Run(Check),
     ["part-support"] = () => PartSupportChecks.Run(Check, output),
     ["templates"] = () => TemplateChecks.Run(Check),
     ["input"] = () => InputChecks.Run(Check),
     ["live-preview"] = () => PreviewUpdateChecks.Run(Check),
+    ["generation-recovery"] = () => GenerationRecoveryChecks.Run(Check),
+    ["fuel-hoses"] = () => FuelHoseChecks.Run(Check, output),
     ["panels"] = () => PanelChecks.Run(Check, output),
     ["border-layout"] = () => BorderLayoutChecks.Run(Check, output),
     ["free-text"] = () => FreeTextChecks.Run(Check),

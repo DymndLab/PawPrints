@@ -2,6 +2,7 @@
 .local/
 .tools/
 release-private/
+/docs/ignore/
 tmp/
 tests/fixtures/
 proof/

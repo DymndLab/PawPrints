@@ -14,11 +14,7 @@ public sealed partial class BlueprintMod
     {
         if (!printStyleDirty || current.Scene == null)
             return current;
-        return current with
-        {
-            Labels = current.Labels.Select(l => l with { Line = (LeaderLine)defaultLine, Tip = (LeaderTip)defaultTip, ManualPlacement = true }).ToArray(),
-            Scene = current.Scene.WithSpecs(current.Scene.Specs.Select(s => s with { Line = (LeaderLine)defaultLine, Tip = (LeaderTip)defaultTip }).ToArray())
-        };
+        return PrintStyles.Apply(current, (LeaderLine)defaultLine, (LeaderTip)defaultTip);
     }
 
     static void PollLivePreview()

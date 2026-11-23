@@ -27,6 +27,8 @@ These are entries for the existing `rules` array, not a replacement for the whol
 
 The frame, cells, radiator and other panel surfaces share Tessera's material atlas. A rule for just the cell subparts preserves structural drawing treatment on the surrounding frame. The repository rules cover these two IDs from Tessera 1.1.1; their final appearance still needs in-game export verification before being called visually tested.
 
+In the local 0.5.40 test build, the active side follows the nearest solar module on the cell or its owning part. Without an unambiguous module, a single-sided cell sheet can still supply its own facing direction. A closed panel with two plausible sides keeps its outline and receives no cell grid.
+
 ## A. Edit your local installation
 
 1. Save any drawing you need as a PNG, then close KSA before editing installed files.

@@ -195,6 +195,15 @@ public sealed partial class BlueprintMod
     static IEnumerable<Box> DrawingObstacles() => PanelNeighbors(int.MinValue).Concat(document!.Scene.Dimensions.Select(d => HeightDimensions.Place(document.Scene, d).Bounds));
 
 
+    static void SelectCanvasView(int id)
+    {
+        SelectLabel(-1);
+        SelectDetail(-1);
+        selectedText = selectedKitten = selectedSpec = selectedTable = selectedHeight = -1;
+        selectedView = selectedCanvasView = id;
+    }
+
+
     static void DeleteDrawingView(int id)
     {
         if (!CanEditAnnotations || !CurrentDrawing().Views.Any(v => v.Id == id))
@@ -587,10 +596,7 @@ public sealed partial class BlueprintMod
             {
                 dragView = drawing.Views.Single(v => v.Id == hit.Id);
                 viewPress = point;
-                selectedView = selectedCanvasView = hit.Id;
-                SelectLabel(-1);
-                SelectDetail(-1);
-                selectedText = selectedKitten = selectedSpec = selectedTable = -1;
+                SelectCanvasView(hit.Id);
                 return true;
             }
             if (ImGui.IsMouseClicked(ImGuiMouseButton.Right) && (caption || document.Scene.Pick(point) == null))

@@ -140,7 +140,7 @@ static class DrawingPlacements
                 int w = Math.Max(100, (int)MathF.Ceiling(dx * scale) + 32), h = Math.Max(100, (int)MathF.Ceiling(dy * scale) + 32);
                 // Bound renderer allocations before any large buffers are created.
                 if (w > options.Page.Width || h + ViewCaption.Band > options.Page.Height)
-                    throw new InvalidOperationException("This preview is too big for the canvas.");
+                    throw new InvalidOperationException($"This preview is too big for the canvas ({Name(v).ToUpperInvariant()}).");
                 var box = new Box(MathF.Round(v.X * options.Page.Width - w / 2f), MathF.Round(v.Y * options.Page.Height - h / 2f), w, h);
                 return new ViewRegion(v.Id, Name(v).ToUpperInvariant(), box, new(w, h, scale, center, b.Right, b.Up, b.Toward), v.Camera);
             }).ToArray();
@@ -153,19 +153,19 @@ static class DrawingPlacements
 
     public static void Validate(ViewRegion[] views, PrintOptions options, IEnumerable<Box>? obstacles = null)
     {
-        var area = Area(options);
         var boxes = views.Select(v => Footprint(v, options.Captions)).ToArray();
-        foreach (var b in boxes)
+        for (int i = 0; i < boxes.Length; i++)
         {
+            var b = boxes[i];
             if (!PageLayout.Fits(b, options))
-                throw new InvalidOperationException("Keep the view and its caption inside the drawing area; move it or reduce its scale.");
+                throw new InvalidOperationException($"Keep {views[i].Name} and its caption inside the drawing area and clear of the title block; move it inward or reduce its scale.");
             if ((obstacles ?? []).Any(o => o.Overlaps(b)))
-                throw new InvalidOperationException("Place the view clear of tables, details and performance blocks.");
+                throw new InvalidOperationException($"Move {views[i].Name} clear of tables, details and performance blocks.");
         }
         for (int i = 0; i < boxes.Length; i++)
             for (int j = i + 1; j < boxes.Length; j++)
                 if (boxes[i].Overlaps(boxes[j]))
-                    throw new InvalidOperationException("Separate the views before committing this placement or scale.");
+                    throw new InvalidOperationException($"Separate {views[i].Name} and {views[j].Name} before increasing their scale.");
     }
 
 

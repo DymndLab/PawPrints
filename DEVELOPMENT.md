@@ -40,7 +40,7 @@ The browser checklist and its Node test dependencies are contained in `tests/man
 
 The test project is a console runner, not xUnit; `dotnet test` is not the entry point. The default runs all portable suites. Run a focused suite by appending `-- --free-text`, `-- --drawing-placement`, `-- --exploded`, `-- --performance`, `-- --poses`, `-- --panels`, `-- --border-layout`, `-- --live-preview`, `-- --logos`, `-- --scale-references`, `-- --input`, `-- --templates`, `-- --part-support` or `-- --profile-storage`. Outputs are in ignored `tests/output/`.
 
-For the 5901 migration, follow [the testing handoff](docs/ksa-5901-testing.md). The optional `tests/host-probe/HostProbe.csproj` checks the actual game metadata and runs the production menu transpiler over real host IL without installing patches or starting the game. It requires explicit game, loader and built mod paths; it is separate from portable CI. Its success does not establish native editor or GPU behavior.
+The optional `tests/host-probe/HostProbe.csproj` checks the actual game metadata and runs the production menu transpiler over real host IL without installing patches or starting the game. It requires explicit game, loader and built mod paths; it is separate from portable CI. Its success does not establish native editor or GPU behavior.
 
 With native prerequisites configured, run `python tools/check_ui_text.py`. This headless ImGui probe checks literal percent text, native call guards and bounded private diagnostics without opening KSA. Its optional `--reproduce-unsafe` deliberately crashes a separate child probe to reproduce the unsafe native call; it is not a release check.
 
@@ -107,3 +107,9 @@ Each rule selects exactly one of `templateId` (exact), `templatePrefix` or `temp
 ```
 
 Append that object to `rules` for the actual template ID being supported. The shipped rules preserve existing stock behavior. Missing files use the embedded bundled rules; invalid files reject generation through the normal warning popup while retaining the previous print. Parsing has byte, depth, rule-count and string-length limits; unknown fields, duplicate selectors and unsupported versions are rejected. This config describes naming and surface treatment, not arbitrary game APIs or custom renderers. Real third-party part packs still require native compatibility testing.
+
+## Large-craft capture measurements
+
+Capture diagnostics in the profile log report observed exterior and interior vertices, triangles, mesh primitives and distinct part IDs, duration, the ten most vertex-heavy template IDs, and any geometry or material budget failure. Counts on failure include the primitive that crossed a limit, not geometry that was never visited; internal counts may be partial if detail was omitted. Template IDs can identify installed part packs: review the log before sharing it.
+
+The geometry estimate uses conservative x64 per-vertex and per-triangle allowances for detached jagged arrays and renderer geometry, before source sharing. It is not a measurement of peak memory: textures, render buffers, old documents, temporary work and other game allocations are additional. Capture retains the existing one-million-vertex ceiling and adds a 512 MiB estimated geometry ceiling; the material limit remains separate. Source positions, normals, UVs and indices are reused between instances of the same mesh reference within one capture, while world positions and identities remain per instance. No higher limit is established by these changes. Measure elapsed time, peak process memory, responsiveness, cancellation and output correctness in the real editor with representative large craft before raising the ceiling; portable tests and a staged build do not establish large-station support.

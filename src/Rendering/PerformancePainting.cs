@@ -61,11 +61,11 @@ static class PerformancePainting
         }
     }
 
-    public static float Height(PerformanceData data, SpecBlock b, int font)
+    public static float Height(PerformanceData data, SpecBlock b, int font, string? drawingTitle = null)
     {
         float h = 24;
         if (b.Shows(SpecField.Name))
-            h += Wrap(SpecMetrics.Title(data, b), b.Bounds.Width - 24, font + 2).Length * (font + 2) * 1.3f + 8;
+            h += Wrap(SpecMetrics.Title(data, b, drawingTitle), b.Bounds.Width - 24, font + 2).Length * (font + 2) * 1.3f + 8;
         if (b.Reference)
             h += Wrap(SpecMetrics.Basis(data, b), b.Bounds.Width - 24, Math.Max(14, font - 4)).Length * Math.Max(14, font - 4) * 1.3f + 8;
         if (b.Format == 0 && SpecMetrics.Rows(data, b).Any(r => r.Environmental))
@@ -76,10 +76,10 @@ static class PerformancePainting
         return MathF.Ceiling(h);
     }
 
-    public static int Font(PerformanceData data, SpecBlock b)
+    public static int Font(PerformanceData data, SpecBlock b, string? drawingTitle = null)
     {
         for (int f = b.FontSize; f >= 14; f--)
-            if (Height(data, b, f) <= b.Bounds.Height)
+            if (Height(data, b, f, drawingTitle) <= b.Bounds.Height)
                 return f;
         return 0;
     }
@@ -92,7 +92,7 @@ static class PerformancePainting
         var area = FrameLayout.Area(scene.Options);
         foreach (var b in scene.Specs)
         {
-            if (b.Environment is < 1 or > 3 || !PageLayout.Fits(b.Bounds, scene.Options) || Font(data, b) == 0)
+            if (b.Environment is < 1 or > 3 || !PageLayout.Fits(b.Bounds, scene.Options) || Font(data, b, scene.Options.TitleBlock?.Title) == 0)
                 throw new InvalidOperationException("Enlarge the specification block or hide some fields to fit its content.");
             if (scene.Specs.Any(o => o.Id != b.Id && o.Bounds.Overlaps(b.Bounds)) || scene.Details.Any(d => d.Definition.Bounds.Overlaps(b.Bounds)) || PrintTables.Panels(scene, labels).Any(t => t.Bounds.Overlaps(b.Bounds)))
                 throw new InvalidOperationException("Keep specification blocks, tables and details clear of each other.");
@@ -168,7 +168,7 @@ static class PerformancePainting
                 canvas.Line((int)r.X, (int)r.Y, (int)r.X, (int)r.Bottom, .8f);
                 canvas.Line((int)r.Right, (int)r.Y, (int)r.Right, (int)r.Bottom, .8f);
             }
-            int font = Font(data, b);
+            int font = Font(data, b, scene.Options.TitleBlock?.Title);
             float x = b.Bounds.X + 12, ypos = b.Bounds.Y + 12, width = b.Bounds.Width - 24;
             void Text(string text, float xx, ref float yy, float w, int f)
             {
@@ -180,7 +180,7 @@ static class PerformancePainting
             }
             if (b.Shows(SpecField.Name))
             {
-                Text(SpecMetrics.Title(data, b), x, ref ypos, width, font + 2);
+                Text(SpecMetrics.Title(data, b, scene.Options.TitleBlock?.Title), x, ref ypos, width, font + 2);
                 ypos += 8;
             }
             if (b.Reference)
