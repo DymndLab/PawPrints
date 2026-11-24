@@ -17,7 +17,8 @@ public sealed partial class BlueprintMod
     static FlagnotePlacement? flagnotePlacement;
     static RenderScene? flagnoteScene;
     static string flagnoteError = "";
-    static bool CanEditAnnotations => !choosingProjectionSource && groupDrag == null && pendingPrimaryDelete < 0 && !newDrawingDialog && !placingText && !exportSetupOpen && warningNotice == null && !viewSizeDialog && textDraft == null && dragText == null && !GhostActive && viewDraft == null && dragView == null && specDraft == null && dragSpec == null && !poseDialog && !busy && document != null && sheet?.Options == Options && dragKitten == null && dragHeight == null && dragLabel == null && pendingLabel == null && flagnotePlacement == null && !panning && !DetailGesture;
+    static bool CanEditAnnotations => CanEditAnnotationState(false);
+    static bool CanEditAnnotationState(bool allowArmedText) => !choosingProjectionSource && groupDrag == null && pendingPrimaryDelete < 0 && !newDrawingDialog && (!placingText || allowArmedText && textBoxStart == null) && !exportSetupOpen && warningNotice == null && !viewSizeDialog && textDraft == null && dragText == null && !GhostActive && viewDraft == null && dragView == null && specDraft == null && dragSpec == null && !poseDialog && !busy && document != null && sheet?.Options == Options && dragKitten == null && dragHeight == null && dragLabel == null && pendingLabel == null && flagnotePlacement == null && !panning && !DetailGesture;
 
 
     static void DeleteAnnotation(int id)
@@ -36,6 +37,11 @@ public sealed partial class BlueprintMod
 
     static void UndoAnnotations(bool redo)
     {
+        if (detailScopeOpen)
+        {
+            UndoScope(redo);
+            return;
+        }
         if (!CanEditAnnotations || document == null)
             return;
         if (redo && !document.CanRedo || !redo && !document.CanUndo)
@@ -97,8 +103,12 @@ public sealed partial class BlueprintMod
         if (flagnote)
         {
             BeginFlagnote(viewId, partId, null);
-            if (held)
-                flagnotePlacement?.PickStart(point);
+            if (held && flagnotePlacement is { } draft &&
+                LeaderRouting.SnapAttachment(document.Scene, draft.Label, point, 0) is { } edge)
+            {
+                draft.PickStart(edge.Vector);
+                PrintDiagnostics.State("flagnote.phase", "anchor");
+            }
             return;
         }
         var existing = !flagnote ? document.Labels.FirstOrDefault(l => !l.FlagNote && l.ViewId == viewId && l.PartId == partId) : null;
@@ -143,6 +153,7 @@ public sealed partial class BlueprintMod
         flagnotePlacement = new(label, preset == null, document.Scene.Width, document.Scene.Height);
         flagnoteScene = document.Scene;
         flagnoteError = "";
+        PrintDiagnostics.State("flagnote.phase", $"begin stage={flagnotePlacement.Stage}");
         if (preset == null)
             noteText.SetValue("".AsSpan());
         status = "Click the leader start, then its end. Right-click cancels.";
@@ -163,14 +174,16 @@ public sealed partial class BlueprintMod
         SelectLabel(label.Id);
         placeKind = 1;
         pickingPartTool = true;
+        PrintDiagnostics.State("flagnote.phase", "commit");
         Repaint();
         return true;
     }
 
 
-    static bool DrawPartMenu(bool hovered, Vec point, bool editable)
+    static bool DrawPartMenu(bool hovered, Vec point, bool editable, Brutal.Numerics.float2 origin, float factor)
     {
         partMenuOpen = false;
+        var canvas = ImGui.GetWindowDrawList();
         if (editable && hovered && dragLabel == null && pendingLabel == null && flagnotePlacement == null && ImGui.IsMouseClicked(ImGuiMouseButton.Right) && document!.Scene.Pick(point) is { } target)
         {
             partMenuScene = document.Scene;
@@ -187,6 +200,7 @@ public sealed partial class BlueprintMod
                 ImGui.CloseCurrentPopup();
             else
             {
+                DrawPartHighlight(partMenuScene!, partMenuView, partMenuPart, origin, factor, canvas);
                 ImGui.Text(document!.Scene.Parts.Single(p => p.Id == partMenuPart).Name);
                 ImGui.Separator();
                 if (ImGui.MenuItem("Adjust Scale"u8))
@@ -225,6 +239,16 @@ public sealed partial class BlueprintMod
                 {
                     BeginDetail(partMenuNode);
                     ImGui.CloseCurrentPopup();
+                }
+                if (partMenuView >= 1000 && document.Details.FirstOrDefault(d => d.ViewId == partMenuView) is { } detail)
+                {
+                    if (ImGui.MenuItem("Edit exploded view..."u8))
+                    {
+                        BeginDetail(detail.Scope, detail.Id);
+                        ImGui.CloseCurrentPopup();
+                    }
+                    if (partMenuNode is { } detailPart)
+                        DrawDetailRemovalMenu(detail.Id, detailPart, origin, factor, canvas);
                 }
                 if (ImGui.MenuItem("Add engine specs"u8, enabled: EngineOwner(partMenuPart) != null))
                 {
@@ -268,6 +292,7 @@ public sealed partial class BlueprintMod
         {
             focusFlagnoteText = true;
             ImGui.OpenPopup("Create flagnote"u8);
+            PrintDiagnostics.State("flagnote.phase", "text.open");
         }
         if (ImGui.BeginPopupModal("Create flagnote"u8, ImGuiWindowFlags.AlwaysAutoResize))
         {

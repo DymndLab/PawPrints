@@ -74,6 +74,53 @@ static class GroupChecks
             Layers = [new(DrawingObjectKind.View, 101), new(DrawingObjectKind.View, 100)]
         });
         check(CanvasObjects.Pick(sheet, reordered, [], inkPoint, 1)?.Id == 100, "Explicit layer order controls coincident view selection");
+
+        Sheet RenderEdit(DrawingPlacement edit, Sheet? previous, PoseSource? editSource = null) =>
+            PosePainting.RenderMain(editSource ?? source, "Overlap", small with { Drawing = edit }, [], [], default,
+                composeAnnotations: false, previous: previous);
+        var translated = layout with { Views = [layout.Views[0] with { X = .5f }, layout.Views[1]] };
+        var fastMove = RenderEdit(translated, sheet);
+        var originalInk = sheet.MainInk!;
+        check(fastMove.MainInk!.Zip(originalInk).All(pair => ReferenceEquals(pair.First.Pixels, pair.Second.Pixels) &&
+            ReferenceEquals(pair.First.MeshOwners, pair.Second.MeshOwners)),
+            "A position-only move reuses all view ink and pick masks and performs zero rasterizations");
+        var coldMove = RenderEdit(translated, null);
+        var fastScene = fastMove.Scene!;
+        var coldScene = coldMove.Scene!;
+        var movedRegion = fastScene.Views[0];
+        var movedInkPoint = inkPoint + movedRegion.Bounds.Center - sheet.Scene!.Views[0].Bounds.Center;
+        check(fastMove.Rgb.AsSpan().SequenceEqual(coldMove.Rgb) && fastScene.Views.SequenceEqual(coldScene.Views) &&
+            fastScene.PickSurface(100, movedInkPoint) == coldScene.PickSurface(100, movedInkPoint) &&
+            fastScene.Visible[(100, 0)].ContactEdges.AsSpan().SequenceEqual(coldScene.Visible[(100, 0)].ContactEdges),
+            "A reused view matches a fresh render including its labels' silhouette anchors and export pixels");
+        var resizedLayout = ProjectionGroups.SetRatio(translated, 100, ratio * 1.25f);
+        var resize = RenderEdit(resizedLayout, fastMove);
+        var coldResize = RenderEdit(resizedLayout, null);
+        check(sheet.MainCurvature != null && ReferenceEquals(fastMove.MainCurvature, sheet.MainCurvature) &&
+            ReferenceEquals(resize.MainCurvature, sheet.MainCurvature) && resize.Rgb.AsSpan().SequenceEqual(coldResize.Rgb),
+            "A resize reuses curvature analysis for the accepted geometry while matching fresh linework");
+        check(!ReferenceEquals(resize.MainInk![0].Pixels, fastMove.MainInk![0].Pixels) &&
+            ReferenceEquals(resize.MainInk[1].Pixels, fastMove.MainInk[1].Pixels),
+            "Resizing an independent view rasterizes only that view");
+        var recaptured = RenderEdit(translated, fastMove, source with { });
+        check(recaptured.MainInk!.Zip(fastMove.MainInk!).All(pair => !ReferenceEquals(pair.First.Pixels, pair.Second.Pixels)),
+            "A fresh capture cannot reuse previous view pixels");
+        check(recaptured.MainCurvature != null && !ReferenceEquals(recaptured.MainCurvature, fastMove.MainCurvature),
+            "Geometry analysis cannot carry over to a different source snapshot");
+
+        var contact = sheet.Scene.Visible[(101, 0)].ContactEdges;
+        var interior = Enumerable.Range(0, tile.Pixels.Length)
+            .Where(i => tile.Pixels[i] == 0 && tile.MeshOwners![i] >= 0)
+            .Select(i => new Vector2(tile.Bounds.X + i % tile.Width, tile.Bounds.Y + i / tile.Width))
+            .First(p => !contact.Contains(p));
+        check(sheet.Scene.Pick(interior) == (101, 0) && CanvasObjects.Pick(sheet, sheet.Scene, [], interior, 1)?.Id == 101 &&
+            sheet.Scene.Highlight(101, 0).Any(b => b.Contains(interior)),
+            "Uninked solid surfaces pick and highlight the topmost visible part");
+        var flag = new PartLabel(1, 101, 0, "Test", 550, 50, FlagNote: true);
+        var attachment = LeaderRouting.SnapAttachment(sheet.Scene, flag, interior, 0);
+        check(attachment?.Vector != interior && attachment is { } pin && contact.Contains(pin.Vector) &&
+            Vector2.DistanceSquared(pin.Vector, interior) == contact.Min(p => Vector2.DistanceSquared(p, interior)),
+            "Flagnote placement from an uninked surface pins to its closest visible boundary");
         var off = layout with
         {
             Views = [layout.Views[0] with { X = -.4f }, layout.Views[1] with { X = 1.4f }]
@@ -104,6 +151,10 @@ static class GroupChecks
         var withDetail = ExplodedPainting.Compose(sheet, sheet, [detail], [], default);
         check(withDetail.Details[0].Bounds.X < 0 && withDetail.Scene!.Visible.ContainsKey((1001, 1)), "Exploded detail clips safely and retains independent off-page part anchors");
         var renderedDetail = withDetail.Scene!.Details[0];
+
+        var movedWithDetail = CompositionRegeneration.Rebuild(fastMove, withDetail, default, reuseDetailPixels: true);
+        check(ReferenceEquals(renderedDetail.Pixels.Ink, movedWithDetail.Scene!.Details[0].Pixels.Ink),
+            "Moving a main view reuses an unchanged exploded view's raster");
         check(renderedDetail.GeometryBounds is { } tight && tight.Width < detail.Bounds.Width && tight.Bottom < renderedDetail.CaptionBounds.Y
             && renderedDetail.CaptionBounds.Width > tight.Width,
             "Exploded geometry has tight independent bounds with its centered caption below it");
@@ -207,6 +258,70 @@ static class GroupChecks
         var alignedMoved = CanvasMotion.MoveViews(alignedScene, [], aligned, 101, new(9000, 9000), small);
         check(alignedMoved.Views[1].Y == alignedMoved.Views[0].Y,
             "A secondary drag preserves its primary alignment even when scaling previously crossed a page edge");
+
+        foreach (int convention in new[] { 1, 3 })
+            foreach (int direction in new[] { 0, 3 })
+            {
+                bool horizontal = direction == 0;
+                var primary = new DrawingView(100, 1, .45f, .4f);
+                var secondary = DrawingPlacements.Roll(new(101, 2, horizontal ? .65f : .45f, horizontal ? .4f : .6f), primary, direction, convention);
+                var projection = linked with { Views = [primary, secondary] };
+                var delta = horizontal ? new Vector2(-small.Page.Width * .4f, 0) : new Vector2(0, -small.Page.Height * .4f);
+                var center = new Vector2(secondary.X * small.Page.Width, secondary.Y * small.Page.Height);
+                var flipped = CanvasMotion.MoveViews(linkedSheet.Scene!, [], projection, 101, center + delta, small);
+                var sameSide = CanvasMotion.MoveViews(linkedSheet.Scene!, [], projection, 101, center + delta / 4, small);
+                int opposite = horizontal ? 2 : 1;
+                var expected = DrawingPlacements.Roll(secondary, primary, opposite, convention);
+                var result = flipped.Views[1];
+                check(result.RollDirection == opposite && result.Camera == expected.Camera && result.Axes == expected.Axes &&
+                    result.Parent == primary.Id && result.Alignment == secondary.Alignment && result.ProjectionAngle == convention &&
+                    sameSide.Views[1].Axes == secondary.Axes,
+                    $"{(horizontal ? "Horizontal" : "Vertical")} secondary drag rolls to the opposite face in projection convention {convention}");
+            }
+
+        var front = new DrawingView(100, 1, .45f, .4f);
+        var side = DrawingPlacements.Roll(new(101, 2, .65f, .4f), front, 0, 3);
+        var right = DrawingPlacements.Axes(side).Toward * 12;
+        var shifted = points.Select(p => new[] { p[0] + right.Z, p[1] + right.X, p[2] + right.Y }).ToArray();
+        var depthGeometry = new Capture([geometry.Meshes[0], geometry.Meshes[0] with { Vertices = shifted }]);
+        var depthSource = source with
+        {
+            Assembly = new(depthGeometry, [source.Assembly.Nodes[0], new(2, 1, "Foreground", "fixture", false)], [1, 2], [false, false]),
+            ExteriorCount = 2,
+            Parts = [source.Parts[0], new(1, "Foreground", "fixture", [1], NodeId: 2)]
+        };
+        var depthDrawing = linked with { Views = [front, side] };
+        var depthOptions = small with { Drawing = depthDrawing };
+        var depthSheet = PrintGeneration.Render(depthSource, depthGeometry, "Occlusion", depthOptions, [], null, false, default);
+        var depthTile = depthSheet.MainInk!.Single(t => t.ViewId == 101);
+        int surface = Array.FindIndex(depthTile.MeshOwners!, owner => owner == 1);
+        var surfacePoint = new Vector2(depthTile.Bounds.X + surface % depthTile.Width, depthTile.Bounds.Y + surface / depthTile.Width);
+        check(surface >= 0 && depthSheet.Scene!.Pick(surfacePoint) == (101, 1) && !depthSheet.Scene.Visible.ContainsKey((101, 0)),
+            "A foreground surface wins picking against another solid part directly behind it");
+        var noted = depthSheet with { Labels = [flag with { PartId = 1 }] };
+        var otherSide = CanvasMotion.MoveViews(depthSheet.Scene!, [], depthDrawing, 101, new(.25f * small.Page.Width, .4f * small.Page.Height), small);
+        var turnedMain = PosePainting.RenderMain(depthSource, "Occlusion", depthOptions with { Drawing = otherSide }, [], [], default,
+            composeAnnotations: false, previous: depthSheet);
+        var turned = CompositionRegeneration.Rebuild(turnedMain, noted, default);
+        check(ReferenceEquals(turnedMain.MainInk![0].Pixels, depthSheet.MainInk![0].Pixels) &&
+            !ReferenceEquals(turnedMain.MainInk[1].Pixels, depthSheet.MainInk[1].Pixels),
+            "A projection flip redraws its view and reuses the primary");
+        var groupScale = ratio * 1.25f;
+        var changedGroup = ProjectionGroups.SetRatio(depthDrawing, 100, groupScale);
+        var groupPlan = DrawingPlacements.PreparePlan(depthGeometry, depthOptions, depthDrawing, scaleGroup: 101);
+        check(groupPlan(groupScale).SequenceEqual(DrawingPlacements.Plan(depthGeometry, depthOptions, changedGroup)),
+            "Scale-fit search can reuse measured extents while preserving the exact linked projection plan");
+        var scaledGroup = PosePainting.RenderMain(depthSource, "Occlusion",
+            depthOptions with { Drawing = changedGroup },
+            [], [], default, composeAnnotations: false, previous: depthSheet);
+        check(scaledGroup.MainInk!.Zip(depthSheet.MainInk).All(pair => !ReferenceEquals(pair.First.Pixels, pair.Second.Pixels)),
+            "Resizing a linked group redraws all views whose physical scale changed");
+        check(turned.Labels is [{ PartId: 1 }] && !turned.Scene!.Visible.ContainsKey((101, 1)) &&
+            LeaderRouting.TryLayout(turned.Scene, turned.Labels, out var hiddenRoutes, out _) && hiddenRoutes.Length == 0,
+            "Projection flips keep notes attached when their part becomes occluded");
+        var restoredSide = PrintGeneration.Render(depthSource, depthGeometry, "Occlusion", depthOptions, [], turned, false, default);
+        check(LeaderRouting.TryLayout(restoredSide.Scene!, restoredSide.Labels, out var returnedRoutes, out _) && returnedRoutes.Length == 1,
+            "Turning the view back restores the note on its visible part");
         check(renderedDetail.Definition.Bounds.Width <= renderedDetail.GeometryBounds!.Value.Width + 64,
             "Exploded edit frame follows actual geometry width rather than the requested empty frame");
         var inflated = renderedDetail.Definition with

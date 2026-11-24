@@ -45,7 +45,7 @@ readonly record struct PageSize(int Width, int Height)
 
 static class PrintIdentity
 {
-    public const string Version = "0.5.40-local.5";
+    public const string Version = "0.5.40-local.15";
 
     public static string Mark(int variant) => variant == 1 ? "Dy M N D" : "Dy M & D";
 

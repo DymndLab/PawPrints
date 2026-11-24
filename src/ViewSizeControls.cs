@@ -57,6 +57,7 @@ public sealed partial class BlueprintMod
         });
         viewSizeUpdating = false;
         viewSizeDialog = true;
+        PrintDiagnostics.Record("view.scale.open");
     }
 
     // Own the popup outside the canvas so it survives asynchronous preview work.
@@ -86,6 +87,7 @@ public sealed partial class BlueprintMod
             {
                 sizeFit = sizeFitTask.Result;
                 sizeFitTask = null;
+                PrintDiagnostics.Record("view.scale.fit.ready");
             }
             ImGui.Text(sizeView < 1000 ? "Projection group scale" : "Exploded view scale");
             ImGui.BeginDisabled(busy || measuring);

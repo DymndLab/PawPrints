@@ -190,6 +190,7 @@ static class ExplodedChecks
         var parentShift = separated.MovedCenters[parentIndex] - separated.OriginalCenters[parentIndex];
         var childShift = separated.MovedCenters[childIndex] - separated.OriginalCenters[childIndex];
         check(AssemblyGraph.Depth(attached, detail, 2) == 1 && AssemblyGraph.Depth(attached, detail, 3) == 2 && Vector3.Distance(childShift, parentShift) > 1, "Successive actual parts receive distinct axis distances instead of translating together while still joined");
+        CheckRootedScope(check);
         check(AssemblyGraph.PartAncestors(assembly, 3).SequenceEqual(new uint[] { 2, 1 }), "Scope picker walks actual craft parts, omitting authored model components");
         check(AssemblyGraph.Ancestors(assembly, 3).SequenceEqual(new uint[] { 3, 2, 1 }), "Detail scope walks authored subpart and attached ancestor chain to root");
         check(AssemblyGraph.Subtree(assembly, 2).SetEquals(new uint[] { 2, 3, 5 }), "Assembly scope excludes siblings while retaining nested contents");
@@ -624,5 +625,35 @@ static class ExplodedChecks
         PrintFiles.Save(size, folder);
         Png.Write(Path.Combine(folder, "guides-dotted.png"), notedDetail.PixelWidth, notedDetail.PixelHeight, notedDetail.Rgb);
         Png.Write(Path.Combine(folder, "guides-solid.png"), styledDetail.PixelWidth, styledDetail.PixelHeight, styledDetail.Rgb);
+    }
+    static void CheckRootedScope(Action<bool, string> check)
+    {
+        static JointKey Joint(uint a, uint b) => JointKey.Between(new(a, "end"), new(b, "end"));
+        var nodes = new AssemblyNode[] { new(1, null, "Tank", "tank", false),
+            new(2, 1, "Cargo bay", "bay", false), new(3, 2, "Capsule", "capsule", false),
+            new(4, 2, "Payload", "payload", true), new(5, 1, "Engine", "engine", false) };
+        var links = new SourceLink[] { new(SourceLinkKind.Structural, Joint(2, 1)),
+            new(SourceLinkKind.Structural, Joint(3, 2)), new(SourceLinkKind.Ownership, Joint(2, 4)),
+            new(SourceLinkKind.Structural, Joint(1, 5)), new(SourceLinkKind.Fuel, Joint(3, 5)) };
+        var binding = new SourceBinding(Guid.NewGuid(), 1);
+        var parts = nodes.Select(n => new SourcePart(n.Id, n.TemplateId, n.Subpart ? n.Parent : null, n.Subpart));
+        var assembly = new AssemblyCapture(new([]), nodes, [], []) { Topology = new(binding, parts, links) };
+        var detail = new ExplodedDetail(1, 2, default, "Cargo") { Selection = new(2, [Joint(1, 2), Joint(2, 3)], []) };
+        check(AssemblyGraph.Included(assembly, detail).SetEquals(new uint[] { 2, 4 }), "Both cargo ends can be cut across opposite hierarchy directions while retaining payload");
+        var open = detail with { Selection = detail.Selection! with { Cuts = [] } };
+        check(AssemblyGraph.Included(assembly, open with { Selection = open.Selection! with { Removed = [1] } }).Contains(5),
+            "Removing the tank alone keeps its engine");
+        var branch = open with { Selection = open.Selection! with { RemovedBranches = [1] } };
+        check(!AssemblyGraph.Included(assembly, branch).Contains(5), "Removing a branch blocks traversal through the removed part, ignoring fuel links");
+        var loop = assembly with { Topology = new(binding, parts, [.. links, new(SourceLinkKind.Structural, Joint(3, 5))]) };
+        check(AssemblyGraph.Included(loop, branch).Contains(5), "A separate structural path keeps a downstream part included");
+        var toggled = AssemblyGraph.ToggleBranch(assembly, open, 1);
+        check(AssemblyGraph.Included(assembly, toggled).SetEquals(new uint[] { 2, 3, 4 }),
+            "Clicking a part excludes its branch relative to the cargo root");
+        check(AssemblyGraph.Included(assembly, AssemblyGraph.ToggleBranch(assembly, toggled, 5)).SetEquals(nodes.Select(n => n.Id)),
+            "Clicking a dimmed descendant restores its excluded branch");
+        check(AssemblyGraph.ToggleBranch(assembly, open, 2) == open, "The root stays included when clicked");
+        check(AssemblyGraph.GroupFor(assembly, open, 1) == 1 && AssemblyGraph.GroupFor(assembly, open, 4) == 2,
+            "Scoped geometry groups upstream parts and keeps owned meshes with their parent");
     }
 }

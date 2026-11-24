@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Blueprint.Storage;
 using System.Security.Cryptography;
 using Blueprint.Rendering;
@@ -124,6 +125,7 @@ public sealed partial class BlueprintMod
         renderSourceTree = null;
         CancelPlacement();
         ResetDetailEditor();
+        ReleasePrecisionCursor();
         harmony?.UnpatchAll(Owner);
         PrintDiagnostics.Stop();
     }
@@ -140,6 +142,7 @@ public sealed partial class BlueprintMod
             // Release Vulkan resources while the device and ImGui backend still exist.
             FlushTitlePreferences();
             PrintDiagnostics.Record("game.shutdown");
+            ReleasePrecisionCursor();
             enabled = false;
             open = false;
             InvalidateRendering();
@@ -225,18 +228,21 @@ public sealed partial class BlueprintMod
             StartRender(token =>
             {
                 PrintDiagnostics.Record("generate.render.begin");
+                long started = Stopwatch.GetTimestamp();
+                long allocated = GC.GetAllocatedBytesForCurrentThread();
                 var maps = new Dictionary<string, Texture>();
                 foreach (var pair in capture.Textures)
                 {
                     token.ThrowIfCancellationRequested();
                     maps.Add(pair.Key, pair.Value.Decode(token));
                 }
+                long decoded = Stopwatch.GetTimestamp();
                 var poseSource = new PoseSource(capture.Assembly!, capture.Poses, capture.Geometry.Meshes.Length, parts, maps, capture.Performance);
-                if (starter != null)
-                    return StarterDrawings.Render(poseSource, capture.Geometry, capture.Name, options, capture.Warnings,
-                        starter, fitStarter, token);
-                return PrintGeneration.Render(poseSource, capture.Geometry, capture.Name, options,
-                    capture.Warnings, previous, startFresh, token);
+                var result = starter != null
+                    ? StarterDrawings.Render(poseSource, capture.Geometry, capture.Name, options, capture.Warnings, starter, fitStarter, token)
+                    : PrintGeneration.Render(poseSource, capture.Geometry, capture.Name, options, capture.Warnings, previous, startFresh, token);
+                PrintDiagnostics.Record($"generate.render.complete materials={maps.Count} material_ms={(long)Stopwatch.GetElapsedTime(started, decoded).TotalMilliseconds} drawing_ms={(long)Stopwatch.GetElapsedTime(decoded).TotalMilliseconds} worker_allocated_bytes={GC.GetAllocatedBytesForCurrentThread() - allocated}");
+                return result;
             });
         }
         catch (Exception e) { renderAppliesSettings = false; PrintDiagnostics.Error("generate.capture", e); ReportFailure("Export unavailable: " + e.Message); Console.WriteLine("[PawPrints] " + e); }
@@ -277,11 +283,15 @@ public sealed partial class BlueprintMod
                 renderKeepsDocument = policy.KeepDocument;
                 renderAdoptsHistory = policy.AdoptHistory;
                 renderAppliesSettings = policy.ApplySettings;
+                long publishStarted = Stopwatch.GetTimestamp();
                 var prepared = DrawingAcceptance.Prepare(result, document, renderKeepsDocument, renderAdoptsHistory);
+                double prepareMs = Stopwatch.GetElapsedTime(publishStarted).TotalMilliseconds;
                 result = prepared.Sheet;
                 var regenerated = prepared.RegeneratedBase;
                 // Allocate/upload before changing accepted state or disposing its preview.
+                long uploadStarted = Stopwatch.GetTimestamp();
                 replacement = new PreviewTexture(result);
+                double uploadMs = Stopwatch.GetElapsedTime(uploadStarted).TotalMilliseconds;
                 if (renderAdoptsHistory)
                 {
                     AdoptPrintSettings(result.Options);
@@ -306,7 +316,9 @@ public sealed partial class BlueprintMod
                 draftRatio = drawingPlacement?.Ratio ?? 100;
                 partsTable = result.Options.PartsTable;
                 flagTable = result.Options.FlagTable;
+                long retireStarted = Stopwatch.GetTimestamp();
                 preview?.Dispose();
+                double retireMs = Stopwatch.GetElapsedTime(retireStarted).TotalMilliseconds;
                 preview = replacement;
                 replacement = null;
                 ReportCanvasClipping(sheet, result);
@@ -358,6 +370,14 @@ public sealed partial class BlueprintMod
                     captureForView = false;
                     BeginViewDraft(null, captureViewCamera);
                 }
+                if (captureForDetail)
+                {
+                    captureForDetail = false;
+                    BeginExplodedPlacement();
+                }
+                double publishMs = Stopwatch.GetElapsedTime(publishStarted).TotalMilliseconds;
+                if (publishMs >= 16)
+                    PrintDiagnostics.Record($"preview.publish page_pixels={(long)result.PixelWidth * result.PixelHeight} prepare_ms={(long)prepareMs} upload_ms={(long)uploadMs} retire_ms={(long)retireMs} total_ms={(long)publishMs}");
                 PrintDiagnostics.Record("preview.ready");
                 Console.WriteLine("[PawPrints] Preview ready: " + sheet.Title);
             }
@@ -378,7 +398,7 @@ public sealed partial class BlueprintMod
             finally
             {
                 creatingBlank = false;
-                captureForView = false;
+                captureForView = captureForDetail = false;
                 replacement?.Dispose();
                 if (job != null)
                     renderJobs.Finish(job);
@@ -402,6 +422,32 @@ public sealed partial class BlueprintMod
         }
     }
 
+
+    static void DrawRenderProgress()
+    {
+        if (renderTask == null || activeProgress == null) return;
+        double elapsed = Stopwatch.GetElapsedTime(renderStarted).TotalSeconds;
+        if (elapsed < .3) return;
+
+        var size = ImGui.GetWindowSize();
+        float width = Math.Min(300, size.X - 32);
+        if (width < 80 || size.Y < 60) return;
+        var origin = ImGui.GetWindowPos() + new float2((size.X - width) / 2, size.Y - 52);
+        var draw = ImGui.GetWindowDrawList();
+        var state = activeProgress.Latest;
+        draw.AddRectFilled(origin, origin + new float2(width, 34), 0xF0292521);
+        draw.AddText(origin + new float2(8, 3), 0xFFF3F0E8, state.Label);
+        float track = width - 16;
+        var start = origin + new float2(8, 26);
+        draw.AddRectFilled(start, start + new float2(track, 3), 0xFF595550);
+        float left = 0, right = track * state.Fraction.GetValueOrDefault();
+        if (state.Fraction == null)
+        {
+            left = (float)(.5 - .5 * Math.Cos(elapsed * 4)) * track * .75f;
+            right = left + track * .25f;
+        }
+        draw.AddRectFilled(start + new float2(left, 0), start + new float2(right, 3), 0xFF6DCAFA);
+    }
 
     internal static void Save()
     {
@@ -529,12 +575,14 @@ public sealed partial class BlueprintMod
                                 DrawTemplateGallery(editor);
                             else
                                 DrawPreview();
+                            DrawRenderProgress();
                         }
                         finally { ImGui.EndChild(); }
                     }
                     finally { ImGui.EndGroup(); }
                     DrawFlagnoteDialog();
-                    DrawDetailScopeDialog();
+                    DrawExplodedScopePopup();
+                    DrawScopeDeleteConfirmation();
                     DrawPoseDialog();
                     DrawPrimaryDeletion();
                     DrawViewSizeDialog();

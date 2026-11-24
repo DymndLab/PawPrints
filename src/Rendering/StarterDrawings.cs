@@ -85,10 +85,9 @@ static class StarterDrawings
         var result = PrintGeneration.Render(source, geometry, craft, options with { Drawing = drawing }, warnings, null, false, token);
         var detailSlots = template.Layout.Views.Where(v => v.Exploded).ToArray();
         if (detailSlots.Length == 0) return result;
-        var roots = source.Assembly.Nodes.Where(n => n.Parent == null).ToArray();
-        if (roots.Length != 1)
+        if (ExplodedPainting.WholeCraftRoot(source.Assembly) is not { } root)
             throw new InvalidOperationException("Whole-vehicle exploded views need a single connected assembly.");
-        var details = detailSlots.Select(v => new ExplodedDetail(v.Id - 1000, roots[0].Id,
+        var details = detailSlots.Select(v => new ExplodedDetail(v.Id - 1000, root,
             ExplodedPainting.ClampFrame(Cell(v), options), craft, View: v.Camera,
             Sizing: fitStarter ? null : new DetailSizing(v.Ratio))).ToArray();
         return ExplodedPainting.Compose(result, result, details, [], token) with { PoseMain = result };

@@ -34,21 +34,16 @@ static class ScaleAdjustment
         var unposed = PartPoses.Exterior(source, source.Assembly);
         var fit = scene.Poses.Length == 0 ? unposed : new Capture(drawing.Views.SelectMany(v =>
             PartPoses.Exterior(source, PartPoses.Apply(source, scene.Poses, v.Id)).Meshes).ToArray());
-        var preliminary = DrawingPlacements.PreparePlan(unposed, options, drawing);
-        var planned = DrawingPlacements.PreparePlan(fit, options, drawing);
+        var preliminary = DrawingPlacements.PreparePlan(unposed, options, drawing, groupView);
+        var posedPlan = ReferenceEquals(fit, unposed) ? null : DrawingPlacements.PreparePlan(fit, options, drawing, groupView);
+        float initialRatio = groupView is { } id ? ProjectionGroups.Ratio(drawing, id) : drawing.Ratio;
         return FindMaximum(percent =>
         {
             try
             {
-                float ratio = drawing.Ratio * 100 / percent;
-                ViewRegion[] views;
-                if (groupView is { } id)
-                {
-                    var changedDrawing = ProjectionGroups.SetRatio(drawing,id,ProjectionGroups.Ratio(drawing,id)*100/percent);
-                    DrawingPlacements.Plan(unposed, options, changedDrawing);
-                    views = DrawingPlacements.Plan(fit, options, changedDrawing);
-                }
-                else { preliminary(ratio); views = planned(ratio); }
+                float ratio = initialRatio * 100 / percent;
+                var unposedViews = preliminary(ratio);
+                var views = posedPlan?.Invoke(ratio) ?? unposedViews;
                 DrawingPlacements.Validate(views, options);
                 var changed = views.Where(v => scene.Views.FirstOrDefault(p => p.Id == v.Id)?.Bounds != v.Bounds).ToArray();
                 DrawingPlacements.Validate(changed, options, obstacles);

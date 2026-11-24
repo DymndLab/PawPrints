@@ -88,15 +88,24 @@ static class PartPoses
 static class PosePainting
 {
 
-    public static Sheet RenderMain(PoseSource source, string title, PrintOptions options, string[] warnings, PartPose[] poses, CancellationToken token, bool composeAnnotations = true)
+    public static Sheet RenderMain(PoseSource source, string title, PrintOptions options, string[] warnings, PartPose[] poses, CancellationToken token, bool composeAnnotations = true, Sheet? previous = null)
     {
         var unposed = PartPoses.Exterior(source, source.Assembly);
-        var planned = SheetLayout.Plan(unposed, options);
-        var captures = planned.ToDictionary(v => v.Id, v => PartPoses.Exterior(source, PartPoses.Apply(source, poses, v.Id)));
-        // One common scale must fit every selected pose; use the full projected
-        // envelope for fitting but render only the assigned pose in each box.
-        var fit = poses.Length == 0 || captures.Count == 0 ? unposed : new Capture(captures.Values.SelectMany(c => c.Meshes).ToArray());
-        var result = SheetLayout.Render(unposed, source.Maps, title, source.Parts, options, warnings, token, _ => { }, captures, fit, composeAnnotations);
+        Dictionary<int, Capture>? captures = null;
+        Capture fit = unposed;
+        if (poses.Length != 0)
+        {
+            var ids = options.Drawing?.Views.Select(v => v.Id) ?? SheetLayout.Plan(unposed, options).Select(v => v.Id);
+            captures = ids.ToDictionary(id => id, id => PartPoses.Exterior(source, PartPoses.Apply(source, poses, id)));
+            // Fit to all selected poses; render only the assigned pose in each view.
+            if (captures.Count != 0)
+                fit = new(captures.Values.SelectMany(c => c.Meshes).ToArray());
+        }
+        // Scope reuse to the accepted snapshot. New captures and pose changes
+        // go through the ordinary render path.
+        var reusable = options.FreeLayout && previous is { Options.FreeLayout: true, Scene: { } old } &&
+            ReferenceEquals(previous.PoseSource, source) && old.Poses.SequenceEqual(poses) ? previous : null;
+        var result = SheetLayout.Render(unposed, source.Maps, title, source.Parts, options, warnings, token, _ => { }, captures, fit, composeAnnotations, reusable);
         result.Scene!.MeshNodes = source.Assembly.MeshNodes;
         return result with
         {

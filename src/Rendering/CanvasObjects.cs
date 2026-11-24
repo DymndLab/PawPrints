@@ -57,6 +57,8 @@ static class CanvasObjects
             {
                 if (s.Captions.Any(c => c.ViewId == item.Id && c.Bounds.Contains(point)))
                     return item;
+                if (s.Options.FreeLayout && s.PickSurface(item.Id, point) != null)
+                    return item;
                 var detail = s.Details.FirstOrDefault(d => d.Definition.ViewId == item.Id);
                 if (detail?.CaptionBounds.Contains(point) == true)
                     return item;

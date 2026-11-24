@@ -74,7 +74,20 @@ static class CraftIdentityCapture
                     endpoint.ConnectionPart.InstanceId, endpoint is Part.Connector connector ? connector.Id : "");
                 static bool Internal(Part.Connection.IConnector endpoint) => endpoint is Part.Connector connector &&
                     (connector.Flags & Part.Connector.Flag.Internal) != 0;
-                links.Add(new(SourceLinkKind.Structural, JointKey.Between(Endpoint(a), Endpoint(b)), Internal(a) || Internal(b)));
+                static bool Axial(Part.Connection.IConnector endpoint) => endpoint is Part.Connector connector &&
+                    (connector.Flags & (Part.Connector.Flag.Internal | Part.Connector.Flag.FromSurface |
+                        Part.Connector.Flag.ToSurface | Part.Connector.Flag.Edge)) == 0;
+                static System.Numerics.Vector3? Position(Part.Connection.IConnector endpoint)
+                {
+                    if (endpoint is not Part.Connector connector) return null;
+                    var p = connector.PositionVehicleAsmb;
+                    return new((float)p.Y, (float)p.Z, (float)p.X);
+                }
+                var pa = Position(a);
+                var pb = Position(b);
+                links.Add(new(SourceLinkKind.Structural, JointKey.Between(Endpoint(a), Endpoint(b)),
+                    Internal(a) || Internal(b), pa.HasValue && pb.HasValue ? (pa.Value + pb.Value) * .5f : pa ?? pb,
+                    Axial(a) && Axial(b)));
             }
         }
         foreach (var link in fuel)

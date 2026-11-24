@@ -156,10 +156,10 @@ static class CompanyTitleBlock
         int textLeft = TitleLeft(options), textWidth = split - textLeft - 30;
         Text(c, PrintScale.Title(title, data), textLeft, top + 14, textWidth, 68, true);
         Text(c, data.Subtitle, textLeft, top + 94, textWidth, 27);
+        Text(c, SheetLayout.ViewSummary(options), textLeft, middle + 10, textWidth, 21);
         string scaleText = PrintScale.Text(data, calculatedScale);
         if (scaleText.Length > 0)
-            Text(c, "SCALE   " + scaleText + "   /   " + PrintScale.Paper(options).ToUpperInvariant(), textLeft, middle + 10, textWidth, 24);
-        Text(c, SheetLayout.ViewSummary(options), textLeft, middle + 54, textWidth, 21);
+            Text(c, "SCALE   " + scaleText + "   /   " + PrintScale.Paper(options).ToUpperInvariant(), textLeft, middle + 50, textWidth, 24);
         ExportDate(c, options, exported ?? LocalDate());
         Text(c, data.Company, split + 20, top + 8, logoSplit - split - 40, 26, true);
         if (data.Logo != null)

@@ -102,6 +102,11 @@ static class LeaderRouting
             }
             if (label.ManualPlacement || scene.Options.FreeLayout)
             {
+                // A projection can turn a labeled surface out of sight. Keep
+                // the label in the document so it returns with the surface.
+                if (scene.Options.FreeLayout && !scene.Visible.ContainsKey((label.ViewId, label.PartId)) &&
+                    scene.Parts.Any(p => p.Id == label.PartId))
+                    continue;
                 if (!ManualRoute(scene, label, box, out var manual))
                 {
                     result = [];
@@ -259,7 +264,11 @@ static class LeaderRouting
         LeaderPoint? result = null;
         if (scene.Options.FreeLayout && scene.Visible.TryGetValue((label.ViewId, label.PartId), out var visual))
         {
-            foreach (var edge in visual.ContactEdges)
+            // Clicking anywhere on the visible part selects its nearest raster
+            // silhouette edge, even when the part interior is wider than the snap radius.
+            if (scene.PickSurface(label.ViewId, point)?.Part == label.PartId)
+                best = float.PositiveInfinity;
+            foreach (var edge in visual.ContactEdges.Length == 0 ? visual.Edges : visual.ContactEdges)
             {
                 float distance = Vector2.DistanceSquared(point, edge);
                 if (distance <= best) { best = distance; result = new(edge.X, edge.Y); }
@@ -722,13 +731,18 @@ static class AnnotationPainting
         HeightDimensions.Paint(canvas, scene, labels);
         KittenReferences.Paint(canvas, scene, token);
         canvas.HitTarget = null;
+        string? titleScale = PrintScale.PrintedTitleScale(scene.Views, scene.Options);
         foreach (var caption in scene.Captions.Where(c => scene.Options.FreeLayout || !scene.Details.Any(d => d.Definition.Bounds.Overlaps(c.Bounds))))
         {
             canvas.Text(caption.Text, (int)caption.Bounds.X, (int)caption.Bounds.Y, caption.FontSize, .85f);
             if (scene.Options.FreeLayout && scene.Views.FirstOrDefault(v => v.Id == caption.ViewId) is { } view)
             {
-                string scale = "SCALE " + PrintScale.Ratio(view.Frame, scene.Options);
-                canvas.Text(scale, (int)(caption.Bounds.Center.X - scale.Length * NativeText.MonoWidth(15) / 2), (int)caption.Bounds.Bottom + 4, 15, 1);
+                string ratio = PrintScale.Ratio(view.Frame, scene.Options);
+                if (ratio != titleScale)
+                {
+                    string scale = "SCALE " + ratio;
+                    canvas.Text(scale, (int)(caption.Bounds.Center.X - scale.Length * NativeText.MonoWidth(15) / 2), (int)caption.Bounds.Bottom + 4, 15, 1);
+                }
             }
         }
         TextBoxPlacement.Validate(scene, labels, routes, specLeaders ?? []);

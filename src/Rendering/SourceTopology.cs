@@ -13,7 +13,7 @@ readonly record struct JointKey(JointEndpoint A, JointEndpoint B)
         a.Part < b.Part || a.Part == b.Part && string.CompareOrdinal(a.Connector, b.Connector) <= 0
             ? new(a, b) : new(b, a);
 }
-sealed record SourceLink(SourceLinkKind Kind, JointKey Key, bool Internal = false);
+sealed record SourceLink(SourceLinkKind Kind, JointKey Key, bool Internal = false, System.Numerics.Vector3? Position = null, bool EndJoint = false);
 
 // IDs are authoritative only within Session. Native serialized LocalInstanceId
 // values are traversal numbers, not restart-safe identity. Never match by name.

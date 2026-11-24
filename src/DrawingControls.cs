@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Blueprint.Rendering;
 using Brutal.ImGuiApi;
 using Brutal.Numerics;
@@ -226,10 +227,6 @@ public sealed partial class BlueprintMod
                     ghostOpening = box;
                     ghostPress = pointer;
                 }
-                else
-                {
-                    ghostPin = pointer;
-                }
             }
         }
         if (viewDraft != null && (!hovered || ghostTask != null) && ghostLastBox is { } last)
@@ -258,9 +255,6 @@ public sealed partial class BlueprintMod
                 && ImGui.IsKeyPressed(ImGuiKey.Enter);
             bool confirm = ghostConfirmRequested || enter;
             ghostConfirmRequested = false;
-            if (viewDraft != null)
-                draw.AddText(new float2(a.X + 8, a.Y + 8), 0xFF44DDFF,
-                    ghostTask != null ? "Updating preview..." : "Enter to place | Confirm in Place panel");
             if (valid && ghostTask == null && ghostPress == null && (confirm || hovered &&
                 (viewDraft is { Parent: null } ? ghostReleased && ghostClick : ImGui.IsMouseClicked(ImGuiMouseButton.Left))))
             {
@@ -343,6 +337,7 @@ public sealed partial class BlueprintMod
                 Labels = current.Labels.Where(l => !deleted.Contains(l.ViewId)).ToArray()
             };
         }
+        var priorMain = sheet;
         var poses = current.Scene!.Poses;
         var obstacles = document.Details.Select(d => d.Bounds).Concat(PrintTables.Panels(document.Scene, current.Labels).Select(t => t.Bounds)).Concat(document.Scene.Specs.Select(b => b.Bounds)).ToArray();
         renderKeepsDocument = true;
@@ -351,11 +346,20 @@ public sealed partial class BlueprintMod
         progress = "Composing drawing views";
         StartRender(token =>
         {
-            var fresh = PosePainting.RenderMain(source, current.Title, options, current.Warnings, poses, token, composeAnnotations: false);
+            long started = Stopwatch.GetTimestamp();
+            long allocated = GC.GetAllocatedBytesForCurrentThread();
+            var fresh = PosePainting.RenderMain(source, current.Title, options, current.Warnings, poses, token,
+                composeAnnotations: false, previous: priorMain);
+            long rendered = Stopwatch.GetTimestamp();
             DrawingPlacements.Validate(fresh.Scene!.Views, options);
             var changed = fresh.Scene.Views.Where(v => current.Scene!.Views.FirstOrDefault(p => p.Id == v.Id)?.Bounds != v.Bounds).ToArray();
             DrawingPlacements.Validate(changed, options, obstacles);
-            var result = CompositionRegeneration.Rebuild(fresh, current, token);
+            var result = CompositionRegeneration.Rebuild(fresh, current, token, reuseDetailPixels: options.Page == current.Options.Page);
+            long finished = Stopwatch.GetTimestamp();
+            long workerBytes = GC.GetAllocatedBytesForCurrentThread() - allocated;
+            long tilePixels = fresh.MainInk?.Sum(tile => (long)tile.Width * tile.Height) ?? 0;
+            int reused = fresh.MainInk?.Count(tile => priorMain.MainInk?.Any(old => ReferenceEquals(old.Pixels, tile.Pixels)) == true) ?? 0;
+            PrintDiagnostics.Record($"drawing.edit views={drawing.Views.Length} rasterized_views={drawing.Views.Length - reused} reused_views={reused} details={current.Details.Length} page_pixels={(long)fresh.PixelWidth * fresh.PixelHeight} view_pixels={tilePixels} main_ms={(long)Stopwatch.GetElapsedTime(started, rendered).TotalMilliseconds} compose_ms={(long)Stopwatch.GetElapsedTime(rendered, finished).TotalMilliseconds} worker_allocated_bytes={workerBytes}");
             return result with
             {
                 RegeneratedBase = null,
@@ -512,7 +516,9 @@ public sealed partial class BlueprintMod
                 Y = MathF.Round(placed.Y * options.Page.Height - (box.Height - (options.Captions ? ViewCaption.Band : 0)) / 2)
             };
         }
-        StartGhost("view", token => PlacementPreviews.View(source, view, ratio, options, poses, token), b => QueueDrawing(Proposed(b)), Valid, Position, retainPreview: ghostPixels != null);
+        var curvature = sheet.MainCurvature;
+        StartGhost("view", token => PlacementPreviews.View(source, view, ratio, options, poses, token, curvature),
+            b => QueueDrawing(Proposed(b)), Valid, Position, retainPreview: ghostPixels != null);
         viewDraft = view;
         draftRatio = ratio;
     }
@@ -650,6 +656,7 @@ public sealed partial class BlueprintMod
         void Outline(Box b, uint color) => ImGui.GetWindowDrawList().AddRect(origin + new float2(b.X * factor, b.Y * factor), origin + new float2(b.Right * factor, b.Bottom * factor), color, 0, ImDrawFlags.None, 2);
         if (dragView is { } dragging)
         {
+            ImGui.SetMouseCursor(ImGuiMouseCursor.ResizeAll);
             if (ImGui.IsMouseClicked(ImGuiMouseButton.Right))
             {
                 dragView = null;
@@ -726,7 +733,7 @@ public sealed partial class BlueprintMod
             if (caption)
             {
                 Outline(DrawingPlacements.Footprint(hit, Options.Captions), 0xFF88D8FF);
-                ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+                ImGui.SetMouseCursor(ImGuiMouseCursor.ResizeAll);
             }
             if (ImGui.IsMouseClicked(ImGuiMouseButton.Left))
             {

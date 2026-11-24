@@ -5,9 +5,12 @@ namespace Blueprint.Rendering;
 // triangle patches, then look for repeated bends around a common local axis.
 sealed class CurvatureLines
 {
-    HashSet<(int Mesh, int A, int B)> suppress = [];
-    Dictionary<(int Mesh, int Triangle), int> patches = [];
+    readonly HashSet<(int Mesh, int A, int B)> suppress = [];
+    readonly Dictionary<(int Mesh, int Triangle), int> patches = [];
     internal int SuppressedEdges => suppress.Count;
+    // Count capacity, including spare slots, with room for buckets and entries.
+    internal long EstimatedRetainedBytes => 64L * ((long)suppress.EnsureCapacity(0) +
+        patches.EnsureCapacity(0) + smoothCorners.EnsureCapacity(0));
     readonly Dictionary<(int Mesh, int A, int B), float> smoothCorners = [];
     public bool Smooth(int mesh, int a, int b, float creaseCosine = 1)
     {
@@ -20,99 +23,118 @@ sealed class CurvatureLines
     {
         token.ThrowIfCancellationRequested();
         var result = new CurvatureLines();
-        result.Prepare(capture, 6, 42, 2, token);
-        var conservative = result.suppress.ToHashSet();
-        result.Prepare(capture, 4, 55, 4, token, 90, .97f, 2, conservative: conservative);
-        result.suppress.UnionWith(conservative);
-        return result;
-    }
-    void Prepare(Capture capture, int minimum, float cap, float flatRatio, CancellationToken token, float minimumSpan = 0, float axisMatch = .85f, float areaSpread = float.PositiveInfinity, bool protectTransitions = false, HashSet<(int Mesh, int A, int B)>? conservative = null)
-    {
-        suppress = [];
-        patches = [];
-        if (minimum == 0)
-            return;
+        long total = capture.Meshes.Sum(m => (long)(m.Indices.Length / 3)), completed = 0;
+        int reported = -1;
         for (int mi = 0; mi < capture.Meshes.Length; mi++)
         {
             token.ThrowIfCancellationRequested();
-            var m = capture.Meshes[mi];
-            int n = m.Indices.Length / 3;
-            var points = m.Vertices.Select(v => new Vector3((float)v[0], (float)v[1], (float)v[2])).ToArray();
-            var weld = new Dictionary<(long, long, long), int>();
-            var ids = new int[points.Length];
-            for (int i = 0; i < points.Length; i++)
+            int percent = total == 0 ? 0 : (int)(100 * completed / total);
+            if (reported != percent)
             {
-                var p = points[i];
-                var key = ((long)Math.Round(p.X * 100000), (long)Math.Round(p.Y * 100000), (long)Math.Round(p.Z * 100000));
-                if (!weld.TryGetValue(key, out int id))
-                    weld[key] = id = weld.Count;
-                ids[i] = id;
+                RenderProgress.Report("Analyzing geometry", percent / 100f);
+                reported = percent;
             }
-            var normals = new Vector3[n];
-            var area = new float[n];
-            var parent = Enumerable.Range(0, n).ToArray();
-            int Find(int i)
+            var mesh = capture.Meshes[mi];
+            result.ClassifyMesh(mesh, mi, token);
+            completed += mesh.Indices.Length / 3;
+        }
+        return result;
+    }
+
+    void ClassifyMesh(Mesh m, int mi, CancellationToken token)
+    {
+        int n = m.Indices.Length / 3;
+        var points = m.Vertices.Select(v => new Vector3((float)v[0], (float)v[1], (float)v[2])).ToArray();
+        var weld = new Dictionary<(long, long, long), int>();
+        var ids = new int[points.Length];
+        for (int i = 0; i < points.Length; i++)
+        {
+            if ((i & 4095) == 0) token.ThrowIfCancellationRequested();
+            var p = points[i];
+            var key = ((long)Math.Round(p.X * 100000), (long)Math.Round(p.Y * 100000), (long)Math.Round(p.Z * 100000));
+            if (!weld.TryGetValue(key, out int id))
+                weld[key] = id = weld.Count;
+            ids[i] = id;
+        }
+        var normals = new Vector3[n];
+        var area = new float[n];
+        var parent = Enumerable.Range(0, n).ToArray();
+        int Find(int i)
+        {
+            while (parent[i] != i)
             {
-                while (parent[i] != i)
-                {
-                    parent[i] = parent[parent[i]];
-                    i = parent[i];
-                }
-                return i;
+                parent[i] = parent[parent[i]];
+                i = parent[i];
             }
-            var edges = new Dictionary<(int, int), List<int>>();
-            for (int i = 0; i < n; i++)
+            return i;
+        }
+        var edges = new Dictionary<(int, int), (int First, int Second, int Count)>();
+        void TrackEdge(int a, int b, int triangle)
+        {
+            var key = (Math.Min(a, b), Math.Max(a, b));
+            if (!edges.TryGetValue(key, out var edge))
+                edges.Add(key, (triangle, 0, 1));
+            else if (edge.Count < 3)
+                edges[key] = (edge.First, triangle, edge.Count + 1);
+        }
+        for (int i = 0; i < n; i++)
+        {
+            if ((i & 1023) == 0)
+                token.ThrowIfCancellationRequested();
+            int a = m.Indices[i * 3], b = m.Indices[i * 3 + 1], c = m.Indices[i * 3 + 2];
+            var cross = Vector3.Cross(points[b] - points[a], points[c] - points[a]);
+            area[i] = cross.Length() * .5f;
+            normals[i] = area[i] > 1e-12 ? Vector3.Normalize(cross) : Vector3.Zero;
+            TrackEdge(ids[a], ids[b], i);
+            TrackEdge(ids[b], ids[c], i);
+            TrackEdge(ids[c], ids[a], i);
+        }
+        foreach (var e in edges.Values.Where(e => e.Count == 2))
+            if (Vector3.Dot(normals[e.First], normals[e.Second]) > .9999f)
+                parent[Find(e.First)] = Find(e.Second);
+        for (int i = 0; i < n; i++)
+            patches[(mi, i)] = Find(i);
+        var areas = new Dictionary<int, float>();
+        var ns = new Dictionary<int, Vector3>();
+        var graph = new Dictionary<int, HashSet<int>>();
+        for (int i = 0; i < n; i++)
+        {
+            int p = Find(i);
+            areas[p] = areas.GetValueOrDefault(p) + area[i];
+            ns[p] = normals[i];
+            if (!graph.ContainsKey(p))
+                graph.Add(p, []);
+        }
+        foreach (var e in edges.Values.Where(e => e.Count == 2))
+        {
+            int a = Find(e.First), b = Find(e.Second);
+            if (a != b)
             {
-                if ((i & 1023) == 0)
-                    token.ThrowIfCancellationRequested();
-                int a = m.Indices[i * 3], b = m.Indices[i * 3 + 1], c = m.Indices[i * 3 + 2];
-                var cross = Vector3.Cross(points[b] - points[a], points[c] - points[a]);
-                area[i] = cross.Length() * .5f;
-                normals[i] = area[i] > 1e-12 ? Vector3.Normalize(cross) : Vector3.Zero;
-                foreach (var e in new[] { (ids[a], ids[b]), (ids[b], ids[c]), (ids[c], ids[a]) })
-                {
-                    var key = (Math.Min(e.Item1, e.Item2), Math.Max(e.Item1, e.Item2));
-                    if (!edges.TryGetValue(key, out var list))
-                        edges[key] = list = [];
-                    list.Add(i);
-                }
+                graph[a].Add(b);
+                graph[b].Add(a);
             }
+        }
+        float Angle(int a, int b) => MathF.Acos(Math.Clamp(Vector3.Dot(ns[a], ns[b]), -1, 1)) * 180 / MathF.PI;
+        var seen = new HashSet<int>();
+        var queue = new Queue<(int Patch, int Depth)>();
+        Classify(6, 42, 2, .85f, 0);
+        Classify(4, 55, 4, .97f, 90);
+
+        void Classify(int minimum, float cap, float flatRatio, float axisMatch, float minimumSpan)
+        {
             foreach (var e in edges.Values.Where(e => e.Count == 2))
-                if (Vector3.Dot(normals[e[0]], normals[e[1]]) > .9999f)
-                    parent[Find(e[0])] = Find(e[1]);
-            for (int i = 0; i < n; i++)
-                patches[(mi, i)] = Find(i);
-            var areas = new Dictionary<int, float>();
-            var ns = new Dictionary<int, Vector3>();
-            var graph = new Dictionary<int, HashSet<int>>();
-            for (int i = 0; i < n; i++)
             {
-                int p = Find(i);
-                areas[p] = areas.GetValueOrDefault(p) + area[i];
-                ns[p] = normals[i];
-                graph.TryAdd(p, []);
-            }
-            foreach (var e in edges.Values.Where(e => e.Count == 2))
-            {
-                int a = Find(e[0]), b = Find(e[1]);
-                if (a != b)
-                {
-                    graph[a].Add(b);
-                    graph[b].Add(a);
-                }
-            }
-            float Angle(int a, int b) => MathF.Acos(Math.Clamp(Vector3.Dot(ns[a], ns[b]), -1, 1)) * 180 / MathF.PI;
-            foreach (var e in edges.Values.Where(e => e.Count == 2))
-            {
-                int a = Find(e[0]), b = Find(e[1]);
+                int a = Find(e.First), b = Find(e.Second);
                 if (a == b)
                     continue;
                 float angle = Angle(a, b);
                 if (angle < 21.9f || angle > cap)
                     continue;
                 var axis = Vector3.Normalize(Vector3.Cross(ns[a], ns[b]));
-                var seen = new HashSet<int> { a, b };
-                var queue = new Queue<(int, int)>();
+                seen.Clear();
+                queue.Clear();
+                seen.Add(a);
+                seen.Add(b);
                 queue.Enqueue((a, 0));
                 queue.Enqueue((b, 0));
                 bool broad = false;
@@ -126,10 +148,10 @@ sealed class CurvatureLines
                         broad = true;
                         break;
                     }
-                    foreach (int next in graph[item.Item1])
+                    foreach (int next in graph[item.Patch])
                     {
-                        float bend = Angle(item.Item1, next);
-                        var turn = Vector3.Cross(ns[item.Item1], ns[next]);
+                        float bend = Angle(item.Patch, next);
+                        var turn = Vector3.Cross(ns[item.Patch], ns[next]);
                         if (bend < 2 || bend > cap || turn.LengthSquared() < 1e-8)
                             continue;
                         if (Math.Abs(Vector3.Dot(Vector3.Normalize(turn), axis)) < axisMatch)
@@ -141,8 +163,8 @@ sealed class CurvatureLines
                         }
                         if (bend < angle * .45f || bend > angle * 2.2f)
                             continue;
-                        if (item.Item2 < 3 && seen.Add(next))
-                            queue.Enqueue((next, item.Item2 + 1));
+                        if (item.Depth < 3 && seen.Add(next))
+                            queue.Enqueue((next, item.Depth + 1));
                         if (seen.Count > 128)
                         {
                             broad = true;
@@ -150,55 +172,49 @@ sealed class CurvatureLines
                         }
                     }
                 }
-                float span = 0;
-                foreach (int u in seen)
-                    foreach (int v in seen)
-                        span = Math.Max(span, Angle(u, v));
-                bool uniformArea = seen.Max(p => areas[p]) / Math.Max(1e-12f, seen.Min(p => areas[p])) <= areaSpread;
-                bool transition = protectTransitions && seen.Any(p => graph[p].Any(next => !seen.Contains(next) && areas[next] > localArea * 2 && Angle(p, next) > 3));
-                if (!broad && !transition && uniformArea && span >= minimumSpan && seen.Count >= minimum)
-                    suppress.Add((mi, Math.Min(a, b), Math.Max(a, b)));
+                if (broad || seen.Count < minimum)
+                    continue;
+                if (minimumSpan > 0 && (seen.Max(p => areas[p]) / Math.Max(1e-12f, seen.Min(p => areas[p])) > 2
+                    || !seen.Any(u => seen.Any(v => Angle(u, v) >= minimumSpan))))
+                    continue;
+                suppress.Add((mi, Math.Min(a, b), Math.Max(a, b)));
             }
-            if (conservative != null)
+        }
+        // Neighboring pixels can fall on diagonally opposite patches at a
+        // welded vertex. Comparing their normals directly draws isolated
+        // dots even when both intervening edges are smooth.
+        var rings = new Dictionary<int, HashSet<int>>();
+        for (int i = 0; i < m.Indices.Length; i++)
+        {
+            int vertex = ids[m.Indices[i]];
+            if (!rings.TryGetValue(vertex, out var ring))
+                rings[vertex] = ring = [];
+            ring.Add(Find(i / 3));
+        }
+        foreach (var ring in rings.Values)
+        {
+            if (ring.Count < 3 || ring.Count > 12)
+                continue;
+            foreach (int middle in ring)
+            foreach (int a in ring)
             {
-                // Neighboring pixels can fall on diagonally opposite patches at a
-                // welded vertex. Comparing their normals directly draws isolated
-                // dots even when both intervening edges are smooth.
-                var rings = new Dictionary<int, HashSet<int>>();
-                for (int i = 0; i < m.Indices.Length; i++)
+                if (!graph[middle].Contains(a))
+                    continue;
+                var key = (mi, Math.Min(a, middle), Math.Max(a, middle));
+                if (!suppress.Contains(key))
+                    continue;
+                foreach (int b in ring)
                 {
-                    int vertex = ids[m.Indices[i]];
-                    if (!rings.TryGetValue(vertex, out var ring))
-                        rings[vertex] = ring = [];
-                    ring.Add(Find(i / 3));
-                }
-                foreach (var ring in rings.Values)
-                {
-                    if (ring.Count < 3 || ring.Count > 12)
+                    if (b == a || !graph[middle].Contains(b) || graph[a].Contains(b))
                         continue;
-                    foreach (int middle in ring)
-                    foreach (int a in ring)
-                    {
-                        if (!graph[middle].Contains(a))
-                            continue;
-                        var key = (mi, Math.Min(a, middle), Math.Max(a, middle));
-                        if (!suppress.Contains(key) && !conservative.Contains(key))
-                            continue;
-                        foreach (int b in ring)
-                        {
-                            if (b == a || !graph[middle].Contains(b) || graph[a].Contains(b))
-                                continue;
-                            float cosine = Vector3.Dot(ns[middle], ns[b]);
-                            // Only bridge a classified curved facet and a shallow longitudinal bend.
-                            if (cosine < .94f)
-                                continue;
-                            var diagonal = (mi, Math.Min(a, b), Math.Max(a, b));
-                            smoothCorners[diagonal] = Math.Max(smoothCorners.GetValueOrDefault(diagonal), cosine);
-                        }
-                    }
+                    float cosine = Vector3.Dot(ns[middle], ns[b]);
+                    // Only bridge a classified curved facet and a shallow longitudinal bend.
+                    if (cosine < .94f)
+                        continue;
+                    var diagonal = (mi, Math.Min(a, b), Math.Max(a, b));
+                    smoothCorners[diagonal] = Math.Max(smoothCorners.GetValueOrDefault(diagonal), cosine);
                 }
             }
         }
-
     }
 }

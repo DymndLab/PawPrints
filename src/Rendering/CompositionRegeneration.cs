@@ -135,14 +135,23 @@ static class CompositionRegeneration
                 ? p.NodeId == node : p.Id == oldPart.Id && p.TemplateId == oldPart.TemplateId));
             var oldView = before.Views.SingleOrDefault(v => v.Id == label.ViewId);
             var newView = after.Views.SingleOrDefault(v => v.Id == label.ViewId);
-            if (part == null || newView == null || !preservePaperPositions && oldView?.Name != newView.Name || !after.Visible.TryGetValue((label.ViewId, part.Id), out var visible))
-                throw CannotKeep($"label ‘{label.Text}’");
+            bool projectionChanged = before.Options.FreeLayout && after.Options.FreeLayout &&
+                oldView?.Frame is { } oldFrame && newView?.Frame is { } newFrame &&
+                (oldFrame.Right != newFrame.Right || oldFrame.Up != newFrame.Up || oldFrame.Toward != newFrame.Toward);
+            bool wasVisible = before.Visible.TryGetValue((label.ViewId, label.PartId), out var oldVisible);
+            if (part == null || newView == null || !preservePaperPositions && !projectionChanged && oldView?.Name != newView.Name)
+                throw CannotKeep($"label ?{label.Text}?");
+            bool isVisible = after.Visible.TryGetValue((label.ViewId, part.Id), out var visible);
+            if (!isVisible && !(after.Options.FreeLayout && (projectionChanged || !wasVisible)))
+                throw CannotKeep($"label ?{label.Text}?");
             LeaderPoint? pin = preservePaperPositions && label.AttachmentPinned ? label.Attachment : null;
-            if (!preservePaperPositions && label.AttachmentPinned && label.Attachment is { } anchor && before.Visible.TryGetValue((label.ViewId, label.PartId), out var oldVisible))
+            if (!preservePaperPositions && label.AttachmentPinned && label.Attachment is { } anchor && oldVisible != null && visible != null)
             {
                 var a = oldVisible.Bounds;
                 var b = visible.Bounds;
                 pin = new(b.X + (anchor.X - a.X) * b.Width / Math.Max(1, a.Width), b.Y + (anchor.Y - a.Y) * b.Height / Math.Max(1, a.Height));
+                if (projectionChanged && label.FlagNote)
+                    pin = LeaderRouting.SnapAttachment(after, label with { PartId = part.Id }, pin.Vector, float.PositiveInfinity);
             }
             var position = MapPoint(label.ViewId, label.X, label.Y);
             var changed = label with

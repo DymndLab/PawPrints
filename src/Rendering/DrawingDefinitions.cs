@@ -14,7 +14,7 @@ sealed record AssetReference(string Sha256, int Width, int Height);
 sealed record AppearanceDefinition(int Theme, bool Grid, int Emphasis, int Wear, bool Zones,
     bool TitleBlockVisible, TitleBlockData? Title, AssetReference? Logo);
 sealed record ScopeDefinition(uint? Root, ImmutableArray<JointKey> Cuts, ImmutableArray<uint> Removed,
-    ImmutableArray<uint>? VisibleParts = null);
+    ImmutableArray<uint>? VisibleParts = null, ImmutableArray<uint>? RemovedBranches = null);
 sealed record ViewDefinition(int Id, int Camera, Box Bounds, float Ratio, int? Parent = null,
     int? Group = null, bool Exploded = false, ViewAxes? Axes = null, ScopeDefinition? Scope = null,
     bool NeedsScopeBinding = false, int Alignment = 0, int RollDirection = -1, int ProjectionAngle = 3);
@@ -79,7 +79,7 @@ static class DrawingDefinitions
         }
         foreach (var detail in content.Details)
             views.Add(new(detail.ViewId, detail.View, detail.Bounds, detail.Sizing?.Ratio ?? drawing.Ratio,
-                Exploded: true, Scope: new(detail.Seed ?? detail.Scope, [], [])));
+                Exploded: true, Scope: detail.Selection ?? new(detail.Scope, [], [])));
         var layers = views.Select(v => new DrawingObject(DrawingObjectKind.View, v.Id))
             .Concat(content.Labels.Select(l => new DrawingObject(DrawingObjectKind.Label, l.Id)))
             .Concat(content.FreeText.Select(t => new DrawingObject(DrawingObjectKind.Text, t.Id)))
@@ -195,7 +195,7 @@ static class DrawingSchemas
                 throw new InvalidDataException("Invalid view definition.");
             if (template && v.Scope != null) throw new InvalidDataException("Templates cannot carry craft-bound scopes.");
             if (v.Scope is { } scope && (scope.Cuts.IsDefault || scope.Removed.IsDefault ||
-                scope.Cuts.Length > 100000 || scope.Removed.Length > 100000 || scope.VisibleParts is { Length: > 100000 }))
+                scope.Cuts.Length > 100000 || scope.Removed.Length > 100000 || scope.VisibleParts is { Length: > 100000 } || scope.RemovedBranches is { Length: > 100000 }))
                 throw new InvalidDataException("Invalid scope definition.");
         }
         var groups = new HashSet<int>();

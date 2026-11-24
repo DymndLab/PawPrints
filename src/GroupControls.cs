@@ -34,7 +34,7 @@ public sealed partial class BlueprintMod
         }
     }
     sealed record GroupDrag(DrawingPlacement Drawing, int View, Dictionary<int, Box> Geometry,
-        Vec Anchor, Vec Start, GroupResizeMode Mode, Dictionary<int, Vec> Extents);
+        Vec Anchor, Vec Start, GroupResizeMode Mode, Dictionary<int, Vec> Extents, ImGuiMouseCursor Cursor);
     static GroupDrag? groupDrag;
 
     static Box? ClearPanelPlacement(Box desired, IEnumerable<Box> obstacles, Box area, bool resize,
@@ -231,6 +231,7 @@ public sealed partial class BlueprintMod
         var drawing = CurrentDrawing();
         if (groupDrag is { } drag)
         {
+            ImGui.SetMouseCursor(drag.Cursor);
             if (ImGui.IsMouseClicked(ImGuiMouseButton.Right))
             {
                 groupDrag = null;
@@ -280,13 +281,16 @@ public sealed partial class BlueprintMod
         {
             var p = Screen(corners[i]);
             ImGui.GetWindowDrawList().AddRectFilled(p - new float2(5), p + new float2(5), 0xFF44DDFF);
-            if (hovered && Vec.Distance(point, corners[i]) * factor < 12 && ImGui.IsMouseClicked(ImGuiMouseButton.Left))
+            if (hovered && Vec.Distance(point, corners[i]) * factor < 12)
             {
+                var cursor = i % 2 == 0 ? ImGuiMouseCursor.ResizeNWSE : ImGuiMouseCursor.ResizeNESW;
+                ImGui.SetMouseCursor(cursor);
+                if (!ImGui.IsMouseClicked(ImGuiMouseButton.Left)) return false;
                 var io = ImGui.GetIO();
                 groupDrag = new(drawing, selectedCanvasView, geometry, groupCenterAnchor ? bounds.Center : corners[(i + 2) % 4], point,
                     io.KeyShift ? GroupResizeMode.Sizes : io.KeyAlt ? GroupResizeMode.Spacing : GroupResizeMode.Arrangement,
                     document.Scene.Views.Where(v => ids.Contains(v.Id)).ToDictionary(v => v.Id,
-                        v => v.Frame?.ContentExtent ?? new Vec(v.Bounds.Width - 32, v.Bounds.Height - 32)));
+                        v => v.Frame?.ContentExtent ?? new Vec(v.Bounds.Width - 32, v.Bounds.Height - 32)), cursor);
                 return true;
             }
         }

@@ -6,6 +6,12 @@ static class ExplodedPainting
     public const int Limit = 4;
     public const int CaptionSpace = 144;
 
+    public static uint? WholeCraftRoot(AssemblyCapture assembly)
+    {
+        var roots = assembly.Nodes.Where(n => n.Parent == null).Take(2).ToArray();
+        return roots.Length == 1 ? roots[0].Id : null;
+    }
+
 
     public static Box ClampFrame(Box b, PrintOptions options)
     {
@@ -36,6 +42,7 @@ static class ExplodedPainting
         var rendered = new List<RenderedDetail>();
         var fullVisuals = new Dictionary<(int View, int Part), PartVisual>();
         var views = baseline.Views.ToList();
+        string? titleScale = PrintScale.PrintedTitleScale(baseline.Views, original.Options);
         var reserved = baseline.Reserved.Where(b => !baseline.Captions.Any(c => c.Bounds == b)).ToList();
         foreach (var detail in details)
         {
@@ -107,13 +114,15 @@ static class ExplodedPainting
             int longest = Math.Max(heading.Length, caption.Length);
             int font = original.Options.FreeLayout ? 32 : Math.Min(40, Math.Max(12, (int)((box.Width - 32) / Math.Max(1, longest * .62f))));
             float center = inkLeft <= inkRight ? left + (inkLeft + inkRight) * .5f : box.Center.X;
-            string scale = "SCALE " + PrintScale.Ratio(tile.Frame, original.Options);
+            string ratio = PrintScale.Ratio(tile.Frame, original.Options);
+            string scale = ratio == titleScale ? "" : "SCALE " + ratio;
             float textWidth = Math.Max(longest * NativeText.MonoWidth(font), scale.Length * NativeText.MonoWidth(15));
             int captionY = top + Math.Max(0, inkBottom) + 18;
             canvas.Text(heading, (int)(center - heading.Length * NativeText.MonoWidth(font) / 2), captionY, font, 1);
             canvas.Text(caption, (int)(center - caption.Length * NativeText.MonoWidth(font) / 2), captionY + font + 4, font, 1);
-            canvas.Text(scale, (int)(center - scale.Length * NativeText.MonoWidth(15) / 2), captionY + 2 * font + 8, 15, 1);
-            var captionBounds = new Box(center - textWidth / 2, captionY, textWidth, 2 * font + 27);
+            if (scale.Length > 0)
+                canvas.Text(scale, (int)(center - scale.Length * NativeText.MonoWidth(15) / 2), captionY + 2 * font + 8, 15, 1);
+            var captionBounds = new Box(center - textWidth / 2, captionY, textWidth, 2 * font + (scale.Length > 0 ? 27 : 4));
             reserved.Add(captionBounds);
             rendered.Add(tile with
             {

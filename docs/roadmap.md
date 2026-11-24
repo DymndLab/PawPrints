@@ -16,6 +16,9 @@ Refresh drawings more naturally after editing the craft, preserve references to 
 - Let empty space inside exploded details show underlying drawings.
 - Show a centered, resizable view preview before placement and make selection feedback consistent.
 - Add direct resizing for main views, with agreed controls for resizing in place or scaling the arrangement while preserving shared physical scale.
+- Review how custom templates fit sheets with different aspect ratios.
+- Give Select Views a sheet preview like the template thumbnails. Let the user drag a view to another slot and shift the intervening views into place.
+- Check whether changing initials size shifts the writing to the right in the title block.
 
 ## Dimensions
 
@@ -29,9 +32,17 @@ Add tolerances to individual dimensions and a configurable **General Tolerances*
 
 Investigate actual attachment points and placement axes for guide origins and disassembly directions. Separate assembly-guide style from annotation-leader preferences. Revisit hoses whose endpoints separate during explosion; this is lower priority than assembled hose correctness.
 
+## Contained parts in exploded views
+
+Decide how to depict parts such as fuel tanks inside a cargo bay. Compare moving them outward from the bay, leaving them inside and hidden, and sliding them along the existing explosion axis. Try each on the same craft before choosing a default or deciding whether the behavior should be selectable.
+
 ## Sectional and cutaway views
 
 Explore a user-defined cutting plane for revealing internal craft structure, enclosed engines and other components. Let the player position and rotate the plane, including angled cuts, choose which side remains visible, and preview the result in the drawing. The cut affects only that view and leaves the craft intact. This covers internal craft geometry; IVA cabin rendering is a separate question. Validate geometry availability, section linework and memory/performance costs before committing to implementation. Future work, outside the current workflow refactor scope.
+
+## Paper wear patterns
+
+Explore a small set of distinct archival looks, such as lightly aged paper, fold marks, handling scuffs, or a localized stain. Compare them across all paper themes in the fitted preview and in exported PNGs. Keep the drawing and title block legible at every wear level.
 
 ## Linework refinement
 

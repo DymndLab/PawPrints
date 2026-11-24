@@ -29,6 +29,7 @@ public sealed partial class BlueprintMod
         }
         if (existing == null)
         {
+            pickingPartTool = false;
             placingText = true;
             textBoxStart = null;
             textPlacementSpace = TextBoxPlacement.Space(document.Scene, document.Labels, document.Routes);
@@ -187,17 +188,35 @@ public sealed partial class BlueprintMod
     }
 
 
+    static void CancelTextPlacement()
+    {
+        placingText = false;
+        textBoxStart = null;
+        textPlacementSpace = null;
+        status = "Text box placement cancelled.";
+    }
+
+
     static bool DrawTextPlacement(Vec point, float factor, float2 origin, bool hovered)
     {
         if (!placingText)
             return false;
         if (ImGui.IsMouseClicked(ImGuiMouseButton.Right))
         {
-            placingText = false;
-            textBoxStart = null;
+            CancelTextPlacement();
             return true;
         }
-        ImGui.SetMouseCursor(ImGuiMouseCursor.ResizeAll);
+        if (hovered)
+            RequestPrecisionCursor();
+        if (textBoxStart == null)
+        {
+            const string hint = "Drag on the paper to draw a text box";
+            var size = ImGui.CalcTextSize(hint);
+            var startHint = ImGui.GetWindowPos() + new float2(12, 12);
+            var draw = ImGui.GetWindowDrawList();
+            draw.AddRectFilled(startHint, startHint + size + new float2(16, 12), 0xF0292521);
+            draw.AddText(startHint + new float2(8, 6), 0xFF9FDEFF, hint);
+        }
         var page = Options.Page;
         point = new(Math.Clamp(point.X, 0, page.Width), Math.Clamp(point.Y, 0, page.Height));
         if (snapPanels && textPlacementSpace != null)
@@ -238,6 +257,7 @@ public sealed partial class BlueprintMod
         void Outline(Box b, uint color) => ImGui.GetWindowDrawList().AddRect(origin + new float2(b.X * factor, b.Y * factor), origin + new float2(b.Right * factor, b.Bottom * factor), color, 0, ImDrawFlags.None, 2);
         if (dragText is { } dragging)
         {
+            ImGui.SetMouseCursor(resizeText ? ImGuiMouseCursor.ResizeNWSE : ImGuiMouseCursor.ResizeAll);
             if (ImGui.IsMouseClicked(ImGuiMouseButton.Right))
             {
                 dragText = null;
@@ -302,7 +322,8 @@ public sealed partial class BlueprintMod
             BeginTextBox(hit);
             return true;
         }
-        ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+        bool corner = Vec.Distance(point, new(hit.Bounds.Right, hit.Bounds.Bottom)) * factor < 18;
+        ImGui.SetMouseCursor(corner ? ImGuiMouseCursor.ResizeNWSE : ImGuiMouseCursor.ResizeAll);
         if (ImGui.IsMouseClicked(ImGuiMouseButton.Left))
         {
             SelectLabel(-1);
@@ -312,7 +333,7 @@ public sealed partial class BlueprintMod
             dragText = hit;
             textPlacementSpace = TextBoxPlacement.Space(document.Scene, document.Labels, document.Routes, hit.Id);
             textPress = point;
-            resizeText = Vec.Distance(point, new(hit.Bounds.Right, hit.Bounds.Bottom)) * factor < 18;
+            resizeText = corner;
         }
         return true;
     }

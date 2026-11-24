@@ -71,9 +71,10 @@ sealed partial class BlueprintRenderer
     static Vector3 Unit(Vector3 a) => a.LengthSquared() > 1e-15f ? Vector3.Normalize(a) : Vector3.UnitZ;
 
 
-    public BlueprintRenderer(Capture c, IReadOnlyDictionary<string, Texture> maps, string craftTitle, int view, CancellationToken token, ProjectionFrame? frame = null, int sampleRate = 1, Vector2 inkOrigin = default, Vector2? referenceSize = null)
+    public BlueprintRenderer(Capture c, IReadOnlyDictionary<string, Texture> maps, string craftTitle, int view, CancellationToken token, ProjectionFrame? frame = null, int sampleRate = 1, Vector2 inkOrigin = default, Vector2? referenceSize = null, CurvatureLines? sharedCurvature = null)
     {
         capture = c;
+        curvature = sharedCurvature;
         title = craftTitle;
         cancellation = token;
         W = frame?.Width ?? 2400;
@@ -304,6 +305,7 @@ sealed partial class BlueprintRenderer
         creaseDegrees = degrees;
         Array.Clear(structuralLines);
         float cos = MathF.Cos(degrees * MathF.PI / 180);
+        ReadOnlySpan<int> neighbors = stackalloc[] { -1, 1, -W, W };
         for (int y = 1; y < H - 1; y++)
             for (int x = 1; x < W - 1; x++)
             {
@@ -314,8 +316,9 @@ sealed partial class BlueprintRenderer
                     continue;
                 var t = Triangles[id];
                 float line = 0;
-                foreach (int j in new[] { q - 1, q + 1, q - W, q + W })
+                foreach (int offset in neighbors)
                 {
+                    int j = q + offset;
                     if (face[j] < 0)
                     {
                         line = 1;
@@ -356,6 +359,7 @@ sealed partial class BlueprintRenderer
         // below the general detail threshold. Preserve long runs independently.
         var candidate = new bool[W * H];
         float cos = MathF.Cos(7 * MathF.PI / 180);
+        ReadOnlySpan<int> neighbors = stackalloc[] { -1, 1, -W, W };
         for (int y = 1; y < H - 1; y++)
             for (int x = 1; x < W - 1; x++)
             {
@@ -365,8 +369,9 @@ sealed partial class BlueprintRenderer
                 if (!Foil(q))
                     continue;
                 var a = Triangles[face[q]];
-                foreach (int j in new[] { q - 1, q + 1, q - W, q + W })
+                foreach (int offset in neighbors)
                 {
+                    int j = q + offset;
                     if (!SameCloth(q, j))
                         continue;
                     var b = Triangles[face[j]];

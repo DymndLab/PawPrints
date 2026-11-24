@@ -30,8 +30,11 @@ static class PrintGeneration
         }
         // Fit to a changed page before validating its plan: the old scale can be
         // larger than the new canvas even though the fitted scale is valid.
-        PartPoses.Validate(source, poses, SheetLayout.Plan(geometry, options).Select(v => v.Id)
-            .Concat(previous?.Details.Select(d => d.ViewId) ?? []));
+        if (poses.Length != 0)
+        {
+            var ids = options.Drawing?.Views.Select(v => v.Id) ?? SheetLayout.Plan(geometry, options).Select(v => v.Id);
+            PartPoses.Validate(source, poses, ids.Concat(previous?.Details.Select(d => d.ViewId) ?? []));
+        }
         var result = PosePainting.RenderMain(source, craft, options, warnings, poses, token,
             composeAnnotations: previous == null);
         if (options.Drawing == null)

@@ -10,7 +10,7 @@ public sealed partial class BlueprintMod
 {
     enum SetupStage { Choose, Appearance, Editing, SelectViews, Templates }
     static SetupStage setupStage;
-    static bool creatingBlank, captureForView;
+    static bool creatingBlank, captureForView, captureForDetail;
     static int? captureViewCamera;
     static readonly bool[] setupViews = new bool[9];
     static readonly string[] setupViewNames = ["Three-quarter", "Front", "Right side", "Top", "Isometric", "Rear", "Left side", "Bottom", "Exploded"];
@@ -194,6 +194,7 @@ public sealed partial class BlueprintMod
                     renderAdoptsHistory = true;
                     renderAppliesSettings = true;
                     creatingBlank = true;
+                    progress = "Preparing drawing";
                     StartRender(token => BlankDrawing.Create(title, options, token));
                 }
             }
@@ -204,7 +205,7 @@ public sealed partial class BlueprintMod
             setupStage = SetupStage.Editing;
         }
         ImGui.EndDisabled();
-        if (busy) ImGui.Text("Preparing drawing...");
+        DrawRenderProgress();
         if (ImGui.Button("Back to editor")) CloseExport();
         DrawWarningDialog();
     }

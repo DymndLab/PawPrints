@@ -94,6 +94,7 @@ public sealed partial class BlueprintMod
         var panels = PrintTables.Panels(sheet.Scene, document.Labels).ToArray();
         if (dragTable >= 0)
         {
+            ImGui.SetMouseCursor(resizeTable ? ImGuiMouseCursor.ResizeNWSE : ImGuiMouseCursor.ResizeAll);
             if (ImGui.IsMouseClicked(ImGuiMouseButton.Right))
             {
                 dragTable = -1;
@@ -143,7 +144,7 @@ public sealed partial class BlueprintMod
             bool header = over;
             if (header || corner)
             {
-                ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+                ImGui.SetMouseCursor(corner ? ImGuiMouseCursor.ResizeNWSE : ImGuiMouseCursor.ResizeAll);
                 if (ImGui.IsMouseClicked(ImGuiMouseButton.Left))
                 {
                     selectedTable = dragTable = panel.Id;

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Blueprint.Rendering;
 using Brutal.ImGuiApi;
 using Brutal.Numerics;
@@ -10,9 +11,7 @@ public sealed partial class BlueprintMod
 {
     static uint? partMenuNode;
     static bool detailScopeOpen, detailCommitQueued;
-    static uint[] detailAncestors = [];
-    static int detailScopeIndex, scopeEditingId = -1, selectedDetail = -1;
-    static Box[] scopeHighlight = [];
+    static int selectedDetail = -1, detailCaptionMenuId = -1;
     static ExplodedDetail? pendingDetail, dragDetail, detailEdit;
     static uint? dragGroup, selectedGroup;
     static V3 dragAxis;
@@ -56,7 +55,7 @@ public sealed partial class BlueprintMod
         dragDetail = null;
         dragGroup = null;
         detailScopeOpen = false;
-        scopeHighlight = [];
+        ClearScope();
         dragTable = -1;
     }
 
@@ -73,124 +72,37 @@ public sealed partial class BlueprintMod
     }
 
 
-    static void BeginDetail(uint? seed, int editing = -1)
+    static void BeginExplodedPlacement()
     {
-        var source = basePrint?.DetailSource;
-        if (source == null || seed == null)
+        if (document == null)
+            return;
+        if (document.Details.Length >= ExplodedPainting.Limit)
         {
-            status = "Refresh the craft to capture its assembly hierarchy.";
+            ReportFailure($"Up to {ExplodedPainting.Limit} exploded details per sheet.");
             return;
         }
-        if (editing < 0 && document!.Details.Length >= ExplodedPainting.Limit)
+        if (sheet?.PoseSource == null)
         {
-            ReportFailure("Up to four exploded details per sheet.");
+            if (KSA.Program.Editor is { } editor && !busy)
+            {
+                captureForDetail = true;
+                Generate(editor);
+                if (renderTask == null)
+                    captureForDetail = false;
+            }
             return;
         }
-        uint? retainedScope = editing >= 0 ? document!.Details.First(d => d.Id == editing).Scope : null;
-        detailAncestors = AssemblyGraph.PartAncestors(source.Assembly, seed.Value, retainedScope);
-        if (detailAncestors.Length == 0)
-            detailAncestors = [seed.Value];
-        detailScopeIndex = 0;
-        scopeEditingId = editing;
-        if (editing >= 0)
-            detailScopeIndex = Math.Max(0, Array.IndexOf(detailAncestors, document!.Details.First(d => d.Id == editing).Scope));
-        detailScopeOpen = true;
-        UpdateScopeHighlight();
+        pickingPartTool = false;
+        BeginDetail(ExplodedPainting.WholeCraftRoot(sheet.PoseSource.Assembly));
     }
 
 
-    static void UpdateScopeHighlight()
+    static ExplodedDetail NewDetail(uint scope, uint seed, string caption)
     {
-        var scene = sheet?.Scene;
-        var source = basePrint?.DetailSource;
-        if (scene?.MeshOwners == null || source == null)
-        {
-            scopeHighlight = [];
-            return;
-        }
-        var included = AssemblyGraph.Subtree(source.Assembly, detailAncestors[detailScopeIndex]);
-        var match = source.Assembly.MeshNodes.Select(included.Contains).ToArray();
-        var runs = new List<Box>();
-        for (int y = 0; y < scene.Height; y++)
-            for (int x = 0; x < scene.Width; x++)
-            {
-                int mi = scene.MeshOwners[y * scene.Width + x];
-                if (mi < 0 || !match[mi])
-                    continue;
-                int start = x;
-                while (x + 1 < scene.Width)
-                {
-                    int next = scene.MeshOwners[y * scene.Width + x + 1];
-                    if (next < 0 || !match[next])
-                        break;
-                    x++;
-                }
-                runs.Add(new(start, y, x - start + 1, 1));
-            }
-        scopeHighlight = runs.ToArray();
-    }
-
-
-    static void DrawDetailScopeDialog()
-    {
-        if (detailScopeOpen && !ImGui.IsPopupOpen("Exploded assembly scope"u8))
-            ImGui.OpenPopup("Exploded assembly scope"u8);
-        if (!ImGui.BeginPopupModal("Exploded assembly scope"u8, ImGuiWindowFlags.AlwaysAutoResize))
-            return;
-        try
-        {
-            partMenuOpen = true;
-            var source = basePrint?.DetailSource;
-            if (!detailScopeOpen || source == null)
-            {
-                ImGui.CloseCurrentPopup();
-                return;
-            }
-            ImGui.Text("Include this part and everything beneath it:");
-            string[] names = detailAncestors.Select(id => source.Assembly.Nodes.First(n => n.Id == id).Name + $"  [#{id}]").ToArray();
-            ImGui.SetNextItemWidth(520);
-            if (ImGui.Combo("##Assembly scope"u8, ref detailScopeIndex, names, names.Length))
-                UpdateScopeHighlight();
-            var subtree = AssemblyGraph.Subtree(source.Assembly, detailAncestors[detailScopeIndex]);
-            ImGui.Text($"{subtree.Count} hierarchy nodes included. Highlighted on the drawing.");
-            ImGui.Text("First entry is the clicked part; last entry is the craft root.");
-            if (ImGui.Button(scopeEditingId < 0 ? "Place detail frame" : "Apply scope"))
-            {
-                uint scope = detailAncestors[detailScopeIndex];
-                var node = source.Assembly.Nodes.First(n => n.Id == scope);
-                if (scopeEditingId >= 0)
-                {
-                    var old = document!.Details.First(d => d.Id == scopeEditingId);
-                    QueueDetail(old with
-                    {
-                        Scope = scope,
-                        IncludeInternal = false,
-                        Expanded = [],
-                        Groups = [],
-                        Camera = null
-                    });
-                }
-                else
-                {
-                    int id = Enumerable.Range(1, ExplodedPainting.Limit).First(i => !document!.Details.Any(d => d.Id == i));
-                    var area = PageLayout.Drawing(Options);
-                    pendingDetail = new(id, scope, ExplodedPainting.ClampFrame(new(area.X, area.Y, Math.Min(900, area.Width), Math.Min(800, area.Height)), Options), node.Name, Seed: detailAncestors[0], GuideLine: (LeaderLine)defaultLine);
-                    var draft = pendingDetail;
-                    pendingDetail = null;
-                    PreviewDetail(draft);
-                }
-                detailScopeOpen = false;
-                scopeHighlight = [];
-                ImGui.CloseCurrentPopup();
-            }
-            ImGui.SameLine();
-            if (ImGui.Button("Cancel##Detail scope"u8))
-            {
-                CancelDetailGesture();
-                ImGui.CloseCurrentPopup();
-            }
-        }
-        finally { DrawWarningDialog(true); ImGui.EndPopup(); }
+        int id = Enumerable.Range(1, ExplodedPainting.Limit).First(i => !document!.Details.Any(d => d.Id == i));
+        var area = PageLayout.Drawing(Options);
+        var frame = ExplodedPainting.ClampFrame(new(area.X, area.Y, Math.Min(900, area.Width), Math.Min(800, area.Height)), Options);
+        return new(id, scope, frame, caption, Seed: seed, GuideLine: (LeaderLine)defaultLine);
     }
 
 
@@ -212,7 +124,14 @@ public sealed partial class BlueprintMod
         detailCommitQueued = true;
         progress = "Drawing exploded detail";
         status = progress;
-        StartRender(token => ExplodedPainting.Compose(original, current, details, labels, token, true, tables) with { Notice = "Exploded detail updated. Drag its caption to move; drag the lower-right corner to resize." });
+        StartRender(token =>
+        {
+            long started = Stopwatch.GetTimestamp();
+            long allocated = GC.GetAllocatedBytesForCurrentThread();
+            var result = ExplodedPainting.Compose(original, current, details, labels, token, true, tables);
+            PrintDiagnostics.Record($"drawing.exploded.edit details={details.Length} page_pixels={(long)result.PixelWidth * result.PixelHeight} compose_ms={(long)Stopwatch.GetElapsedTime(started).TotalMilliseconds} worker_allocated_bytes={GC.GetAllocatedBytesForCurrentThread() - allocated}");
+            return result with { Notice = "Exploded detail updated. Drag its caption to move; drag the lower-right corner to resize." };
+        });
     }
 
 
@@ -245,7 +164,7 @@ public sealed partial class BlueprintMod
         ImGui.Text("Exploded details");
         if (document.Details.Length == 0)
         {
-            PrintUiText.Wrapped("Choose Place > Exploded View, then click a part. Or right-click a part and choose Add exploded detail view.");
+            PrintUiText.Wrapped("Choose Place > Exploded View to open the exploded view creator, or right-click a part and choose Add exploded detail view.");
             return;
         }
         var names = new[] { "Select detail..." }.Concat(document.Details.Select(d => $"{SheetLayout.ViewName(d.ViewId)} / {d.Caption}")).ToArray();
@@ -319,7 +238,7 @@ public sealed partial class BlueprintMod
                 {
                     Caption = AnnotationText.Clean(detailCaption.ToString(), 60)
                 });
-            if (ImGui.Button("Change assembly scope"u8))
+            if (ImGui.Button("Edit exploded view"u8))
                 BeginDetail(detailEdit.Seed ?? detailEdit.Scope, detailEdit.Id);
             if (ImGui.Button("Fit parts to box"u8))
                 QueueDetail(detailEdit with
@@ -413,8 +332,6 @@ public sealed partial class BlueprintMod
     {
         float2 Screen(Vec p) => origin + new float2(p.X * factor, p.Y * factor);
         void Outline(Box b, uint color) => ImGui.GetWindowDrawList().AddRect(Screen(new(b.X, b.Y)), Screen(new(b.Right, b.Bottom)), color, 0, ImDrawFlags.None, 2);
-        foreach (var run in scopeHighlight)
-            ImGui.GetWindowDrawList().AddLine(Screen(new(run.X, run.Y + .5f)), Screen(new(run.Right, run.Y + .5f)), 0x6699DDFF, Math.Max(1, factor));
         if (detailScopeOpen)
             return true;
         if (!editable)
@@ -455,6 +372,7 @@ public sealed partial class BlueprintMod
         var hit = document!.Details.LastOrDefault(d => canvasTarget?.Kind == DrawingObjectKind.View && canvasTarget?.Id == d.ViewId);
         if (dragDetail is { } dragging)
         {
+            ImGui.SetMouseCursor(resizeDetail ? ImGuiMouseCursor.ResizeNWSE : ImGuiMouseCursor.ResizeAll);
             if (resizeDetail && dragGroup == null && Options.FreeLayout)
             {
                 var rendered = sheet!.Scene!.Details.Single(d => d.Definition.Id == dragging.Id);
@@ -566,8 +484,34 @@ public sealed partial class BlueprintMod
         if (hit != null && hovered && !ControlsLocked && ImGui.IsMouseClicked(ImGuiMouseButton.Right)
             && sheet!.Scene!.Details.First(d => d.Definition.Id == hit.Id).CaptionBounds.Contains(point))
         {
-            BeginViewSize(hit.ViewId);
+            detailCaptionMenuId = hit.Id;
+            ImGui.OpenPopup("Exploded detail actions"u8);
+        }
+        if (ImGui.BeginPopup("Exploded detail actions"u8))
+        {
+            try
+            {
+                partMenuOpen = true;
+                if (!editable || document.Details.FirstOrDefault(d => d.Id == detailCaptionMenuId) is not { } target)
+                    ImGui.CloseCurrentPopup();
+                else if (ImGui.MenuItem("Edit exploded view..."u8))
+                {
+                    BeginDetail(target.Scope, target.Id);
+                    ImGui.CloseCurrentPopup();
+                }
+                else if (ImGui.MenuItem("Adjust Scale"u8))
+                {
+                    BeginViewSize(target.ViewId);
+                    ImGui.CloseCurrentPopup();
+                }
+            }
+            finally { ImGui.EndPopup(); }
             return true;
+        }
+        if (hit != null && hovered && !ControlsLocked)
+        {
+            bool grip = Vec.Distance(point, new(hit.Bounds.Right, hit.Bounds.Bottom)) * factor < 18;
+            ImGui.SetMouseCursor(grip ? ImGuiMouseCursor.ResizeNWSE : ImGuiMouseCursor.ResizeAll);
         }
         if (hit == null || !hovered || !ImGui.IsMouseClicked(ImGuiMouseButton.Left))
             return false;

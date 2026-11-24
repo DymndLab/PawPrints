@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Blueprint.Rendering;
 using Brutal.ImGuiApi;
 using Brutal.Numerics;
@@ -55,6 +56,8 @@ public sealed partial class BlueprintMod
         partMenuScene = null;
         partMenuOpen = false;
         focusFlagnoteText = false;
+        if (flagnotePlacement is { } flag)
+            PrintDiagnostics.State("flagnote.phase", $"end stage={flag.Stage}");
         flagnotePlacement = null;
         flagnoteScene = null;
         flagnoteError = "";
@@ -367,11 +370,11 @@ public sealed partial class BlueprintMod
         {
             if (DateTime.UtcNow < clippingNoticeUntil)
                 PrintUiText.Wrapped("Part of the drawing is outside the image. Use Objects to reveal it.");
-            if (warningNotice == null && GenerationBlock(editor) is { } generationBlock)
+            if (!placingText && warningNotice == null && GenerationBlock(editor) is { } generationBlock)
                 PrintUiStyle.Warning(generationBlock);
             if (renderTask != null)
             {
-                PrintUiText.Wrapped(progress);
+                PrintUiText.Wrapped(activeProgress?.Latest.Label ?? progress);
                 if (!composingLabels && ImGui.Button("Cancel"u8))
                     cancellation?.Cancel();
             }
@@ -388,7 +391,43 @@ public sealed partial class BlueprintMod
     }
 
 
+    static int dragFrameCount;
+    static double dragCanvasTotalMs, dragCanvasMaxMs;
+
     static void DrawPreview()
+    {
+        string? dragKind = dragView != null ? "view" : groupDrag != null ? "group" : dragDetail != null ? "exploded" : null;
+        if (dragKind == null)
+        {
+            dragFrameCount = 0;
+            dragCanvasTotalMs = dragCanvasMaxMs = 0;
+            DrawPreviewCanvas();
+            return;
+        }
+
+        long started = Stopwatch.GetTimestamp();
+        DrawPreviewCanvas();
+        double elapsed = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+        dragFrameCount++;
+        dragCanvasTotalMs += elapsed;
+        dragCanvasMaxMs = Math.Max(dragCanvasMaxMs, elapsed);
+        if (dragView == null && groupDrag == null && dragDetail == null)
+            PrintDiagnostics.Record($"view.drag kind={dragKind} frames={dragFrameCount} canvas_total_ms={(long)dragCanvasTotalMs} canvas_max_ms={(long)Math.Ceiling(dragCanvasMaxMs)}");
+    }
+
+
+    static void DrawPartHighlight(RenderScene scene, int view, int part, float2 origin, float factor, ImDrawListPtr draw)
+    {
+        foreach (var run in scene.Highlight(view, part))
+        {
+            float y = (run.Y + .5f) * factor;
+            draw.AddLine(origin + new float2(run.X * factor, y), origin + new float2(run.Right * factor, y),
+                0x4099DDFF, Math.Max(factor, 1));
+        }
+    }
+
+
+    static void DrawPreviewCanvas()
     {
         alignmentGuides = [];
         hoveredKitten = -1;
@@ -516,7 +555,7 @@ public sealed partial class BlueprintMod
             status = "Placement cancelled.";
             return;
         }
-        if (DrawPartMenu(hovered, point, editable))
+        if (DrawPartMenu(hovered, point, editable, origin, factor))
             return;
         if (flagnotePlacement is { } flag)
         {
@@ -527,11 +566,15 @@ public sealed partial class BlueprintMod
             }
             if (flag.Stage == FlagnoteStage.Start)
             {
-                var anchor = LeaderRouting.SnapAttachment(document!.Scene, flag.Label, point, 12 / factor)?.Vector ?? point;
-                if (hovered)
-                    Handle(anchor, 0xFF8EDD8E);
-                if (hovered && ImGui.IsMouseClicked(ImGuiMouseButton.Left))
-                    flag.PickStart(anchor);
+                if (hovered && LeaderRouting.SnapAttachment(document!.Scene, flag.Label, point, 12 / factor) is { } anchor)
+                {
+                    Handle(anchor.Vector, 0xFF8EDD8E);
+                    if (ImGui.IsMouseClicked(ImGuiMouseButton.Left))
+                    {
+                        flag.PickStart(anchor.Vector);
+                        PrintDiagnostics.State("flagnote.phase", "anchor");
+                    }
+                }
                 return; // The start click cannot also select the end.
             }
             var proposed = flag.Stage == FlagnoteStage.End ? flag.PreviewEnd(point) : flag.Label;
@@ -551,6 +594,7 @@ public sealed partial class BlueprintMod
             if (flag.Stage == FlagnoteStage.End && hovered && ImGui.IsMouseClicked(ImGuiMouseButton.Left))
             {
                 flag.PickEnd(point);
+                PrintDiagnostics.State("flagnote.phase", $"endpoint stage={flag.Stage}");
                 if (!flag.Custom && !CommitFlagnote())
                     flag.RetryEnd();
             }
@@ -566,8 +610,7 @@ public sealed partial class BlueprintMod
         }
         if (editable && hovered && dragLabel == null && pendingLabel == null && document!.Scene.Pick(point) is { } hover)
         {
-            foreach (var run in document.Scene.Highlight(hover.View, hover.Part))
-                ImGui.GetWindowDrawList().AddLine(ToScreen(new(run.X, run.Y + .5f)), ToScreen(new(run.Right, run.Y + .5f)), 0x6699DDFF, Math.Max(factor, 1));
+            DrawPartHighlight(document.Scene, hover.View, hover.Part, origin, factor, ImGui.GetWindowDrawList());
             var name = document.Scene.Parts.Single(p => p.Id == hover.Part).Name;
             PrintUiText.Tooltip(name);
         }
@@ -655,12 +698,13 @@ public sealed partial class BlueprintMod
             if (!placing && draggingAttachment)
             {
                 var anchor = LeaderRouting.SnapAttachment(document.Scene, original, point, 12 / factor);
-                proposed = original with
-                {
-                    ManualPlacement = true,
-                    AttachmentPinned = true,
-                    Attachment = anchor ?? (Options.FreeLayout ? new(point.X, point.Y) : new(Math.Clamp(point.X, 0, sheet.PixelWidth - 1), Math.Clamp(point.Y, 0, sheet.PixelHeight - 1)))
-                };
+                if (!original.FlagNote || anchor != null)
+                    proposed = original with
+                    {
+                        ManualPlacement = true,
+                        AttachmentPinned = true,
+                        Attachment = anchor ?? (Options.FreeLayout ? new(point.X, point.Y) : new(Math.Clamp(point.X, 0, sheet.PixelWidth - 1), Math.Clamp(point.Y, 0, sheet.PixelHeight - 1)))
+                    };
             }
             var labels = placing ? [.. document.Labels, proposed] : document.Labels.Select(l => l.Id == proposed.Id ? proposed : l).ToArray();
             bool valid = LeaderRouting.TryLayout(document.Scene, labels, out var routes, out var reason);

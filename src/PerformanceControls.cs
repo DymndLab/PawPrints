@@ -128,6 +128,7 @@ public sealed partial class BlueprintMod
         void Outline(Box b, uint color) => ImGui.GetWindowDrawList().AddRect(origin + new float2(b.X * factor, b.Y * factor), origin + new float2(b.Right * factor, b.Bottom * factor), color, 0, ImDrawFlags.None, 2);
         if (dragSpec is { } dragging)
         {
+            ImGui.SetMouseCursor(specResize ? ImGuiMouseCursor.ResizeNWSE : ImGuiMouseCursor.ResizeAll);
             if (ImGui.IsMouseClicked(ImGuiMouseButton.Right))
             {
                 dragSpec = null;
@@ -179,7 +180,7 @@ public sealed partial class BlueprintMod
             hoveredSpec = b.Id;
             if (corner || over)
             {
-                ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+                ImGui.SetMouseCursor(corner ? ImGuiMouseCursor.ResizeNWSE : ImGuiMouseCursor.ResizeAll);
                 if (ImGui.IsMouseClicked(ImGuiMouseButton.Left))
                 {
                     dragSpec = b;

@@ -16,6 +16,7 @@ sealed record DetailSizing(float Ratio, float? Spread = null, Vector3? Center = 
 sealed record ExplodedDetail(int Id, uint Scope, Box Bounds, string Caption, int View = 4, float Separation = 1, int Axis = 0, bool IncludeInternal = false,
     bool Guides = true, uint[]? Expanded = null, ExplodedGroup[]? Groups = null, ProjectionFrame? Camera = null, uint? Seed = null, DetailSizing? Sizing = null, LeaderLine GuideLine = LeaderLine.Dotted)
 {
+    public ScopeDefinition? Selection { get; init; }
     public int ViewId => 1000 + Id;
 }
 sealed record DetailGeometry(Capture Capture, int[] OriginalMeshes, uint[] GroupNodes, Vector3[] OriginalCenters, Vector3[] MovedCenters)
@@ -87,10 +88,94 @@ static class AssemblyGraph
     }
 
 
+    public static uint WholePart(AssemblyCapture source, uint id) =>
+        PartAncestors(source, id).First();
+
+    public static ScopeDefinition LegacyScope(AssemblyCapture source, uint root)
+    {
+        var subtree = Subtree(source, root);
+        var cuts = source.Topology!.Links
+            .Where(link => link.Kind == SourceLinkKind.Structural &&
+                subtree.Contains(link.Key.A.Part) != subtree.Contains(link.Key.B.Part))
+            .Select(link => link.Key);
+        return new(root, [.. cuts], []);
+    }
+
+
+    public static HashSet<uint> Included(AssemblyCapture source, ExplodedDetail detail)
+    {
+        if (detail.Selection is not { } selection)
+            return Subtree(source, detail.Scope);
+        var topology = source.Topology ?? throw new InvalidDataException("Capture the craft's attachments to use this scope.");
+        if (selection.Cuts.Any(c => topology.ResolveJoint(topology.Binding, c) != BindingStatus.Exact))
+            throw new InvalidDataException("An exploded-view cut no longer matches a craft attachment.");
+
+        if (!source.Nodes.Any(n => n.Id == detail.Scope))
+            throw new InvalidDataException("The exploded-view root no longer exists.");
+        var owners = topology.Parts.ToDictionary(p => p.Id, p => p.Owner);
+        var removed = selection.Removed.ToHashSet();
+        var blocked = (selection.RemovedBranches ?? []).ToHashSet();
+        bool OwnedBy(uint id, HashSet<uint> set)
+        {
+            for (uint? node = id; node.HasValue; node = owners.GetValueOrDefault(node.Value))
+                if (set.Contains(node.Value)) return true;
+            return false;
+        }
+
+        var adjacency = topology.Links
+            .Where(l => l.Kind != SourceLinkKind.Fuel && (l.Kind != SourceLinkKind.Structural || !selection.Cuts.Contains(l.Key)))
+            .SelectMany(l => new[] { (From: l.Key.A.Part, To: l.Key.B.Part), (From: l.Key.B.Part, To: l.Key.A.Part) })
+            .ToLookup(edge => edge.From, edge => edge.To);
+        var included = new HashSet<uint>();
+        var pending = new Stack<uint>();
+        pending.Push(detail.Scope);
+        while (pending.TryPop(out var id))
+        {
+            if (included.Contains(id) || OwnedBy(id, blocked)) continue;
+            included.Add(id);
+            foreach (uint next in adjacency[id])
+                if (!included.Contains(next)) pending.Push(next);
+        }
+        included.RemoveWhere(id => OwnedBy(id, removed));
+        return included;
+    }
+
+
+    public static ExplodedDetail ToggleBranch(AssemblyCapture source, ExplodedDetail detail, uint part)
+    {
+        if (part == detail.Scope || detail.Selection is not { } selection) return detail;
+        var branches = selection.RemovedBranches ?? [];
+        ExplodedDetail WithBranches(System.Collections.Immutable.ImmutableArray<uint> candidates) =>
+            detail with { Selection = selection with { RemovedBranches = candidates }, Camera = null };
+
+        if (branches.Contains(part)) return WithBranches(branches.Remove(part));
+        if (selection.Removed.Contains(part))
+            return detail with { Selection = selection with { Removed = selection.Removed.Remove(part) }, Camera = null };
+        if (Included(source, detail).Contains(part)) return WithBranches(branches.Add(part));
+
+        // A dimmed descendant can restore the excluded branch that contains it.
+        foreach (uint branch in branches)
+        {
+            var candidate = WithBranches(branches.Remove(branch));
+            if (Included(source, candidate).Contains(part)) return candidate;
+        }
+        return detail;
+    }
+
+
     public static uint GroupFor(AssemblyCapture source, ExplodedDetail detail, uint node)
     {
         var path = Ancestors(source, node);
         int root = Array.IndexOf(path, detail.Scope);
+        if (root < 0 && detail.Selection != null)
+        {
+            uint whole = path.First(id => !source.Nodes.First(n => n.Id == id).Subpart);
+            int ownerIndex = Array.IndexOf(path, whole);
+            uint ownedGroup = whole;
+            for (int i = ownerIndex - 1; i >= 0; i--)
+                if ((detail.Expanded ?? []).Contains(ownedGroup)) ownedGroup = path[i];
+            return ownedGroup;
+        }
         if (root < 0)
             throw new InvalidDataException("Part is outside detail scope.");
         // Craft attachments are real part boundaries; authored SubParts are
@@ -108,13 +193,18 @@ static class AssemblyGraph
         Ancestors(source, seed).Where(id => !source.Nodes.First(n => n.Id == id).Subpart || id == retain).ToArray();
 
 
-    public static int Depth(AssemblyCapture source, ExplodedDetail detail, uint group) =>
-        Ancestors(source, group).TakeWhile(id => id != detail.Scope).Count(id => GroupFor(source, detail, id) == id);
+    public static int Depth(AssemblyCapture source, ExplodedDetail detail, uint group)
+    {
+        var path = Ancestors(source, group);
+        int limit = Array.IndexOf(path, detail.Scope);
+        return limit >= 0
+            ? path.Take(limit).Count(id => GroupFor(source, detail, id) == id) : 1;
+    }
 
 
     public static uint[] Groups(AssemblyCapture source, ExplodedDetail detail)
     {
-        var subtree = Subtree(source, detail.Scope);
+        var subtree = Included(source, detail);
         return source.MeshNodes.Where((id, i) => subtree.Contains(id) && (detail.IncludeInternal || !source.Internal[i]))
             .Select(id => GroupFor(source, detail, id)).Distinct().ToArray();
     }
@@ -147,7 +237,7 @@ static class ExplodedGeometry
     {
         if (group == AnchorGroup(source, detail))
             return Vector3.Zero;
-        var scope = AssemblyGraph.Subtree(source, detail.Scope);
+        var scope = AssemblyGraph.Included(source, detail);
         var center = Center(source.Geometry.Meshes.Where((_, i) => scope.Contains(source.MeshNodes[i]) && AssemblyGraph.GroupFor(source, detail, source.MeshNodes[i]) == group && (detail.IncludeInternal || !source.Internal[i])).SelectMany(m => m.Vertices).Select(World));
         return Direction(RootPose(source, detail), detail, group, center);
     }
@@ -159,7 +249,7 @@ static class ExplodedGeometry
         // the largest substantial group centered on its authored origin. Use a
         // size-relative tolerance, so microscopic mesh asymmetry cannot eject
         // the central shell sideways. Hiding a group must not change the anchor.
-        var subtree = AssemblyGraph.Subtree(source, detail.Scope);
+        var subtree = AssemblyGraph.Included(source, detail);
         var groups = Enumerable.Range(0, source.MeshNodes.Length)
             .Where(i => subtree.Contains(source.MeshNodes[i]) && (detail.IncludeInternal || !source.Internal[i]))
             .GroupBy(i => AssemblyGraph.GroupFor(source, detail, source.MeshNodes[i])).ToArray();
@@ -214,7 +304,7 @@ static class ExplodedGeometry
 
     public static DetailGeometry Build(AssemblyCapture source, ExplodedDetail detail)
     {
-        var scope = AssemblyGraph.Subtree(source, detail.Scope);
+        var scope = AssemblyGraph.Included(source, detail);
         var meshes = new List<Mesh>();
         var indices = new List<int>();
         var nodes = new List<uint>();

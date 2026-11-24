@@ -25,6 +25,7 @@ sealed record Sheet(string Title, PrintOptions Options, byte[] Rgb, byte[] Previ
     {
         get; init;
     }
+    public CurvatureLines? MainCurvature { get; init; }
     public PartLabel[] Labels { get; init; } = [];
     public ExplodedDetail[] Details { get; init; } = [];
     public ExplodedSource? DetailSource
@@ -71,6 +72,7 @@ sealed partial class BlueprintRenderer
 
     void DrawCraftInk(Action<int, int, float> put)
     {
+        ReadOnlySpan<int> neighbors = stackalloc[] { -1, 1, -W, W };
         for (int y = 1; y < H - 1; y++)
         {
             cancellation.ThrowIfCancellationRequested();
@@ -84,8 +86,9 @@ sealed partial class BlueprintRenderer
                     var m = capture.Meshes[t.Mesh];
                     line = structuralLines[q];
                     float nd = 0, ld = 0;
-                    foreach (int j in new[] { q - 1, q + 1, q - W, q + W })
+                    foreach (int offset in neighbors)
                     {
+                        int j = q + offset;
                         if (face[j] < 0)
                         {
                             line = 1;
@@ -190,21 +193,16 @@ sealed class Canvas
         var gx = SheetZones.GridAxis(width, zones.Columns);
         var gy = SheetZones.GridAxis(height, zones.Rows);
         float wear = options.Archive ? MathF.Pow(Math.Clamp(options.WearLevel, 0, 5) / 5f, 1.7f) : 0;
-        float[] Edge(int size) => Enumerable.Range(0, size)
-            .Select(i => wear * MathF.Exp(-Math.Min(i, size - 1 - i) / (size * .065f))).ToArray();
-        var edgeX = Edge(width);
-        var edgeY = Edge(height);
+        var texture = wear > 0 ? new PaperWear(width, height, wear, paper, options.TitleBlock?.Title) : null;
         for (int y = 0; y < height; y++)
+        {
+            var wearRow = texture?.AtRow(y);
             for (int x = 0; x < width; x++)
             {
                 uint noise = unchecked((uint)(x * 374761393 + y * 668265263));
                 noise = (noise ^ (noise >> 13)) * 1274126177;
                 float grain = ((noise & 255) / 255f - .5f) * (.6f + 1.4f * wear);
-                float edge = Math.Max(edgeX[x], edgeY[y]);
-                float corner = edgeX[x] * edgeY[y];
-                var age = new Vector3(38, 28, 12) * edge + new Vector3(26, 36, 38) * corner;
-                var color = Vector3.Lerp(paper, ink, Math.Clamp(edge * .09f + corner * .10f, 0, .2f))
-                    + age * (paper.X < 100 ? .55f : -.8f) + new Vector3(grain);
+                var color = paper + (wearRow?.At(x) ?? Vector3.Zero) + new Vector3(grain);
                 float rule = 0;
                 int gridLine = Math.Max(gx[x], gy[y]);
                 if (options.Grid && gridLine > 0)
@@ -221,6 +219,7 @@ sealed class Canvas
                 Pixels[q + 1] = (byte)Math.Clamp(color.Y, 0, 255);
                 Pixels[q + 2] = (byte)Math.Clamp(color.Z, 0, 255);
             }
+        }
     }
 
     public Canvas(byte[] pixels, int width, int height, Vector3 ink)

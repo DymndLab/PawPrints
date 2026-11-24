@@ -64,6 +64,26 @@ static class StartupChecks
         check(isoExploded.Scene!.Drawing!.Views is [{ Camera: 4, Parent: null }] &&
             isoExploded.Details is [{ Scope: 1 }] && isoExploded.PoseMain != null,
             "ISO plus Exploded starts one standalone ISO and a whole-craft detail");
+
+        uint? wholeRoot = ExplodedPainting.WholeCraftRoot(captured.PoseSource!.Assembly);
+        var whole = ExplodedPainting.Compose(captured, captured,
+            [new(1, wholeRoot!.Value, new(64, 64, 820, 520), "Whole craft", Seed: wholeRoot)], [], default);
+        check(wholeRoot == 1 && whole.Scene!.Drawing!.Views.Length == 0 && whole.Details is [{ Scope: 1, Seed: 1 }],
+            "A captured blank sheet accepts a whole-craft exploded view without adding main views");
+
+        var mixed = StarterDrawings.Render(source, geometry, "Fixture", blank.Options, [],
+            StarterDrawings.All[1].Template, true, default);
+        var orthographicScale = PrintScale.Ratio(mixed.Scene!.Views.First(v => v.Name.Equals("Front", StringComparison.OrdinalIgnoreCase)).Frame, mixed.Options);
+        var isoScale = PrintScale.Ratio(mixed.Scene.Views.Single(v => v.Name.Equals("Isometric", StringComparison.OrdinalIgnoreCase)).Frame, mixed.Options);
+        check(isoScale != orthographicScale && PrintScale.PrintedTitleScale(mixed.Scene.Views, mixed.Options) == orthographicScale &&
+            PrintScale.PrintedTitleScale(mixed.Scene.Views, mixed.Options with { TitleBlockVisible = false }) == null &&
+            PrintScale.PrintedTitleScale(mixed.Scene.Views, mixed.Options with { TitleBlock = new(Scale: "1:999") }) == "1:999",
+            "Mixed scales use the linked orthographic ratio in the visible title, with hidden and custom titles respected");
+        var titleCanvas = new Canvas(new byte[checked(mixed.PixelWidth * mixed.PixelHeight * 3)], mixed.PixelWidth, mixed.PixelHeight, new(0));
+        CompanyTitleBlock.DrawCompact(titleCanvas, mixed.Title, mixed.Options, calculatedScale: orthographicScale);
+        check(titleCanvas.Runs.Single(r => r.Text.StartsWith("SCALE")).Y >
+            titleCanvas.Runs.Single(r => r.Text == SheetLayout.ViewSummary(mixed.Options)).Y,
+            "The title block renders the scale below its view list");
         var layout = DrawingDefinitions.ToTemplate(DrawingDefinitions.FromAccepted(ortho, new AnnotationDocument(ortho.Scene)));
         var profile = new Blueprint.Storage.ProfileStorage(Path.Combine(output, "starter-template-profile-" + Guid.NewGuid().ToString("N")));
         new Blueprint.Storage.LayoutTemplateStore(profile).Save("My layout", layout);

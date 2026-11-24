@@ -8,6 +8,8 @@ public sealed partial class BlueprintMod
     sealed record RenderCommitPolicy(bool KeepDocument, bool AdoptHistory, bool ApplySettings);
     static readonly RenderJobs<Sheet> renderJobs = new();
     static RenderCommitPolicy? renderPolicy;
+    static RenderProgress? activeProgress;
+    static long renderStarted;
     static long sourceEpoch;
     static PartTree? renderSourceTree;
     static AnnotationDocument? acceptedDocument;
@@ -19,7 +21,10 @@ public sealed partial class BlueprintMod
     {
         renderSourceTree = sourceEditor?.EditingSpace.Parts;
         renderPolicy = new(renderKeepsDocument, renderAdoptsHistory, renderAppliesSettings);
-        var job = renderJobs.Start(CurrentRenderRevision, render);
+        var reporter = new RenderProgress(progress);
+        renderStarted = System.Diagnostics.Stopwatch.GetTimestamp();
+        var job = renderJobs.Start(CurrentRenderRevision, token => reporter.Run(() => render(token)));
+        activeProgress = reporter;
         cancellation = job.Cancellation;
         renderTask = job.Task;
     }
@@ -32,6 +37,7 @@ public sealed partial class BlueprintMod
         renderTask = null;
         renderPolicy = null;
         renderAppliesSettings = renderAdoptsHistory = false;
+        captureForDetail = false;
     }
 
     static void RememberAcceptedDocument()
