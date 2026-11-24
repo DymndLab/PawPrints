@@ -10,6 +10,7 @@ public sealed partial class BlueprintMod
     static DrawingPlacement? drawingPlacement = new(100, []);
     static DrawingView? viewDraft, dragView;
     static float draftRatio = 100;
+    static bool choosingProjectionSource;
     static Vec viewPress;
     static int viewMenu = -1, selectedView = -1, selectedCanvasView = -1;
     static int projectionStyle; // Third-angle default; first-angle reverses the unfolded faces.
@@ -22,7 +23,12 @@ public sealed partial class BlueprintMod
     static Func<Box, Box>? ghostPosition;
     static Func<Box, bool>? ghostValid;
     static string ghostName = "";
-    static bool ghostWholePage;
+    static bool ghostWholePage, ghostConfirmRequested;
+    static Box? ghostLastBox;
+    static Vec? ghostPin, ghostPress;
+    static Box ghostOpening;
+    static (Vec Anchor, int Corner)? ghostResizeAnchor;
+    static int ghostCorner = -1;
     static string viewPlacementIssue = "";
     static bool GhostActive => ghostTask != null || ghostCommit != null;
 
@@ -40,6 +46,11 @@ public sealed partial class BlueprintMod
         ghostPosition = null;
         ghostValid = null;
         ghostWholePage = false;
+        ghostConfirmRequested = false;
+        ghostLastBox = null;
+        ghostPin = ghostPress = null;
+        ghostCorner = -1;
+        ghostResizeAnchor = null;
         viewDraft = null;
         dragView = null;
         if (ghostTexture != null)
@@ -68,7 +79,22 @@ public sealed partial class BlueprintMod
         try
         {
             ghostPixels = job.GetAwaiter().GetResult();
-            ghostTexture = new(ghostPixels.Width, ghostPixels.Height, ghostPixels.Rgba);
+            var replacement = new PreviewTexture(ghostPixels.Width, ghostPixels.Height, ghostPixels.Rgba);
+            if (ghostTexture != null)
+                retiredGhosts.Add(ghostTexture);
+            ghostTexture = replacement;
+            if (ghostResizeAnchor is { } resize)
+            {
+                ghostPin = resize.Anchor + new Vec(resize.Corner is 0 or 3 ? -ghostPixels.Width / 2f : ghostPixels.Width / 2f,
+                    resize.Corner is 0 or 1 ? -ghostPixels.Height / 2f : ghostPixels.Height / 2f);
+                ghostResizeAnchor = null;
+            }
+            if (ghostLastBox is { } retained)
+            {
+                var center = ghostPin ?? retained.Center;
+                ghostLastBox = new(center.X - ghostPixels.Width / 2f, center.Y - ghostPixels.Height / 2f,
+                    ghostPixels.Width, ghostPixels.Height);
+            }
             status = "Click to place " + ghostName + ". Right-click cancels.";
         }
         catch (OperationCanceledException) { }
@@ -76,9 +102,17 @@ public sealed partial class BlueprintMod
     }
 
 
-    static void StartGhost(string name, Func<CancellationToken, PlacementPreview> prepare, Action<Box> commit, Func<Box, bool>? valid = null, Func<Box, Box>? position = null, bool wholePage = false)
+    static void StartGhost(string name, Func<CancellationToken, PlacementPreview> prepare, Action<Box> commit, Func<Box, bool>? valid = null, Func<Box, Box>? position = null, bool wholePage = false, bool retainPreview = false)
     {
+        var retainedPixels = retainPreview ? ghostPixels : null;
+        var retainedTexture = retainPreview ? ghostTexture : null;
+        var retainedBox = retainPreview ? ghostLastBox : null;
+        if (retainPreview)
+            ghostTexture = null;
         CancelGhost();
+        ghostPixels = retainedPixels;
+        ghostTexture = retainedTexture;
+        ghostLastBox = retainedBox;
         ghostWholePage = wholePage;
         ghostName = name;
         ghostCommit = commit;
@@ -101,7 +135,7 @@ public sealed partial class BlueprintMod
             status = "Placement cancelled.";
             return true;
         }
-        if (hovered && viewDraft is { RollDirection: >= 0, Parent: { } parentId } rolling)
+        if (hovered && ghostTask == null && viewDraft is { RollDirection: >= 0, Parent: { } parentId } rolling)
         {
             var parent = CurrentDrawing().Views.Single(v => v.Id == parentId);
             var delta = point - new Vec(parent.X * sheet!.PixelWidth, parent.Y * sheet.PixelHeight);
@@ -110,21 +144,29 @@ public sealed partial class BlueprintMod
             {
                 viewDraft = DrawingPlacements.Roll(rolling, parent, direction, projectionStyle == 0 ? 3 : 1);
                 PrepareView();
-                return true;
             }
         }
         if (ghostPixels == null || ghostTexture?.Image is not { } image)
             return true;
         var area = ghostWholePage ? new Box(0, 0, Options.Page.Width, Options.Page.Height) : viewDraft != null ? DrawingPlacements.Area(Options) : FrameLayout.Area(Options);
-        if (viewDraft != null && !hovered) point = area.Center;
-        if (hovered && viewDraft != null && CurrentDrawing().Views.Length == 0 && ImGui.GetIO().KeyShift && ImGui.GetIO().MouseWheel != 0)
+        var pointer = point;
+        if (viewDraft is { Parent: null })
+        {
+            ghostPin ??= area.Center;
+            point = ghostPin.Value;
+        }
+        else if (viewDraft != null && !hovered)
+            point = ghostLastBox?.Center ?? area.Center;
+        if (hovered && viewDraft != null && viewDraft.Parent == null && ImGui.GetIO().KeyShift && ImGui.GetIO().MouseWheel != 0)
         {
             draftRatio = Math.Clamp(draftRatio * MathF.Pow(1.1f, -ImGui.GetIO().MouseWheel), .01f, 100000f);
+            var keep = ghostPin;
             PrepareView();
+            ghostPin = keep;
             return true;
         }
         var raw = new Box(point.X - ghostPixels.Width / 2f, point.Y - ghostPixels.Height / 2f, ghostPixels.Width, ghostPixels.Height);
-        var box = ghostPosition?.Invoke(raw) ?? FrameLayout.Clamp(raw, Options, raw.Width, raw.Height);
+        var box = ghostPosition?.Invoke(raw) ?? raw;
         if (ghostPixels.CaptionAnchor is { } anchor)
         {
             int alignment = viewDraft?.Parent != null ? viewDraft.Alignment : 0;
@@ -134,9 +176,67 @@ public sealed partial class BlueprintMod
                 alignment = Math.Abs(box.Center.X - parent.X * sheet!.PixelWidth) < Math.Abs(box.Y + (box.Height - (Options.Captions ? ViewCaption.Band : 0)) / 2 - parent.Y * sheet.PixelHeight) ? 1 : 2;
             }
             box = SnapCaptionBox(box, anchor, viewDraft?.Id ?? -1, factor, alignment == 1, alignment == 2,
-                b => b.X >= area.X && b.Y >= area.Y && b.Right <= area.Right && b.Bottom <= area.Bottom && (ghostWholePage || PageLayout.Fits(b, Options)) && (ghostValid?.Invoke(b) ?? true));
+                b => CanvasBounds.Safe(b) && (ghostValid?.Invoke(b) ?? true));
         }
-        bool inside = box.X >= area.X && box.Y >= area.Y && box.Right <= area.Right && box.Bottom <= area.Bottom && (ghostWholePage || PageLayout.Fits(box, Options));
+        bool ghostReleased = false, ghostClick = false;
+        if (viewDraft is { Parent: null })
+        {
+            if (ghostPress is { } press)
+            {
+                if (ghostCorner < 0)
+                    box = ghostOpening with
+                    {
+                        X = ghostOpening.X + pointer.X - press.X,
+                        Y = ghostOpening.Y + pointer.Y - press.Y
+                    };
+                else
+                {
+                    Vec[] corners = [new(ghostOpening.X, ghostOpening.Y), new(ghostOpening.Right, ghostOpening.Y), new(ghostOpening.Right, ghostOpening.Bottom), new(ghostOpening.X, ghostOpening.Bottom)];
+                    var ghostAnchor = corners[(ghostCorner + 2) % 4];
+                    var ray = press - ghostAnchor;
+                    float scale = Math.Clamp(Vec.Dot(pointer - ghostAnchor, ray) / Math.Max(1, ray.LengthSquared()), .05f, 10);
+                    box = new(ghostAnchor.X + (ghostOpening.X - ghostAnchor.X) * scale, ghostAnchor.Y + (ghostOpening.Y - ghostAnchor.Y) * scale, ghostOpening.Width * scale, ghostOpening.Height * scale);
+                }
+                if (!ImGui.IsMouseDown(ImGuiMouseButton.Left))
+                {
+                    ghostReleased = true;
+                    ghostClick = ghostCorner < 0 && Vec.Distance(pointer, press) * factor < 4;
+                    ghostPin = box.Center;
+                    ghostPress = null;
+                    if (ghostCorner >= 0)
+                    {
+                        draftRatio *= ghostOpening.Width / box.Width;
+                        int corner = ghostCorner;
+                        var cornerAnchor = new Vec(corner is 0 or 3 ? ghostOpening.Right : ghostOpening.X,
+                            corner is 0 or 1 ? ghostOpening.Bottom : ghostOpening.Y);
+                        var keep = ghostPin;
+                        PrepareView();
+                        ghostPin = keep;
+                        ghostResizeAnchor = (cornerAnchor, corner);
+                        return true;
+                    }
+                }
+            }
+            else if (hovered && ImGui.IsMouseClicked(ImGuiMouseButton.Left))
+            {
+                Vec[] corners = [new(box.X, box.Y), new(box.Right, box.Y), new(box.Right, box.Bottom), new(box.X, box.Bottom)];
+                ghostCorner = Array.FindIndex(corners, c => Vec.Distance(c, pointer) * factor < 12);
+                if (ghostCorner >= 0 || box.Contains(pointer))
+                {
+                    ghostOpening = box;
+                    ghostPress = pointer;
+                }
+                else
+                {
+                    ghostPin = pointer;
+                }
+            }
+        }
+        if (viewDraft != null && (!hovered || ghostTask != null) && ghostLastBox is { } last)
+            box = last;
+        if (viewDraft != null && ghostTask == null)
+            ghostLastBox = box;
+        bool inside = CanvasBounds.Safe(box);
         bool valid = (ghostValid?.Invoke(box) ?? true) && inside;
         if (hovered || viewDraft != null)
         {
@@ -145,13 +245,24 @@ public sealed partial class BlueprintMod
             var draw = ImGui.GetWindowDrawList();
             draw.AddImage(image, a, z);
             draw.AddRect(a, z, viewDraft != null ? 0xFF44DDFFu : valid ? 0xFF8EDD8Eu : 0xFF7777FFu, 0, ImDrawFlags.None, 2);
+            if (viewDraft is { Parent: null })
+                foreach (var corner in new[] { a, new float2(z.X, a.Y), z, new float2(a.X, z.Y) })
+                    draw.AddRectFilled(corner - new float2(5), corner + new float2(5), 0xFF44DDFF);
             DrawAlignmentGuides(factor, origin);
             if (viewDraft is { } draft && (draft.RollDirection >= 0 || !DrawingPlacements.Oblique(draft.Camera)) && draft.Parent is { } parent && document?.Scene.Views.FirstOrDefault(v => v.Id == parent) is { } source)
             {
                 var c = origin + new float2(source.Bounds.Center.X * factor, source.Bounds.Center.Y * factor);
                 draw.AddLine(c, origin + new float2(box.Center.X * factor, (box.Y + (box.Height - (Options.Captions ? ViewCaption.Band : 0)) / 2) * factor), 0x889DDDFF, 1);
             }
-            if (hovered && valid && ImGui.IsMouseClicked(ImGuiMouseButton.Left))
+            bool enter = viewDraft != null && annotationKeysActive && !ImGui.GetIO().WantTextInput
+                && ImGui.IsKeyPressed(ImGuiKey.Enter);
+            bool confirm = ghostConfirmRequested || enter;
+            ghostConfirmRequested = false;
+            if (viewDraft != null)
+                draw.AddText(new float2(a.X + 8, a.Y + 8), 0xFF44DDFF,
+                    ghostTask != null ? "Updating preview..." : "Enter to place | Confirm in Place panel");
+            if (valid && ghostTask == null && ghostPress == null && (confirm || hovered &&
+                (viewDraft is { Parent: null } ? ghostReleased && ghostClick : ImGui.IsMouseClicked(ImGuiMouseButton.Left))))
             {
                 var commit = ghostCommit!;
                 CancelGhost();
@@ -183,14 +294,18 @@ public sealed partial class BlueprintMod
     {
         if (!CanEditAnnotations || !CurrentDrawing().Views.Any(v => v.Id == id))
             return;
-        selectedCanvasView = -1;
-        QueueDrawing(DrawingPlacements.Remove(CurrentDrawing(), id), removed: id);
+        if (DrawingPlacements.Dependents(CurrentDrawing(), id).Count > 1)
+        {
+            pendingPrimaryDelete = id;
+            return;
+        }
+        CommitViewDeletion(id, false);
     }
 
 
-    static void QueueDrawing(DrawingPlacement drawing, bool undo = false, int removed = -1)
+    static void QueueDrawing(DrawingPlacement drawing, bool undo = false, int removed = -1, HashSet<int>? removedViews = null)
     {
-        if (busy || sheet?.PoseSource == null || document == null)
+        if (busy || sheet?.Scene == null || document == null)
             return;
         var current = sheet with
         {
@@ -203,14 +318,29 @@ public sealed partial class BlueprintMod
         {
             Drawing = drawing
         };
-        if (removed >= 0)
+        if (source == null)
         {
-            var remaining = document.Scene.WithDimensions(document.Scene.Dimensions.Where(d => d.ViewId != removed).ToArray())
-                .WithPoses(document.Scene.Poses.Where(p => p.View != removed).ToArray()).WithSpecs(document.Scene.Specs.Select(b => b.ViewId == removed ? b with { Leader = false } : b).ToArray());
+            if (drawing.Views.Length != 0)
+                return;
+            renderKeepsDocument = composingLabels = true;
+            renderAdoptsHistory = undo;
+            progress = "Updating object order";
+            StartRender(token => AnnotationPainting.Compose(current with
+            {
+                Options = options,
+                Scene = current.Scene!.WithOptions(options).WithDrawing(drawing)
+            }, current.Labels, token));
+            return;
+        }
+        if (removed >= 0 || removedViews is { Count: > 0 })
+        {
+            var deleted = removedViews ?? new HashSet<int> { removed };
+            var remaining = document.Scene.WithDimensions(document.Scene.Dimensions.Where(d => !deleted.Contains(d.ViewId)).ToArray())
+                .WithKittens(document.Scene.Kittens.Where(k => k.SourceView is not { } view || !deleted.Contains(view)).ToArray()).WithPoses(document.Scene.Poses.Where(p => !deleted.Contains(p.View)).ToArray()).WithSpecs(document.Scene.Specs.Select(b => deleted.Contains(b.ViewId) ? b with { Leader = false } : b).ToArray());
             current = current with
             {
                 Scene = remaining,
-                Labels = current.Labels.Where(l => l.ViewId != removed).ToArray()
+                Labels = current.Labels.Where(l => !deleted.Contains(l.ViewId)).ToArray()
             };
         }
         var poses = current.Scene!.Poses;
@@ -236,6 +366,42 @@ public sealed partial class BlueprintMod
     }
 
 
+    static void BeginProjectionSource()
+    {
+        CancelPlacement();
+        choosingProjectionSource = true;
+        status = "Select a primary view in the drawing. Right-click cancels.";
+    }
+
+    static bool DrawProjectionSource(Vec point, float factor, float2 origin, bool hovered, bool editable)
+    {
+        if (!choosingProjectionSource)
+            return false;
+        if (!editable || document == null || ImGui.IsMouseClicked(ImGuiMouseButton.Right))
+        {
+            choosingProjectionSource = false;
+            return true;
+        }
+        var drawing = CurrentDrawing();
+        var pick = CanvasObjects.Pick(sheet!, document.Scene, document.Labels, point, 5 / factor);
+        var candidate = pick is { Kind: DrawingObjectKind.View, Id: < 1000 }
+            ? drawing.Views.FirstOrDefault(v => v.Id == pick.Value.Id && v.Parent == null) : null;
+        if (hovered && candidate != null)
+        {
+            var box = CanvasObjects.ContentBounds(document.Scene, document.Labels, new(DrawingObjectKind.View, candidate.Id));
+            ImGui.GetWindowDrawList().AddRect(origin + new float2(box.X * factor, box.Y * factor),
+                origin + new float2(box.Right * factor, box.Bottom * factor), 0xFF44DDFF, 0, ImDrawFlags.None, 2);
+            PrintUiText.Tooltip("Project from " + DrawingPlacements.Name(candidate));
+            if (ImGui.IsMouseClicked(ImGuiMouseButton.Left))
+            {
+                choosingProjectionSource = false;
+                SelectCanvasView(candidate.Id);
+                BeginView(candidate.Id);
+            }
+        }
+        return true;
+    }
+
     static void BeginView(int? parent = null) => BeginViewDraft(parent, null);
 
 
@@ -245,14 +411,17 @@ public sealed partial class BlueprintMod
     static void BeginViewDraft(int? parent, int? cameraOverride)
     {
         requestedSettingsTab = "Place";
-        if (document == null) return;
+        if (document == null)
+            return;
         if (sheet?.PoseSource == null)
         {
             if (KSA.Program.Editor is { } editor && !busy)
             {
-                captureForView = true; captureViewCamera = cameraOverride;
+                captureForView = true;
+                captureViewCamera = cameraOverride;
                 Generate(editor);
-                if (renderTask == null) captureForView = false;
+                if (renderTask == null)
+                    captureForView = false;
             }
             return;
         }
@@ -272,7 +441,7 @@ public sealed partial class BlueprintMod
             6 => 1,
             _ => 3
         } : drawing.Views.Length == 0 ? 0 : 4);
-        draftRatio = drawing.Views.Length == 0 ? DrawingPlacements.SuggestRatio(PartPoses.Exterior(sheet.PoseSource, sheet.PoseSource.Assembly), camera, Options) : drawing.Ratio;
+        draftRatio = parent is { } linked ? ProjectionGroups.Ratio(drawing, linked) : DrawingPlacements.SuggestRatio(PartPoses.Exterior(sheet.PoseSource, sheet.PoseSource.Assembly), camera, Options);
         viewDraft = new(id, camera, .5f, .5f, parent);
         if (parent is { } sourceId)
             viewDraft = DrawingPlacements.Roll(viewDraft, drawing.Views.Single(v => v.Id == sourceId), 0, projectionStyle == 0 ? 3 : 1);
@@ -310,12 +479,12 @@ public sealed partial class BlueprintMod
                 X = centre.X / options.Page.Width,
                 Y = centre.Y / options.Page.Height,
                 Alignment = align,
-                Parent = view.RollDirection < 0 && DrawingPlacements.Oblique(view.Camera) ? null : view.Parent
+                Parent = view.Parent,
+                Ratio = view.Parent == null ? ratio : null
             };
         }
         DrawingPlacement Proposed(Box b) => drawing with
         {
-            Ratio = ratio,
             Views = [.. drawing.Views, Located(b)]
         };
         bool Valid(Box b)
@@ -343,7 +512,7 @@ public sealed partial class BlueprintMod
                 Y = MathF.Round(placed.Y * options.Page.Height - (box.Height - (options.Captions ? ViewCaption.Band : 0)) / 2)
             };
         }
-        StartGhost("view", token => PlacementPreviews.View(source, view, ratio, options, poses, token), b => QueueDrawing(Proposed(b)), Valid, Position);
+        StartGhost("view", token => PlacementPreviews.View(source, view, ratio, options, poses, token), b => QueueDrawing(Proposed(b)), Valid, Position, retainPreview: ghostPixels != null);
         viewDraft = view;
         draftRatio = ratio;
     }
@@ -372,7 +541,7 @@ public sealed partial class BlueprintMod
             if (draft.RollDirection >= 0)
             {
                 ImGui.Text("Preview: " + DrawingPlacements.Name(draft));
-                PrintUiText.Wrapped("Move along an axis for an aligned projection, or diagonally for a corner view. Return toward an axis to snap back. Click when green to place.");
+                PrintUiText.Wrapped("Move along an axis for an aligned projection, or diagonally for a corner view. Return toward an axis to snap back. Click to place.");
             }
             else
             {
@@ -417,7 +586,11 @@ public sealed partial class BlueprintMod
                 ImGui.SetCursorScreenPos(start + new float2(0, 240));
                 ImGui.Dummy(new float2(1, 1));
             }
-            PrintUiText.Wrapped("Click the yellow preview to place it. Hold Shift and scroll to resize the first view. Right-click cancels.");
+            PrintUiText.Wrapped("Click or press Enter to place the yellow preview. Primary views can be dragged and resized; Shift+scroll also resizes. Right-click cancels.");
+            ImGui.BeginDisabled(ghostTask != null || ghostPixels == null || ghostLastBox == null || ghostPress != null);
+            if (PrintUiStyle.YellowButton("Confirm placement (Enter)"))
+                ghostConfirmRequested = true;
+            ImGui.EndDisabled();
             if (ImGui.Button("Cancel placement"u8))
                 CancelGhost();
         }
@@ -451,17 +624,14 @@ public sealed partial class BlueprintMod
                     if (ImGui.Button("Unlock alignment"u8))
                         QueueDrawing(CurrentDrawing() with
                         {
-                            Views = views.Select(v => v.Id == selectedView ? v with { Parent = null, Alignment = 0 } : v).ToArray()
+                            Views = views.Select(v => v.Id == selectedView ? v with { Alignment = 0 } : v).ToArray()
                         });
                 }
-                if (ImGui.CollapsingHeader("Shared drawing scale"u8))
+                if (ImGui.CollapsingHeader("Selected group scale"u8))
                 {
                     ImGui.InputFloat("1 :##SharedScale"u8, ref draftRatio);
-                    if (ImGui.Button("Apply scale to views"u8))
-                        QueueDrawing(CurrentDrawing() with
-                        {
-                            Ratio = draftRatio
-                        });
+                    if (ImGui.Button("Apply scale to group"u8))
+                        QueueDrawing(ProjectionGroups.SetRatio(CurrentDrawing(), selectedView, draftRatio));
                 }
             }
             if (ImGui.Button("Optional templates..."u8))
@@ -488,7 +658,7 @@ public sealed partial class BlueprintMod
             var centre = new Vec(dragging.X * sheet!.PixelWidth, dragging.Y * sheet.PixelHeight) + point - viewPress;
             var scene = document.Scene;
             var page = Options.Page;
-            var moved = DrawingPlacements.Move(drawing, dragging.Id, centre, Options);
+            var moved = CanvasMotion.MoveViews(document.Scene, document.Labels, drawing, dragging.Id, centre, Options);
             var affected = DrawingPlacements.Dependents(drawing, dragging.Id);
             ViewRegion[] Plans(DrawingPlacement placement) => scene.Views.Where(v => v.Id < 1000).Select(v =>
             {
@@ -524,8 +694,8 @@ public sealed partial class BlueprintMod
                 };
             }).ToArray();
             var snap = SnapCaptions(moving, affected, factor, dragging.Parent != null && dragging.Alignment == 1, dragging.Parent != null && dragging.Alignment == 2,
-                delta => Valid(DrawingPlacements.Move(drawing, dragging.Id, centre + delta, Options)));
-            moved = DrawingPlacements.Move(drawing, dragging.Id, centre + snap.Delta, Options);
+                delta => Valid(CanvasMotion.MoveViews(document.Scene, document.Labels, drawing, dragging.Id, centre + delta, Options)));
+            moved = CanvasMotion.MoveViews(document.Scene, document.Labels, drawing, dragging.Id, centre + snap.Delta, Options);
             alignmentGuides = snap.Guides;
             DrawAlignmentGuides(factor, origin);
             bool valid = Valid(moved);
@@ -538,7 +708,7 @@ public sealed partial class BlueprintMod
                 dragView = null;
                 if (valid)
                 {
-                    if (!moved.Views.SequenceEqual(drawing.Views) || moved.Ratio != drawing.Ratio)
+                    if (Vec.Distance(point, viewPress) * factor >= 4 && (!moved.Views.SequenceEqual(drawing.Views) || moved.Ratio != drawing.Ratio))
                         QueueDrawing(moved);
                 }
                 else
@@ -546,8 +716,8 @@ public sealed partial class BlueprintMod
             }
             return true;
         }
-        var hit = document.Scene.Details.Any(d => d.Definition.Bounds.Contains(point)) ? null :
-            document.Scene.Views.LastOrDefault(v => v.Id < 1000 && DrawingPlacements.Footprint(v, Options.Captions).Contains(point));
+        var pickedView = canvasTarget?.Kind == DrawingObjectKind.View ? canvasTarget?.Id : document.Scene.Pick(point)?.View;
+        var hit = document.Scene.Views.LastOrDefault(v => v.Id < 1000 && (v.Id == pickedView || document.Scene.Captions.Any(c => c.ViewId == v.Id && c.Bounds.Contains(point))));
         if (selectedCanvasView >= 0 && document.Scene.Views.FirstOrDefault(v => v.Id == selectedCanvasView) is { } selected)
             Outline(DrawingPlacements.Footprint(selected, Options.Captions), 0xFF88D8FF);
         bool caption = hit != null && document.Scene.Captions.Any(c => c.ViewId == hit.Id && c.Bounds.Contains(point));
@@ -558,7 +728,7 @@ public sealed partial class BlueprintMod
                 Outline(DrawingPlacements.Footprint(hit, Options.Captions), 0xFF88D8FF);
                 ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
             }
-            if (caption && ImGui.IsMouseClicked(ImGuiMouseButton.Left))
+            if (ImGui.IsMouseClicked(ImGuiMouseButton.Left))
             {
                 dragView = drawing.Views.Single(v => v.Id == hit.Id);
                 viewPress = point;
@@ -604,7 +774,7 @@ public sealed partial class BlueprintMod
             {
                 QueueDrawing(drawing with
                 {
-                    Views = drawing.Views.Select(v => v.Id == viewMenu ? v with { Parent = null, Alignment = 0 } : v).ToArray()
+                    Views = drawing.Views.Select(v => v.Id == viewMenu ? v with { Alignment = 0 } : v).ToArray()
                 });
                 ImGui.CloseCurrentPopup();
             }

@@ -8,6 +8,26 @@ public sealed partial class BlueprintMod
 {
     static bool newDrawingDialog;
 
+    static void CenterDrawingDialog()
+    {
+        ImGui.SetNextWindowPos(ImGui.GetWindowPos() + ImGui.GetWindowSize() * .5f,
+            ImGuiCond.Always, new float2(.5f, .5f));
+    }
+
+    static void RequestNewDrawing()
+    {
+        if (sheet == null)
+            setupStage = SetupStage.Choose;
+        else
+            newDrawingDialog = true;
+    }
+
+    static void ConfirmNewDrawing()
+    {
+        CancelPlacement();
+        setupStage = SetupStage.Choose;
+    }
+
     static void KeepAcceptedPrintEditable()
     {
         if (busy || sheet == null || document == null)
@@ -39,21 +59,20 @@ public sealed partial class BlueprintMod
             return;
         if (!ImGui.IsPopupOpen("New drawing?"u8))
             ImGui.OpenPopup("New drawing?"u8);
-        ImGui.SetNextWindowPos(ImGui.GetWindowPos() + ImGui.GetWindowSize() * .5f,
-            ImGuiCond.Appearing, new float2(.5f, .5f));
+        CenterDrawingDialog();
         ImGui.SetNextWindowSize(new float2(520, 0), ImGuiCond.Always);
         if (!ImGui.BeginPopupModal("New drawing?"u8, ImGuiWindowFlags.AlwaysAutoResize))
             return;
         try
         {
             partMenuOpen = true;
-            PrintUiText.Wrapped("Fit the current craft to the selected template using the current paper and title settings.");
-            PrintUiText.Wrapped("This replaces the editable drawing, including notes, details, poses and undo history. Save its PNG first if you need it. The previous print is kept if generation fails.");
+            PrintUiText.Wrapped("Start a new drawing and clear the current one?");
+            PrintUiText.Wrapped("Your current drawing stays available until you finish creating the new one. You can return to it from setup. Save PNG first if you need an image copy.");
             if (PrintUiStyle.PrimaryButton("Create new drawing"))
             {
                 newDrawingDialog = false;
                 ImGui.CloseCurrentPopup();
-                TryGenerate(editor, startFresh: true);
+                ConfirmNewDrawing();
             }
             ImGui.SameLine();
             if (ImGui.Button("Cancel"))

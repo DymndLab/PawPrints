@@ -92,9 +92,9 @@ static class PerformancePainting
         var area = FrameLayout.Area(scene.Options);
         foreach (var b in scene.Specs)
         {
-            if (b.Environment is < 1 or > 3 || !PageLayout.Fits(b.Bounds, scene.Options) || Font(data, b, scene.Options.TitleBlock?.Title) == 0)
+            if (b.Environment is < 1 or > 3 || !(scene.Options.FreeLayout ? CanvasBounds.Safe(b.Bounds) : PageLayout.Fits(b.Bounds, scene.Options)) || Font(data, b, scene.Options.TitleBlock?.Title) == 0)
                 throw new InvalidOperationException("Enlarge the specification block or hide some fields to fit its content.");
-            if (scene.Specs.Any(o => o.Id != b.Id && o.Bounds.Overlaps(b.Bounds)) || scene.Details.Any(d => d.Definition.Bounds.Overlaps(b.Bounds)) || PrintTables.Panels(scene, labels).Any(t => t.Bounds.Overlaps(b.Bounds)))
+            if (!scene.Options.FreeLayout && (scene.Specs.Any(o => o.Id != b.Id && o.Bounds.Overlaps(b.Bounds)) || scene.Details.Any(d => d.Definition.Bounds.Overlaps(b.Bounds)) || PrintTables.Panels(scene, labels).Any(t => t.Bounds.Overlaps(b.Bounds))))
                 throw new InvalidOperationException("Keep specification blocks, tables and details clear of each other.");
             if (b.Leader && !b.Vehicle && !scene.Parts.Any(p => p.NodeId == b.EnginePart && scene.Visible.ContainsKey((b.ViewId, p.Id))))
                 throw new InvalidOperationException("The engine leader target is not visible in its view. Restore that view or disable the block leader before generating.");
@@ -155,11 +155,12 @@ static class PerformancePainting
             return;
         var data = scene.Performance!;
         var colors = SheetLayout.Colors(scene.Options.Theme);
-        var paper = new Canvas(scene.Width, scene.Height, colors.Paper, colors.Ink, scene.Options);
+        var paper = scene.Options.FreeLayout ? null : new Canvas(scene.Width, scene.Height, colors.Paper, colors.Ink, scene.Options);
         foreach (var b in scene.Specs)
         {
+            canvas.HitTarget = new(DrawingObjectKind.Performance, b.Id);
             if (b.Fill)
-                PageLayout.ClearPanel(canvas, paper, b.Bounds, scene.Options);
+                if (!scene.Options.FreeLayout) PageLayout.ClearPanel(canvas, paper!, b.Bounds, scene.Options);
             if (b.Border)
             {
                 var r = b.Bounds;

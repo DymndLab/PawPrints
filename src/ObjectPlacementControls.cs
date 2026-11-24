@@ -19,7 +19,7 @@ public sealed partial class BlueprintMod
     }
 
 
-    static bool PanelClear(Box box, int except) => PanelNeighbors(except).All(b => !b.Overlaps(box)) && document!.Scene.Dimensions.All(d => !HeightDimensions.Place(document.Scene, d).Bounds.Overlaps(box));
+    static bool PanelClear(Box box, int except) => Options.FreeLayout ? CanvasBounds.Safe(box) : PanelNeighbors(except).All(b => !b.Overlaps(box)) && document!.Scene.Dimensions.All(d => !HeightDimensions.Place(document.Scene, d).Bounds.Overlaps(box));
 
 
     static Box PositionPanel(Box box, int id) => FrameLayout.Clamp(SnapPanel(box, id, false, 1), Options, box.Width, box.Height);
@@ -72,7 +72,7 @@ public sealed partial class BlueprintMod
         var scene = document.Scene.WithOptions(options);
         var labels = document.Labels;
         var box = PrintTables.Bounds(scene, labels, id);
-        var clear = FrameLayout.Clear(box, PanelNeighbors(-1 - id), FrameLayout.Area(options), false,
+        var clear = ClearPanelPlacement(box, PanelNeighbors(-1 - id), FrameLayout.Area(options), false,
             200, 100, FrameLayout.Gap, b => PrintTables.Font(scene, labels, id, b) > 0,
             boundary: PageLayout.TitleBounds(options));
         if (clear is not { } placed)
@@ -131,39 +131,53 @@ public sealed partial class BlueprintMod
         var current = sheet!;
         var source = current.PoseSource!;
         var options = current.Options;
+        ExplodedDetail prepared = detail;
+        float previewInset = 0;
         StartGhost("exploded detail", token =>
         {
             var assembly = PartPoses.Apply(source, current.Scene!.Poses, detail.ViewId);
             var tile = ExplodedGeometry.Render(new(assembly, source.Maps), detail, token, options);
-            System.Numerics.Vector2? anchor = null;
-            var preview = PlacementPreviews.Panel(current.Scene!, detail.Bounds, c =>
+            prepared = tile.Definition;
+            string heading = SheetLayout.ViewName(detail.ViewId), caption = AnnotationText.Clean(detail.Caption, 60);
+            string scale = "SCALE " + PrintScale.Ratio(tile.Frame, options);
+            int font = 32;
+            float textWidth = Math.Max(Math.Max(heading.Length, caption.Length) * NativeText.MonoWidth(font), scale.Length * NativeText.MonoWidth(15));
+            int width = (int)MathF.Ceiling(Math.Max(prepared.Bounds.Width, textWidth + 16));
+            int height = (int)MathF.Ceiling(prepared.Bounds.Height);
+            previewInset = MathF.Floor((width - prepared.Bounds.Width) / 2);
+            var canvas = new Canvas(new byte[checked(width * height * 3)], width, height, new(255));
+            int left = tile.Pixels.Width, right = -1, bottom = -1;
+            for (int y = 0; y < tile.Pixels.Height; y++)
             {
-                for (int y = 0; y < tile.Pixels.Height; y++)
-                    for (int x = 0; x < tile.Pixels.Width; x++)
-                        c.Ink((int)detail.Bounds.X + 12 + x, (int)detail.Bounds.Y + 12 + y, tile.Pixels.Ink[y * tile.Pixels.Width + x] / 255f);
-                int bottom = 0, left = tile.Pixels.Width, right = 0;
-                for (int y = 0; y < tile.Pixels.Height; y++)
-                    for (int x = 0; x < tile.Pixels.Width; x++)
-                        if (tile.Pixels.MeshOwners[y * tile.Pixels.Width + x] >= 0)
-                        {
-                            bottom = Math.Max(bottom, y);
-                            left = Math.Min(left, x);
-                            right = Math.Max(right, x);
-                        }
-                string caption = SheetLayout.ViewName(detail.ViewId) + " - " + AnnotationText.Clean(detail.Caption, 60);
-                int font = Math.Min(ViewCaption.DefaultSize, Math.Max(12, (int)((detail.Bounds.Width - 32) / Math.Max(1, caption.Length * .62f))));
-                float center = detail.Bounds.X + 12 + (left + right) * .5f;
-                float textWidth = caption.Length * NativeText.MonoWidth(font);
-                int labelX = (int)Math.Clamp(center - textWidth / 2, detail.Bounds.X + 8, Math.Max(detail.Bounds.X + 8, detail.Bounds.Right - 8 - textWidth)), labelY = (int)detail.Bounds.Y + 12 + bottom + 18;
-                c.Text(caption, labelX, labelY, font, 1);
-                anchor = new(labelX + textWidth / 2 - detail.Bounds.X, labelY + font - detail.Bounds.Y);
-                string scale = "SCALE " + PrintScale.Ratio(tile.Frame, options);
-                c.Text(scale, (int)(center - scale.Length * NativeText.MonoWidth(15) / 2), labelY + font + 4, 15, 1);
-            });
-            return preview with
+                token.ThrowIfCancellationRequested();
+                for (int x = 0; x < tile.Pixels.Width; x++)
+                {
+                    int i = y * tile.Pixels.Width + x;
+                    canvas.Ink((int)previewInset + 12 + x, 12 + y, tile.Pixels.Ink[i] / 255f);
+                    if (tile.Pixels.Ink[i] > 0 || tile.Pixels.MeshOwners[i] >= 0)
+                    {
+                        left = Math.Min(left, x);
+                        right = Math.Max(right, x);
+                        bottom = Math.Max(bottom, y);
+                    }
+                }
+            }
+            float center = previewInset + 12 + (left + right) / 2f;
+            int captionY = 12 + Math.Max(0, bottom) + 18;
+            canvas.Text(heading, (int)(center - heading.Length * NativeText.MonoWidth(font) / 2), captionY, font, 1);
+            canvas.Text(caption, (int)(center - caption.Length * NativeText.MonoWidth(font) / 2), captionY + font + 4, font, 1);
+            canvas.Text(scale, (int)(center - scale.Length * NativeText.MonoWidth(15) / 2), captionY + 2 * font + 8, 15, 1);
+            NativeText.Apply(canvas.Pixels, width, height, canvas.Runs);
+            var rgba = new byte[checked(width * height * 4)];
+            for (int i = 0; i < width * height; i++)
             {
-                CaptionAnchor = anchor
-            };
-        }, b => QueueDetail(detail with { Bounds = b }), b => PanelClear(b, detail.Id), b => PositionPanel(b, detail.Id));
+                rgba[i * 4] = 255;
+                rgba[i * 4 + 1] = 221;
+                rgba[i * 4 + 2] = 68;
+                rgba[i * 4 + 3] = canvas.Pixels[i * 3];
+            }
+            return new PlacementPreview(width, height, rgba, new(0, 0, width, height), new(center, captionY + font));
+        }, b => QueueDetail(prepared with { Bounds = new(b.X + previewInset, b.Y, prepared.Bounds.Width, prepared.Bounds.Height) }),
+            b => PanelClear(b, detail.Id), b => PositionPanel(b, detail.Id));
     }
 }

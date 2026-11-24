@@ -9,7 +9,7 @@ namespace Blueprint;
 public sealed partial class BlueprintMod
 {
     static bool annotationKeysActive, canvasHovered, spaceHeld, panning;
-    static int hoveredLabel = -1, requestedEdit, requestedDelete = -1, requestedViewDelete = -1, requestedHeightDelete = -1;
+    static int hoveredLabel = -1, requestedEdit, requestedDelete = -1, requestedViewDelete = -1, requestedHeightDelete = -1, requestedTableDelete = -1, requestedDetailDelete = -1;
     static Vec panMouse, panScroll;
     static RenderScene? partMenuScene;
     static int partMenuView, partMenuPart;
@@ -17,7 +17,7 @@ public sealed partial class BlueprintMod
     static FlagnotePlacement? flagnotePlacement;
     static RenderScene? flagnoteScene;
     static string flagnoteError = "";
-    static bool CanEditAnnotations => !newDrawingDialog && !placingText && !exportSetupOpen && warningNotice == null && !viewSizeDialog && textDraft == null && dragText == null && !GhostActive && viewDraft == null && dragView == null && specDraft == null && dragSpec == null && !poseDialog && !busy && document != null && sheet?.Options == Options && dragKitten == null && dragHeight == null && dragLabel == null && pendingLabel == null && flagnotePlacement == null && !panning && !DetailGesture;
+    static bool CanEditAnnotations => !choosingProjectionSource && groupDrag == null && pendingPrimaryDelete < 0 && !newDrawingDialog && !placingText && !exportSetupOpen && warningNotice == null && !viewSizeDialog && textDraft == null && dragText == null && !GhostActive && viewDraft == null && dragView == null && specDraft == null && dragSpec == null && !poseDialog && !busy && document != null && sheet?.Options == Options && dragKitten == null && dragHeight == null && dragLabel == null && pendingLabel == null && flagnotePlacement == null && !panning && !DetailGesture;
 
 
     static void DeleteAnnotation(int id)
@@ -81,10 +81,12 @@ public sealed partial class BlueprintMod
     {
         requestedEdit = edit;
         requestedHeightDelete = selectedHeight;
+        requestedTableDelete = selectedTable;
+        requestedDetailDelete = selectedDetail;
         requestedViewDelete = selectedCanvasView;
         bool canvasSelection = selectedHeight >= 0 || selectedCanvasView >= 0;
-        requestedReference = canvasSelection ? -1 : hoveredKitten >= 0 ? hoveredKitten : hoveredText < 0 && hoveredSpec < 0 && hoveredLabel < 0 ? selectedKitten : -1;
-        requestedDelete = canvasSelection ? -1 : hoveredText >= 0 ? -2000 - hoveredText : hoveredSpec >= 0 ? -1000 - hoveredSpec : hoveredLabel >= 0 ? hoveredLabel : selectedText >= 0 ? -2000 - selectedText : selectedSpec >= 0 ? -1000 - selectedSpec : selectedLabel;
+        requestedReference = canvasSelection ? -1 : selectedKitten;
+        requestedDelete = canvasSelection ? -1 : selectedText >= 0 ? -2000 - selectedText : selectedSpec >= 0 ? -1000 - selectedSpec : selectedLabel;
     }
 
 
@@ -159,6 +161,8 @@ public sealed partial class BlueprintMod
         }
         CancelPlacement();
         SelectLabel(label.Id);
+        placeKind = 1;
+        pickingPartTool = true;
         Repaint();
         return true;
     }
@@ -326,7 +330,9 @@ public sealed partial class BlueprintMod
             requestedEdit = 0;
             if (edit == 1)
             {
-                if (requestedHeightDelete >= 0)
+                if (requestedTableDelete >= 0)
+                    DeleteTable(requestedTableDelete);
+                else if (requestedHeightDelete >= 0)
                     DeleteHeight(requestedHeightDelete);
                 else if (requestedReference >= 0)
                     DeleteReference(requestedReference);
@@ -338,8 +344,8 @@ public sealed partial class BlueprintMod
                     DeleteAnnotation(requestedDelete);
                 else if (requestedViewDelete >= 0)
                     DeleteDrawingView(requestedViewDelete);
-                else
-                    DeleteDetail();
+                else if (requestedDetailDelete >= 0)
+                    DeleteDetail(requestedDetailDelete);
             }
             else if (edit == 4)
                 FlipReference(requestedReference, true);
@@ -347,10 +353,12 @@ public sealed partial class BlueprintMod
                 UndoAnnotations(edit == 3);
         }
         ImGui.BeginDisabled(!CanEditAnnotations);
-        ImGui.BeginDisabled(selectedLabel < 0 && selectedDetail < 0 && selectedSpec < 0 && selectedText < 0 && selectedKitten < 0 && selectedCanvasView < 0 && selectedHeight < 0);
+        ImGui.BeginDisabled(selectedLabel < 0 && selectedDetail < 0 && selectedSpec < 0 && selectedText < 0 && selectedKitten < 0 && selectedCanvasView < 0 && selectedHeight < 0 && selectedTable < 0);
         if (ImGui.Button(selectedHeight >= 0 ? "Delete dimension" : selectedCanvasView >= 0 ? "Delete view" : "Delete selected"))
         {
-            if (selectedHeight >= 0)
+            if (selectedTable >= 0)
+                DeleteTable(selectedTable);
+            else if (selectedHeight >= 0)
                 DeleteHeight(selectedHeight);
             else if (selectedKitten >= 0)
                 DeleteReference(selectedKitten);
@@ -366,6 +374,12 @@ public sealed partial class BlueprintMod
                 DeleteDetail();
         }
         ImGui.EndDisabled();
+        if (listedObject is { } selectedObject && document != null && CanvasObjects.All(document.Scene, document.Labels).Contains(selectedObject)
+            && CanvasBounds.Clipped(CanvasObjects.ContentBounds(document.Scene, document.Labels, selectedObject), Options))
+        {
+            if (ImGui.Button("Bring selection onto page"))
+                RevealCanvasObject(selectedObject);
+        }
         if (ImGui.GetContentRegionAvail().X > 250)
             ImGui.SameLine();
         ImGui.BeginDisabled(document?.CanUndo != true);
@@ -393,7 +407,11 @@ public sealed partial class BlueprintMod
             previewFit = 2;
         }
         ImGui.EndDisabled();
-        if (flagnotePlacement != null)
+        if (choosingProjectionSource)
+        {
+            PrintUiText.Wrapped("Select a primary view in the drawing. Right-click cancels.");
+        }
+        else if (flagnotePlacement != null)
         {
             PrintUiText.Wrapped(flagnotePlacement.Stage == FlagnoteStage.Start ? "Flagnote: click the leader START point. Right-click cancels." : flagnotePlacement.Stage == FlagnoteStage.End ? (flagnotePlacement.Custom ? "Flagnote: click the END / label position. Custom text comes next. Right-click cancels." : "Flagnote: click the END / label position to finish. Right-click cancels.") : "Flagnote: enter custom text to finish.");
             if (ImGui.Button("Cancel placement##Flag"u8))
@@ -424,6 +442,6 @@ public sealed partial class BlueprintMod
             PrintUiText.Wrapped("Custom flagnote: click a part to start the leader, click its end, then enter text. Right-click a part for presets.");
         }
         else
-            PrintUiText.Wrapped("Click a view caption to select it; Del deletes it. Drag its caption to move. Right-click parts for notes. Wheel: zoom. Space + drag: pan. Ctrl+Z / Ctrl+Y: undo/redo.");
+            PrintUiText.Wrapped("Click ink or a caption to select; drag to move. Del deletes the selection. Right-click parts for notes. Wheel: zoom. Space + drag: pan. Ctrl+Z / Ctrl+Y: undo/redo.");
     }
 }

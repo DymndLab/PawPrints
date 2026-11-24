@@ -4,8 +4,8 @@ namespace Blueprint.Rendering;
 // Centres are normalized to paper dimensions; scale is a physical 1:N ratio.
 // IDs identify drawings, not cameras: repeated directions are intentional.
 sealed record ViewAxes(Vector3 Right, Vector3 Up, Vector3 Toward);
-sealed record DrawingView(int Id, int Camera, float X, float Y, int? Parent = null, int Alignment = 0, ViewAxes? Axes = null, int RollDirection = -1, int ProjectionAngle = 3);
-sealed record DrawingPlacement(float Ratio, DrawingView[] Views);
+sealed record DrawingView(int Id, int Camera, float X, float Y, int? Parent = null, int Alignment = 0, ViewAxes? Axes = null, int RollDirection = -1, int ProjectionAngle = 3, float? Ratio = null);
+sealed record DrawingPlacement(float Ratio, DrawingView[] Views, DrawingObject[]? Layers = null);
 static class DrawingPlacements
 {
     public const int Limit = 12;
@@ -131,18 +131,21 @@ static class DrawingPlacements
         {
             if (!float.IsFinite(ratio) || ratio < .01f || ratio > 1000000)
                 throw new InvalidOperationException("Choose a positive drawing scale between 1:0.01 and 1:1000000.");
-            float scale = PrintScale.Density(options) / ratio;
+            float legacyFactor = drawing.Ratio / ratio;
             return measured.Select(m =>
             {
                 var v = m.View;
                 var b = m.Axes;
                 float dx = m.Width, dy = m.Height;
+                float scale = PrintScale.Density(options) / ProjectionGroups.Ratio(drawing, v.Id) * legacyFactor;
+                if (!float.IsFinite(dx * scale + dy * scale) || dx * scale + 32 > 8192 || dy * scale + 32 > 8192)
+                    throw new InvalidOperationException(options.FreeLayout ? "View exceeds the render tile resource budget. Reduce its size." : "This preview is too big for the canvas.");
                 int w = Math.Max(100, (int)MathF.Ceiling(dx * scale) + 32), h = Math.Max(100, (int)MathF.Ceiling(dy * scale) + 32);
                 // Bound renderer allocations before any large buffers are created.
-                if (w > options.Page.Width || h + ViewCaption.Band > options.Page.Height)
+                if (options.FreeLayout ? (long)w * h > (long)options.Page.Width * options.Page.Height : w > options.Page.Width || h + ViewCaption.Band > options.Page.Height)
                     throw new InvalidOperationException($"This preview is too big for the canvas ({Name(v).ToUpperInvariant()}).");
                 var box = new Box(MathF.Round(v.X * options.Page.Width - w / 2f), MathF.Round(v.Y * options.Page.Height - h / 2f), w, h);
-                return new ViewRegion(v.Id, Name(v).ToUpperInvariant(), box, new(w, h, scale, center, b.Right, b.Up, b.Toward), v.Camera);
+                return new ViewRegion(v.Id, Name(v).ToUpperInvariant(), box, new(w, h, scale, center, b.Right, b.Up, b.Toward) { ContentExtent = new(dx * scale, dy * scale) }, v.Camera);
             }).ToArray();
         };
     }
@@ -153,6 +156,8 @@ static class DrawingPlacements
 
     public static void Validate(ViewRegion[] views, PrintOptions options, IEnumerable<Box>? obstacles = null)
     {
+        foreach (var view in views) CanvasBounds.Require(view.Bounds);
+        if (options.FreeLayout) return;
         var boxes = views.Select(v => Footprint(v, options.Captions)).ToArray();
         for (int i = 0; i < boxes.Length; i++)
         {
@@ -167,6 +172,7 @@ static class DrawingPlacements
                 if (boxes[i].Overlaps(boxes[j]))
                     throw new InvalidOperationException($"Separate {views[i].Name} and {views[j].Name} before increasing their scale.");
     }
+
 
 
     public static DrawingPlacement Move(DrawingPlacement layout, int id, Vector2 centre, PrintOptions options, bool unlock = false)
@@ -209,6 +215,7 @@ static class DrawingPlacements
 
     public static DrawingPlacement Repage(PrintOptions before, IEnumerable<ViewRegion> regions, DrawingPlacement layout, PrintOptions options)
     {
+        if (options.FreeLayout) return layout;
         var views = regions.Where(v => v.Id < 1000).ToArray();
         if (views.Length == 0 || before.Page == options.Page)
             return layout;

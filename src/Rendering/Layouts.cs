@@ -13,7 +13,10 @@ readonly record struct Box(float X, float Y, float Width, float Height)
 
     public bool Overlaps(Box b, float gap = 0) => X - gap < b.Right && Right + gap > b.X && Y - gap < b.Bottom && Bottom + gap > b.Y;
 }
-sealed record ProjectionFrame(int Width, int Height, float Scale, Vector3 Center, Vector3 Right, Vector3 Up, Vector3 Toward);
+sealed record ProjectionFrame(int Width, int Height, float Scale, Vector3 Center, Vector3 Right, Vector3 Up, Vector3 Toward)
+{
+    public Vector2? ContentExtent { get; init; }
+}
 sealed record ViewRegion(int Id, string Name, Box Bounds, ProjectionFrame? Frame, int? Projection = null)
 {
     public int CameraView => Projection ?? Id;
@@ -185,6 +188,7 @@ sealed class RenderScene
 
     public RenderScene(byte[] rgb, int[] owners, LabelPart[] parts, ViewRegion[] views, Box[]? reserved = null, PrintOptions? options = null, int[]? viewOwners = null)
     {
+        PixelViews = viewOwners;
         BaseRgb = rgb;
         Owners = owners;
         Parts = parts;
@@ -195,8 +199,8 @@ sealed class RenderScene
         foreach (var view in views)
         {
             var pixels = new Dictionary<int, List<int>>();
-            for (int y = (int)view.Bounds.Y; y < view.Bounds.Bottom; y++)
-                for (int x = (int)view.Bounds.X; x < view.Bounds.Right; x++)
+            for (int y = Math.Max(0, (int)view.Bounds.Y); y < Math.Min(Height, view.Bounds.Bottom); y++)
+                for (int x = Math.Max(0, (int)view.Bounds.X); x < Math.Min(Width, view.Bounds.Right); x++)
                 {
                     int q = y * Width + x, id = owners[q];
                     if (id < 0 || viewOwners != null && viewOwners[q] != view.Id)
@@ -233,11 +237,21 @@ sealed class RenderScene
         }
     }
 
+    public ViewInk[] PickingInk { get; init; } = [];
+    public int[]? PixelViews { get; }
+
     public int Owner(int x, int y) => x < 0 || y < 0 || x >= Width || y >= Height ? -1 : Owners[y * Width + x];
 
     public (int View, int Part)? Pick(Vector2 point)
     {
-        var view = Views.LastOrDefault(v => v.Bounds.Contains(point));
+        if (Options.FreeLayout)
+        {
+            var sample = PickLayer(point);
+            return sample is { } hit ? (hit.View, hit.Part) : null;
+        }
+        int px = (int)point.X, py = (int)point.Y;
+        if (px < 0 || py < 0 || px >= Width || py >= Height) return null;
+        var view = PixelViews == null ? Views.LastOrDefault(v => v.Bounds.Contains(point)) : Views.FirstOrDefault(v => v.Id == PixelViews[py * Width + px]);
         if (view == null)
             return null;
         int part = Owner((int)point.X, (int)point.Y);
@@ -246,11 +260,41 @@ sealed class RenderScene
 
     public uint? PickNode(Vector2 point)
     {
+        if (Options.FreeLayout)
+        {
+            var hit = PickLayer(point);
+            return hit is { } sample && MeshNodes != null && sample.Mesh >= 0 && sample.Mesh < MeshNodes.Length ? MeshNodes[sample.Mesh] : null;
+        }
         int x = (int)point.X, y = (int)point.Y;
         if (MeshOwners == null || MeshNodes == null || x < 0 || y < 0 || x >= Width || y >= Height)
             return null;
         int mesh = MeshOwners[y * Width + x];
         return mesh >= 0 && mesh < MeshNodes.Length ? MeshNodes[mesh] : null;
+    }
+
+    (int View, int Part, int Mesh)? PickLayer(Vector2 point)
+    {
+        var ordered = (Drawing?.Layers ?? []).Where(o => o.Kind == DrawingObjectKind.View).Select(o => o.Id).Concat(Views.Select(v => v.Id)).Distinct().Reverse();
+        foreach (int id in ordered)
+        {
+            if (Details.FirstOrDefault(d => d.Definition.ViewId == id) is { } detail)
+            {
+                int x = (int)MathF.Floor(point.X-detail.Definition.Bounds.X-12), y = (int)MathF.Floor(point.Y-detail.Definition.Bounds.Y-12);
+                var tile = detail.Pixels;
+                if (x < 0 || y < 0 || x >= tile.Width || y >= tile.Height || tile.Ink[y*tile.Width+x] == 0) continue;
+                int mesh = tile.MeshOwners[y*tile.Width+x];
+                if (mesh >= 0 && Parts.FirstOrDefault(p => p.DetailOnly && p.NodeId == detail.Groups[mesh]) is { } part)
+                    return (id,part.Id,detail.Meshes[mesh]);
+            }
+            else if (PickingInk.FirstOrDefault(t => t.ViewId == id) is { MeshOwners: not null, MeshParts: not null } tile)
+            {
+                int x = (int)MathF.Floor(point.X-tile.Bounds.X), y = (int)MathF.Floor(point.Y-tile.Bounds.Y);
+                if (x < 0 || y < 0 || x >= tile.Width || y >= tile.Height || tile.Pixels[y*tile.Width+x] == 0) continue;
+                int mesh = tile.MeshOwners[y*tile.Width+x];
+                if (mesh >= 0) return (id,tile.MeshParts[mesh],mesh);
+            }
+        }
+        return null;
     }
 
     public Box[] Highlight(int view, int part)
@@ -442,19 +486,25 @@ static class SheetLayout
         }
         if (options.Drawing != null)
             DrawingPlacements.Validate(views, options);
+        if (options.FreeLayout && views.Sum(v => (long)v.Bounds.Width * (long)v.Bounds.Height) > 16_777_216)
+            throw new InvalidOperationException("View layers exceed the retained-pixel memory budget (16,777,216 pixels). Reduce view sizes.");
         int width = options.Page.Width, height = options.Page.Height;
         var colors = Colors(options.Theme);
         var canvas = new Canvas(width, height, colors.Paper, colors.Ink, options);
         var sheetOwners = Enumerable.Repeat(-1, width * height).ToArray();
         var meshOwners = Enumerable.Repeat(-1, width * height).ToArray();
+        var pixelViews = Enumerable.Repeat(-1, width * height).ToArray();
         var captions = new List<ViewCaptionMark>();
         var inkTiles = new List<ViewInk>();
+        var fullVisuals = new Dictionary<(int View, int Part), PartVisual>();
         foreach (var view in views)
         {
             token.ThrowIfCancellationRequested();
             progress("Drawing " + view.Name.ToLowerInvariant());
             var tile = RenderTile(viewCaptures?.GetValueOrDefault(view.Id) ?? capture, maps, title, view, token);
-            inkTiles.Add(new(view.Bounds, tile.Width, tile.Height, tile.Ink));
+            inkTiles.Add(new(view.Bounds, tile.Width, tile.Height, tile.Ink, view.Id, options.FreeLayout ? tile.MeshOwners : null, options.FreeLayout ? meshParts : null));
+            if (options.FreeLayout)
+                foreach (var pair in ViewAnchors.Measure(tile, meshParts, view.Bounds, token)) fullVisuals[(view.Id, pair.Key)] = pair.Value;
             int left = tile.Width, top = tile.Height, right = -1, bottom = -1;
             for (int y = 0; y < tile.Height; y++)
             {
@@ -465,8 +515,12 @@ static class SheetLayout
                     canvas.Ink(xx, yy, tile.Ink[q] / 255f);
                     if (tile.MeshOwners[q] >= 0)
                     {
-                        sheetOwners[yy * width + xx] = meshParts[tile.MeshOwners[q]];
-                        meshOwners[yy * width + xx] = tile.MeshOwners[q];
+                        if (xx >= 0 && yy >= 0 && xx < width && yy < height && (!options.FreeLayout || tile.Ink[q] > 0))
+                        {
+                            sheetOwners[yy * width + xx] = meshParts[tile.MeshOwners[q]];
+                            meshOwners[yy * width + xx] = tile.MeshOwners[q];
+                            pixelViews[yy * width + xx] = view.Id;
+                        }
                         left = Math.Min(left, x);
                         right = Math.Max(right, x);
                         top = Math.Min(top, y);
@@ -484,7 +538,8 @@ static class SheetLayout
         PageLayout.Decorate(canvas, title, options, PrintScale.Summary(views, options));
         NativeText.Apply(canvas.Pixels, width, height, canvas.Runs);
         token.ThrowIfCancellationRequested();
-        var resultSheet = new Sheet(title, options, canvas.Pixels, Sheet.MakePreview(canvas.Pixels), warnings) { MainInk = inkTiles.ToArray(), Scene = new RenderScene(canvas.Pixels, sheetOwners, parts, views, options: options) { MeshOwners = meshOwners, CraftHeight = HeightDimensions.Measure(capture), ViewHeights = viewCaptures?.ToDictionary(p => p.Key, p => HeightDimensions.Measure(p.Value)) ?? new Dictionary<int, CraftHeight>() }.WithCaptions(captions.ToArray()) };
+        var resultSheet = new Sheet(title, options, canvas.Pixels, Sheet.MakePreview(canvas.Pixels), warnings) { MainInk = inkTiles.ToArray(), Scene = new RenderScene(canvas.Pixels, sheetOwners, parts, views, options: options, viewOwners: pixelViews) { PickingInk = inkTiles.ToArray(), MeshOwners = meshOwners, CraftHeight = HeightDimensions.Measure(capture), ViewHeights = viewCaptures?.ToDictionary(p => p.Key, p => HeightDimensions.Measure(p.Value)) ?? new Dictionary<int, CraftHeight>() }.WithCaptions(captions.ToArray()) };
+        foreach (var pair in fullVisuals) resultSheet.Scene!.Visible[pair.Key] = pair.Value;
         // Rebuilding an existing composition restores its real table bounds and
         // notes first. Temporary default tables may not fit and must not veto it.
         return composeAnnotations ? AnnotationPainting.Compose(resultSheet, [], token) : resultSheet;

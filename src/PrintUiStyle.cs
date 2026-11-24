@@ -20,7 +20,7 @@ static class PrintUiStyle
     public static void PopTabs() => ImGui.PopStyleColor(4);
 
 
-    public static bool YellowButton(string text)
+    public static bool YellowButton(string text, float2 size = default)
     {
         // Reuse KSA's warning/launch yellow, scoped to the current action.
         ImGui.PushStyleColor(ImGuiCol.Button, ConsoleStyle.Pending);
@@ -29,7 +29,7 @@ static class PrintUiStyle
         ImGui.PushStyleColor(ImGuiCol.Text, ConsoleStyle.Panel);
         try
         {
-            return ImGui.Button(text);
+            return ImGui.Button(text, size);
         }
         finally { ImGui.PopStyleColor(4); }
     }
@@ -91,7 +91,10 @@ static class PrintUiStyle
             return;
         ImGui.BeginTooltip();
         ImGui.PushTextWrapPos(ImGui.GetFontSize() * 28);
-        try { PrintUiText.Wrapped(text); }
+        try
+        {
+            PrintUiText.Wrapped(text);
+        }
         finally
         {
             ImGui.PopTextWrapPos();

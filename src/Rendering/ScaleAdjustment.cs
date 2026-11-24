@@ -28,7 +28,7 @@ static class ScaleAdjustment
         return new(Math.Max(100, MathF.Floor(low * 10) / 10), warning);
     }
 
-    public static ScaleFit ForMain(PoseSource source, RenderScene scene, DrawingPlacement drawing, Box[] obstacles)
+    public static ScaleFit ForMain(PoseSource source, RenderScene scene, DrawingPlacement drawing, Box[] obstacles, int? groupView = null)
     {
         var options = scene.Options;
         var unposed = PartPoses.Exterior(source, source.Assembly);
@@ -41,8 +41,14 @@ static class ScaleAdjustment
             try
             {
                 float ratio = drawing.Ratio * 100 / percent;
-                preliminary(ratio);
-                var views = planned(ratio);
+                ViewRegion[] views;
+                if (groupView is { } id)
+                {
+                    var changedDrawing = ProjectionGroups.SetRatio(drawing,id,ProjectionGroups.Ratio(drawing,id)*100/percent);
+                    DrawingPlacements.Plan(unposed, options, changedDrawing);
+                    views = DrawingPlacements.Plan(fit, options, changedDrawing);
+                }
+                else { preliminary(ratio); views = planned(ratio); }
                 DrawingPlacements.Validate(views, options);
                 var changed = views.Where(v => scene.Views.FirstOrDefault(p => p.Id == v.Id)?.Bounds != v.Bounds).ToArray();
                 DrawingPlacements.Validate(changed, options, obstacles);

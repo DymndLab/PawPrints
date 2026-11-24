@@ -37,6 +37,10 @@ Explore a user-defined cutting plane for revealing internal craft structure, enc
 
 Reduce residual specks around curved transitions while preserving genuine shoulders, collars, boundaries and silhouettes across different craft.
 
+## Native Linux support
+
+Plan native Linux support alongside the workflow refactor, beginning with feasibility checks for the game/loader and replacements for Windows text rendering, logo decoding and dialogs. Preserve Windows behavior and require native Linux game/export testing before advertising support. Current releases remain Windows-only; no Linux release date is promised.
+
 ## Feedback
 
 Please include the PawPrints footer version, KSA version, reproduction steps, and whether the issue affects the preview, exported PNG, or both. Review logs and craft files for private information before sharing them. Roadmap items describe intended improvements, not features already available in the current release.

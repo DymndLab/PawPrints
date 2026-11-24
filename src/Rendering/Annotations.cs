@@ -94,13 +94,13 @@ static class LeaderRouting
             var box = AnnotationText.Bounds(label);
             var view = scene.Views.FirstOrDefault(v => v.Id == label.ViewId);
             var allowed = label.ManualPlacement ? new Box(0, 0, scene.Width, scene.Height) : PageLayout.Placement(scene.Options);
-            if (view == null || box.X < allowed.X || box.Y < allowed.Y || box.Right > allowed.Right || box.Bottom > allowed.Bottom)
+            if (view == null || !CanvasBounds.Safe(box) || !scene.Options.FreeLayout && (box.X < allowed.X || box.Y < allowed.Y || box.Right > allowed.Right || box.Bottom > allowed.Bottom))
             {
                 result = [];
                 reason = "Keep the whole label inside the drawing area.";
                 return false;
             }
-            if (label.ManualPlacement)
+            if (label.ManualPlacement || scene.Options.FreeLayout)
             {
                 if (!ManualRoute(scene, label, box, out var manual))
                 {
@@ -257,6 +257,15 @@ static class LeaderRouting
             return null;
         float best = radius * radius;
         LeaderPoint? result = null;
+        if (scene.Options.FreeLayout && scene.Visible.TryGetValue((label.ViewId, label.PartId), out var visual))
+        {
+            foreach (var edge in visual.ContactEdges)
+            {
+                float distance = Vector2.DistanceSquared(point, edge);
+                if (distance <= best) { best = distance; result = new(edge.X, edge.Y); }
+            }
+            return result;
+        }
         for (int y = (int)Math.Max(view.Bounds.Y, point.Y - radius); y <= Math.Min(view.Bounds.Bottom - 1, point.Y + radius); y++)
             for (int x = (int)Math.Max(view.Bounds.X, point.X - radius); x <= Math.Min(view.Bounds.Right - 1, point.X + radius); x++)
             {
@@ -685,10 +694,12 @@ static class AnnotationPainting
         }
         if (!LeaderRouting.TryLayout(scene, labels, out var routes, out var reason))
             throw new InvalidOperationException(reason);
-        var canvas = new Canvas((byte[])scene.BaseRgb.Clone(), scene.Width, scene.Height, SheetLayout.Colors(source.Options.Theme).Ink);
+        var canvas = new Canvas((byte[])scene.BaseRgb.Clone(), scene.Width, scene.Height, SheetLayout.Colors(source.Options.Theme).Ink)
+        { HitShapes = scene.Options.FreeLayout ? [] : null };
         foreach (var route in routes)
         {
             token.ThrowIfCancellationRequested();
+            canvas.HitTarget = new(DrawingObjectKind.Label, route.Label.Id);
             LeaderPainting.Paint(canvas, [route.Start, route.End], route.Label.Line, route.Label.Tip, route.Label.Key == null ? 10 : 0);
             if (route.Label.Key != null)
             {
@@ -703,20 +714,31 @@ static class AnnotationPainting
                 for (int i = 0; i < route.Lines.Length; i++)
                     canvas.Text(route.Lines[i], (int)route.TextBox.X, (int)route.TextBox.Y + i * AnnotationText.Leading, AnnotationText.Font, 1);
         }
+        canvas.HitTarget = null;
         PrintTables.Paint(canvas, scene, labels);
         List<(Vector2 Start, Vector2 End)>? specLeaders = scene.FreeText.Length > 0 ? [] : null;
         PerformancePainting.Paint(canvas, scene, labels, specLeaders);
+        canvas.HitTarget = null;
         HeightDimensions.Paint(canvas, scene, labels);
         KittenReferences.Paint(canvas, scene, token);
-        foreach (var caption in scene.Captions.Where(c => !scene.Details.Any(d => d.Definition.Bounds.Overlaps(c.Bounds))))
+        canvas.HitTarget = null;
+        foreach (var caption in scene.Captions.Where(c => scene.Options.FreeLayout || !scene.Details.Any(d => d.Definition.Bounds.Overlaps(c.Bounds))))
+        {
             canvas.Text(caption.Text, (int)caption.Bounds.X, (int)caption.Bounds.Y, caption.FontSize, .85f);
+            if (scene.Options.FreeLayout && scene.Views.FirstOrDefault(v => v.Id == caption.ViewId) is { } view)
+            {
+                string scale = "SCALE " + PrintScale.Ratio(view.Frame, scene.Options);
+                canvas.Text(scale, (int)(caption.Bounds.Center.X - scale.Length * NativeText.MonoWidth(15) / 2), (int)caption.Bounds.Bottom + 4, 15, 1);
+            }
+        }
         TextBoxPlacement.Validate(scene, labels, routes, specLeaders ?? []);
         FreeTextPainting.Paint(canvas, scene.FreeText);
         NativeText.Apply(canvas.Pixels, scene.Width, scene.Height, canvas.Runs);
         token.ThrowIfCancellationRequested();
         return source.WithPixels(canvas.Pixels) with
         {
-            Labels = labels
+            Labels = labels,
+            ObjectHits = canvas.HitShapes
         };
     }
 

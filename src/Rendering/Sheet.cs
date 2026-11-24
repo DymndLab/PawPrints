@@ -5,12 +5,12 @@ sealed record TextSpan(string Text, bool Outline = false, float Scale = 1, int S
 sealed record TextRun(string Text, int X, int Y, int Height, Vector3 Color, bool Bold = false, bool Italic = false, bool Outline = false, string? Face = null, TextSpan[]? Spans = null, bool Underline = false);
 
 sealed record PrintOptions(int View = 0, int Theme = 0, bool Grid = true, bool Archive = false, int Emphasis = 10, int Layout = 0, int VisibleViews = 15, bool Captions = true,
-    bool PartsTable = false, bool FlagTable = false, int DrawingSize = 0, int Orientation = 0, int Aspect = 0, int Brand = 0, TitleBlockData? TitleBlock = null, int Arrangement = 0, FixedViewLayout? Boxes = null, DrawingPlacement? Drawing = null, bool Zones = true, int CustomWidth = 2560, int CustomHeight = 1440, int WearLevel = 3, DrawingOutput OutputTarget = DrawingOutput.Image)
+    bool PartsTable = false, bool FlagTable = false, int DrawingSize = 0, int Orientation = 0, int Aspect = 0, int Brand = 0, TitleBlockData? TitleBlock = null, int Arrangement = 0, FixedViewLayout? Boxes = null, DrawingPlacement? Drawing = null, bool Zones = true, int CustomWidth = 2560, int CustomHeight = 1440, int WearLevel = 3, DrawingOutput OutputTarget = DrawingOutput.Image, bool FreeLayout = false)
 {
     public PageSize Page => Orientation == 3 ? PageSize.Workspace(CustomWidth, CustomHeight) : PageSize.From(Orientation, Aspect);
     public PageSize OutputPage => Orientation == 3 ? PageSize.Custom(CustomWidth, CustomHeight) : Page;
 }
-sealed record ViewInk(Box Bounds, int Width, int Height, byte[] Pixels);
+sealed record ViewInk(Box Bounds, int Width, int Height, byte[] Pixels, int ViewId = -1, int[]? MeshOwners = null, int[]? MeshParts = null);
 sealed record Sheet(string Title, PrintOptions Options, byte[] Rgb, byte[] PreviewRgba, string[] Warnings)
 {
     public const int Width = 2400, Height = 3000, PreviewWidth = Width, PreviewHeight = Height;
@@ -20,6 +20,7 @@ sealed record Sheet(string Title, PrintOptions Options, byte[] Rgb, byte[] Previ
     {
         get; init;
     }
+    public IReadOnlyDictionary<DrawingObject, CanvasHitShape>? ObjectHits { get; init; }
     public ViewInk[]? MainInk
     {
         get; init;
@@ -166,6 +167,18 @@ sealed class Canvas
     readonly Vector3 ink;
     public readonly byte[] Pixels;
     public readonly List<TextRun> Runs = [];
+    public Dictionary<DrawingObject, CanvasHitShape>? HitShapes { get; set; }
+    public DrawingObject? HitTarget { get; set; }
+    bool tracingLine;
+    CanvasHitShape? HitShape
+    {
+        get
+        {
+            if (HitShapes == null || HitTarget is not { } target) return null;
+            if (!HitShapes.TryGetValue(target, out var shape)) HitShapes[target] = shape = new();
+            return shape;
+        }
+    }
 
     public Canvas(int width, int height, Vector3 paper, Vector3 ink, PrintOptions options)
     {
@@ -220,6 +233,7 @@ sealed class Canvas
     {
         if (x < 0 || y < 0 || x >= width || y >= height || alpha <= 0)
             return;
+        if (!tracingLine) HitShape?.Pixel(x, y);
         int q = (y * width + x) * 3;
         var mixed = Vector3.Lerp(new(Pixels[q], Pixels[q + 1], Pixels[q + 2]), color, Math.Clamp(alpha, 0, 1));
         Pixels[q] = (byte)mixed.X;
@@ -229,14 +243,36 @@ sealed class Canvas
 
     public void Line(int x0, int y0, int x1, int y1, float alpha)
     {
+        if (x0 < 0 || y0 < 0 || x1 < 0 || y1 < 0 || x0 >= width || x1 >= width || y0 >= height || y1 >= height)
+        {
+            double lo = 0, hi = 1, dx = (double)x1 - x0, dy = (double)y1 - y0;
+            bool Edge(double p, double q)
+            {
+                if (p == 0) return q >= 0;
+                double t = q / p;
+                if (p < 0) lo = Math.Max(lo, t); else hi = Math.Min(hi, t);
+                return lo <= hi;
+            }
+            if (!Edge(-dx, x0) || !Edge(dx, width - 1d - x0) || !Edge(-dy, y0) || !Edge(dy, height - 1d - y0)) return;
+            int endX = (int)Math.Round(x0 + hi * dx), endY = (int)Math.Round(y0 + hi * dy);
+            x0 = (int)Math.Round(x0 + lo * dx); y0 = (int)Math.Round(y0 + lo * dy);
+            x1 = endX; y1 = endY;
+        }
+        if (alpha > 0) HitShape?.Line(x0, y0, x1, y1);
+        tracingLine = true;
         int n = Math.Max(Math.Abs(x1 - x0), Math.Abs(y1 - y0));
         for (int i = 0; i <= n; i++)
             Ink(x0 + (x1 - x0) * i / Math.Max(n, 1), y0 + (y1 - y0) * i / Math.Max(n, 1), alpha);
+        tracingLine = false;
     }
 
     public void InlineText(TextSpan[] spans, int x, int y, int size) => Runs.Add(new(string.Concat(spans.Select(s => s.Text)), x, y, size, ink, true, true, false, "Consolas", spans));
 
-    public void Text(string text, int x, int y, int size, float alpha, bool bold = false, bool italic = false, bool outline = false, string? face = null, bool underline = false) => Runs.Add(new(text, x, y, size, ink, bold, italic, outline, face, Underline: underline));
+    public void Text(string text, int x, int y, int size, float alpha, bool bold = false, bool italic = false, bool outline = false, string? face = null, bool underline = false)
+    {
+        if (alpha > 0) HitShape?.Text(text, x, y, size);
+        Runs.Add(new(text, x, y, size, ink, bold, italic, outline, face, Underline: underline));
+    }
 }
 
 static class PrintFiles

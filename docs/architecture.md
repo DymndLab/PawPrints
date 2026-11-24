@@ -51,15 +51,23 @@ The renderer's document/history operations and the editor's transient gestures h
 
 Most rendering code has no game API dependency. The synthetic test project compiles these files directly, which lets geometry and layout checks run without KSA.
 
+## Projection groups and canvas composition
+
+`ProjectionGroups.cs` resolves shared scales from primary/projection relationships. Standalone views own independent scales. Resize gestures evaluate their opening snapshot, latch modifiers and commit one history operation. Projected extents are retained separately from minimum raster dimensions to preserve resize anchors.
+
+`CanvasObjects.cs` defines document ordering, content bounds and selection. View tiles retain per-view ink/mesh ownership so overlapping layers preserve identity. `CanvasHitShape.cs` records sparse annotation strokes, glyph cells and raster marks during composition, avoiding full panel rectangles in hit testing. `ViewAnchors.cs` preserves part contacts even when a view is off-page or covered.
+
+The editor enables `PrintOptions.FreeLayout`. Collision advice is separate from safety checks in `CanvasBounds.cs`; raster writes and line segments clip to fixed page buffers. Main/detail tiles share a 16,777,216 retained-pixel ceiling, in addition to individual tile/page/geometry limits. This bounds one retained allocation category; it is not a benchmark of total process memory or large-craft performance. Native interaction acceptance remains necessary after changes to these paths.
+
 ## Profile storage
 
-`Storage/ProfileStorage.cs` resolves writable paths from KSA's already-resolved profile directory. Logos and title defaults live under `PawPrints/Logos`; the chosen export destination is stored in `PawPrints/export-settings.json`. First opening prompts for a destination; missing destinations cause a save error instead of being recreated. Legacy mod-local data is copied without overwriting profile data or changing installed files. This keeps Borea-managed mod content separate from user data.
+`Storage/ProfileStorage.cs` resolves writable paths from KSA's already-resolved profile directory. Logos and title defaults live under `PawPrints/Logos`; the chosen export destination is stored in `PawPrints/export-settings.json`. Save PNG prompts for a destination when needed; missing destinations cause a save error instead of being recreated. Legacy mod-local data is copied without overwriting profile data or changing installed files. This keeps Borea-managed mod content separate from user data.
 
 ## Preview updates and text
 
 `LivePreviewControls.cs` schedules debounced settings updates only when enabled. `Rendering/PreviewUpdates.cs` selects cached appearance composition or geometry rebuilding. Generate PawPrint explicitly recaptures the craft. One active worker and cancellation keep old jobs from becoming accepted documents; UI rendering and texture uploads remain on the game thread.
 
-`RichText.cs` and `FreeText.cs` store formatted ranges and lay out text. The editor edits those ranges in a single styled surface. `TextBoxPlacement.cs` checks the full box bounds, snapping and collisions independently of the optional visible outline. `AnnotationDocument` holds undo/redo snapshots of accepted composition changes.
+`RichText.cs` and `FreeText.cs` store formatted ranges and lay out text. The editor edits those ranges in a single styled surface. `TextBoxPlacement.cs` retains resource validation while free layout permits overlap and off-page positions; legacy automatic layouts retain their fit checks. `AnnotationDocument` holds undo/redo snapshots of accepted composition changes.
 
 `Storage/TitlePreferences.cs` and `Storage/ExportPreferences.cs` validate bounded settings files. `PrintDiagnostics.cs` records bounded, local action diagnostics. `PrintUiText.cs` keeps user content away from native printf-style format strings.
 

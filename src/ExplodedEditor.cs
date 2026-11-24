@@ -220,33 +220,18 @@ public sealed partial class BlueprintMod
     {
         selectedDetail = detail.Id;
         var old = document!.Details.FirstOrDefault(d => d.Id == detail.Id);
-        if (old != null && detail.Sizing is { } sizing && old with
-        {
-            Bounds = detail.Bounds,
-            Caption = detail.Caption,
-            Camera = detail.Camera,
-            Sizing = detail.Sizing,
-            Guides = detail.Guides,
-            GuideLine = detail.GuideLine
-        } != detail)
-            detail = detail with
-            {
-                Sizing = sizing with
-                {
-                    Spread = null,
-                    Center = null
-                }
-            };
+        detail = DetailFrames.PrepareEdit(old, detail, Options);
         var existing = document!.Details;
         QueueDetails(existing.Any(d => d.Id == detail.Id) ? existing.Select(d => d.Id == detail.Id ? detail : d).ToArray() : [.. existing, detail]);
     }
 
 
-    static void DeleteDetail()
+    static void DeleteDetail(int? requested = null)
     {
-        if (!CanEditAnnotations || selectedDetail < 0)
+        int id = requested ?? selectedDetail;
+        if (!CanEditAnnotations || id < 0)
             return;
-        QueueDetails(document!.Details.Where(d => d.Id != selectedDetail).ToArray());
+        QueueDetails(document!.Details.Where(d => d.Id != id).ToArray());
         selectedDetail = -1;
         detailEdit = null;
     }
@@ -302,7 +287,8 @@ public sealed partial class BlueprintMod
                         }
                     };
                 if (ImGui.IsItemHovered())
-                    PrintUiText.Tooltip("Smaller numbers make parts larger without moving their centres. Resize the box to change their spread.");
+                    PrintUiText.Tooltip(Options.FreeLayout ? "Smaller numbers make parts larger. The frame follows the assembly; drag its corner to scale the whole view."
+                        : "Smaller numbers make parts larger without moving their centres. Resize the box to change their spread.");
             }
             float separation = detailEdit.Separation;
             ImGui.SetNextItemWidth(-1);
@@ -445,7 +431,7 @@ public sealed partial class BlueprintMod
                 X = point.X,
                 Y = point.Y
             }, Options);
-            Box? clear = FrameLayout.Clear(b, PanelNeighbors(pending.Id), FrameLayout.Area(Options), false, 200, 180, snapPanels ? FrameLayout.Gap : 0, boundary: PageLayout.TitleBounds(Options));
+            Box? clear = ClearPanelPlacement(b, PanelNeighbors(pending.Id), FrameLayout.Area(Options), false, 200, 180, snapPanels ? FrameLayout.Gap : 0, boundary: PageLayout.TitleBounds(Options));
             for (int i = 0; clear == null && i < 8; i++)
             {
                 b = ExplodedPainting.ClampFrame(b with
@@ -453,7 +439,7 @@ public sealed partial class BlueprintMod
                     Width = Math.Max(200, b.Width * .85f),
                     Height = Math.Max(180, b.Height * .85f)
                 }, Options);
-                clear = FrameLayout.Clear(b, PanelNeighbors(pending.Id), FrameLayout.Area(Options), false, 200, 180, snapPanels ? FrameLayout.Gap : 0, boundary: PageLayout.TitleBounds(Options));
+                clear = ClearPanelPlacement(b, PanelNeighbors(pending.Id), FrameLayout.Area(Options), false, 200, 180, snapPanels ? FrameLayout.Gap : 0, boundary: PageLayout.TitleBounds(Options));
             }
             Outline(clear ?? b, clear != null ? 0xFF8EDD8E : 0xFF6666EE);
             if (hovered && ImGui.IsMouseClicked(ImGuiMouseButton.Left) && clear is { } placed)
@@ -466,9 +452,35 @@ public sealed partial class BlueprintMod
             }
             return true;
         }
-        var hit = document!.Details.LastOrDefault(d => d.Bounds.Contains(point));
+        var hit = document!.Details.LastOrDefault(d => canvasTarget?.Kind == DrawingObjectKind.View && canvasTarget?.Id == d.ViewId);
         if (dragDetail is { } dragging)
         {
+            if (resizeDetail && dragGroup == null && Options.FreeLayout)
+            {
+                var rendered = sheet!.Scene!.Details.Single(d => d.Definition.Id == dragging.Id);
+                var extent = rendered.Frame.ContentExtent ?? new Vec(rendered.Frame.Width - 32, rendered.Frame.Height - 32);
+                float amount = Math.Clamp(1 + Vec.Dot(point - detailPress, extent) / Math.Max(1, extent.LengthSquared()), .05f, 20);
+                ExplodedDetail? changed = null;
+                try
+                {
+                    changed = DetailFrames.Resize(rendered, amount, Options, fixedTopLeft: true);
+                }
+                catch (InvalidOperationException) { }
+                if (changed != null)
+                {
+                    Outline(changed.Bounds, 0xFF44DDFF);
+                    PanelGrip(changed.Bounds, factor, origin);
+                }
+                if (!ImGui.IsMouseDown(ImGuiMouseButton.Left))
+                {
+                    CancelDetailGesture();
+                    if (changed != null && Vec.Distance(point, detailPress) * factor >= 4)
+                        QueueDetail(changed);
+                    else if (changed == null)
+                        ReportFailure("Exploded view exceeds the render resource budget. Previous view retained.");
+                }
+                return true;
+            }
             if (dragGroup is { } group)
             {
                 var delta = point - detailPress;
@@ -517,7 +529,7 @@ public sealed partial class BlueprintMod
                 };
                 b = SnapPanel(b, dragging.Id, resizeDetail, factor);
                 b = resizeDetail ? FrameLayout.Resize(b, Options, 200, 180) : ExplodedPainting.ClampFrame(b, Options);
-                b = FrameLayout.Clear(b, PanelNeighbors(dragging.Id), FrameLayout.Area(Options), resizeDetail, 200, 180, snapPanels ? FrameLayout.Gap : 0, boundary: PageLayout.TitleBounds(Options)) ?? dragging.Bounds;
+                b = ClearPanelPlacement(b, PanelNeighbors(dragging.Id), FrameLayout.Area(Options), resizeDetail, 200, 180, snapPanels ? FrameLayout.Gap : 0, boundary: PageLayout.TitleBounds(Options)) ?? dragging.Bounds;
                 if (!resizeDetail)
                 {
                     var mark = sheet!.Scene!.Details.Single(d => d.Definition.Id == dragging.Id);
@@ -527,11 +539,15 @@ public sealed partial class BlueprintMod
                         proposed => proposed.X >= area.X && proposed.Y >= area.Y && proposed.Right <= area.Right && proposed.Bottom <= area.Bottom && PanelClear(proposed, dragging.Id));
                     DrawAlignmentGuides(factor, origin);
                 }
+                if (!resizeDetail)
+                    b = CanvasMotion.KeepOnPage(b, Options);
                 Outline(b, 0xFF8EDD8E);
                 if (!ImGui.IsMouseDown(ImGuiMouseButton.Left))
                 {
                     var sizing = resizeDetail ? sheet!.Scene!.Details.Single(d => d.Definition.Id == dragging.Id).Sizing : dragging.Sizing;
                     CancelDetailGesture();
+                    if (Vec.Distance(point, detailPress) * factor < 4)
+                        return true;
                     QueueDetail(dragging with
                     {
                         Bounds = b,
@@ -556,7 +572,7 @@ public sealed partial class BlueprintMod
         if (hit == null || !hovered || !ImGui.IsMouseClicked(ImGuiMouseButton.Left))
             return false;
         bool corner = Vec.Distance(point, new(hit.Bounds.Right, hit.Bounds.Bottom)) * factor < 18, header = sheet!.Scene!.Details.First(d => d.Definition.Id == hit.Id).CaptionBounds.Contains(point);
-        if (corner || header)
+        if (corner || header || placeKind != 2 && !pickingPartTool)
         {
             SelectDetail(hit.Id);
             dragDetail = hit;
@@ -584,6 +600,7 @@ public sealed partial class BlueprintMod
             }
             dragDetail = hit;
             dragGroup = selectedGroup;
+            resizeDetail = false;
             detailPress = point;
             return true;
         }

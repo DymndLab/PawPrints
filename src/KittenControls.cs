@@ -203,6 +203,12 @@ public sealed partial class BlueprintMod
                 X = point.X - kittenGrab.X,
                 Y = point.Y - kittenGrab.Y
             });
+            var correction = CanvasMotion.Limit(KittenReferences.Bounds(scene, proposed), Vec.Zero, Options.Page);
+            proposed = proposed with
+            {
+                X = proposed.X + correction.X,
+                Y = proposed.Y + correction.Y
+            };
             Outline(proposed, 0xFF8EDD8E);
             ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
             if (!ImGui.IsMouseDown(ImGuiMouseButton.Left))
@@ -218,7 +224,7 @@ public sealed partial class BlueprintMod
             Outline(selected, 0xFFFFDD99);
         if (!hovered || ControlsLocked || partMenuOpen)
             return false;
-        var hit = scene.Kittens.LastOrDefault(k => KittenReferences.Bounds(scene, k).Contains(point));
+        var hit = scene.Kittens.FirstOrDefault(k => canvasTarget?.Id == k.Id);
         if (hit == null)
             return false;
         hoveredKitten = hit.Id;

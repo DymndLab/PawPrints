@@ -104,7 +104,7 @@ static class PreviewUpdates
                     : new Capture(drawing.Views.SelectMany(v => PartPoses.Exterior(source, PartPoses.Apply(source, poses, v.Id)).Meshes).ToArray());
                 options = options with
                 {
-                    Drawing = DrawingPlacements.FitToPage(envelope, options, drawing,
+                    Drawing = options.FreeLayout ? drawing : DrawingPlacements.FitToPage(envelope, options, drawing,
                     CompositionRegeneration.RepageObstacles(previous.Scene, options))
                 };
             }

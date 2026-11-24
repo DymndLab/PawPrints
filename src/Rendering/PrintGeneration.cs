@@ -18,7 +18,7 @@ static class PrintGeneration
         if (previous?.Scene?.Drawing != null && options.Drawing != null && previous.Options.Page != options.Page)
             options = options with { Drawing = DrawingPlacements.Repage(previous.Scene, options) };
         var poses = previous?.Scene?.Poses ?? [];
-        if (previous != null && previous.Options.Page != options.Page && options.Drawing is { } repaged)
+        if (!options.FreeLayout && previous != null && previous.Options.Page != options.Page && options.Drawing is { } repaged)
         {
             var envelope = poses.Length == 0 ? geometry : new Capture(repaged.Views.SelectMany(v =>
                 PartPoses.Exterior(source, PartPoses.Apply(source, poses, v.Id)).Meshes).ToArray());

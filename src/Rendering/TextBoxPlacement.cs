@@ -5,7 +5,7 @@ namespace Blueprint.Rendering;
 // segments; it never rerenders craft geometry or reroutes specification leaders.
 sealed record TextPlacementSpace(PrintOptions Options, Box[] Obstacles, (Vector2 Start, Vector2 End)[] Leaders)
 {
-    public bool Clear(Box box) => PageLayout.Fits(box, Options)
+    public bool Clear(Box box) => Options.FreeLayout ? CanvasBounds.Safe(box) : PageLayout.Fits(box, Options)
         && Obstacles.All(b => !box.Overlaps(b))
         && Leaders.All(line => !Crosses(line.Start, line.End, box));
 
@@ -102,6 +102,7 @@ static class TextBoxPlacement
 
     public static void RequireClear(TextPlacementSpace space, Box box)
     {
+        if (space.Options.FreeLayout) { CanvasBounds.Require(box); return; }
         if (!PageLayout.Fits(box, space.Options))
             throw new InvalidOperationException("Keep the whole text box inside the drawing border and clear of the title block.");
         if (!space.Clear(box))

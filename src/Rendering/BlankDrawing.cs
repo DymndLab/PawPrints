@@ -4,7 +4,7 @@ static class BlankDrawing
 {
     public static Sheet Create(string title, PrintOptions appearance, CancellationToken token)
     {
-        var options = appearance with { Drawing = new(100, []), PartsTable = false, FlagTable = false };
+        var options = appearance with { FreeLayout = true, Drawing = new(100, []), PartsTable = false, FlagTable = false };
         token.ThrowIfCancellationRequested();
         var colors = SheetLayout.Colors(options.Theme);
         var canvas = new Canvas(options.Page.Width, options.Page.Height, colors.Paper, colors.Ink, options);

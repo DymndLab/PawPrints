@@ -21,6 +21,7 @@
     <Compile Include="CaptureStatsChecks.cs" />
     <Compile Include="FoundationChecks.cs" />
     <Compile Include="StartupChecks.cs" />
+    <Compile Include="GroupChecks.cs" />
     <Compile Include="CurvatureChecks.cs" />
     <Compile Include="PartSupportChecks.cs" />
     <Compile Include="../src/LogoPicker.cs" />

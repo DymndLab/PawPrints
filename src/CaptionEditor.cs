@@ -27,7 +27,7 @@ public sealed partial class BlueprintMod
     {
         if (editable && hovered && !ControlsLocked && ImGui.IsMouseClicked(ImGuiMouseButton.Right))
         {
-            var mark = sheet!.Scene!.Captions.FirstOrDefault(c => c.Bounds.Contains(point) && !sheet.Scene.Details.Any(d => d.Definition.Bounds.Contains(point)));
+            var mark = sheet!.Scene!.Captions.FirstOrDefault(c => c.Bounds.Contains(point) && canvasTarget?.Kind == DrawingObjectKind.View && canvasTarget?.Id == c.ViewId);
             if (mark != null)
             {
                 captionViewId = mark.ViewId;

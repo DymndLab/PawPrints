@@ -5,7 +5,10 @@ sealed record AssemblyPose(Vector3 Origin, Vector3 X, Vector3 Y, Vector3 Z);
 sealed record AssemblyNode(uint Id, uint? Parent, string Name, string TemplateId, bool Subpart, AssemblyPose? Pose = null);
 sealed record AssemblyCapture(Capture Geometry, AssemblyNode[] Nodes, uint[] MeshNodes, bool[] Internal)
 {
-    public SourceTopology? Topology { get; init; }
+    public SourceTopology? Topology
+    {
+        get; init;
+    }
 }
 sealed record ExplodedSource(AssemblyCapture Assembly, IReadOnlyDictionary<string, Texture> Maps);
 sealed record ExplodedGroup(uint Node, Vector3 Offset, bool Hidden = false, int Axis = 0);
@@ -24,7 +27,14 @@ sealed record DetailGeometry(Capture Capture, int[] OriginalMeshes, uint[] Group
 }
 sealed record RenderedDetail(ExplodedDetail Definition, ProjectionFrame Frame, int[] Meshes, uint[] Groups, ViewPixels Pixels)
 {
-    public int CaptionFont { get; init; }
+    public int CaptionFont
+    {
+        get; init;
+    }
+    public Box? GeometryBounds
+    {
+        get; init;
+    }
     public uint? Anchor
     {
         get; init;
@@ -260,8 +270,9 @@ static class ExplodedGeometry
     }
 
 
-    public static RenderedDetail Render(ExplodedSource source, ExplodedDetail detail, CancellationToken token, PrintOptions? options = null)
+    public static RenderedDetail Render(ExplodedSource source, ExplodedDetail detail, CancellationToken token, PrintOptions? options = null, long remainingPixels = 16_777_216)
     {
+        token.ThrowIfCancellationRequested();
         var geometry = Build(source.Assembly, detail);
         int w = (int)detail.Bounds.Width - 24, h = (int)detail.Bounds.Height - ExplodedPainting.CaptionSpace;
         var basis = SheetLayout.Basis(detail.View);
@@ -270,7 +281,32 @@ static class ExplodedGeometry
         float dx = points.Max(p => Math.Abs(Vector3.Dot(p - center, basis.Right))) * 2, dy = points.Max(p => Math.Abs(Vector3.Dot(p - center, basis.Up))) * 2;
         ProjectionFrame frame;
         DetailSizing effectiveSizing;
-        if (detail.Sizing is { } requested)
+        if (options?.FreeLayout == true)
+        {
+            float fit = Math.Min((w - 32) / Math.Max(dx, .001f), (h - 32) / Math.Max(dy, .001f));
+            fit = PrintScale.FitScale(Math.Max(.000001f, fit), options);
+            var requestedFree = detail.Sizing is { } supplied ? supplied with
+            {
+                Center = supplied.Center ?? center
+            }
+                : new DetailSizing(PrintScale.Density(options) / fit, fit, center, w, h);
+            (geometry, frame, effectiveSizing) = DetailPartSizing.Free(geometry, requestedFree, detail.View, options);
+            var referenceCenter = detail.Camera?.Center ?? center;
+            var shift = frame.Center - referenceCenter;
+            var bounds = new Box(detail.Bounds.X + (w - frame.Width) / 2f + Vector3.Dot(shift, frame.Right) * frame.Scale,
+                detail.Bounds.Y + (h - frame.Height) / 2f - Vector3.Dot(shift, frame.Up) * frame.Scale,
+                frame.Width + 24, frame.Height + ExplodedPainting.CaptionSpace);
+            CanvasBounds.Require(bounds);
+            detail = detail with
+            {
+                Bounds = bounds,
+                Sizing = effectiveSizing,
+                Camera = frame
+            };
+            w = frame.Width;
+            h = frame.Height;
+        }
+        else if (detail.Sizing is { } requested)
         {
             (geometry, frame, effectiveSizing) = DetailPartSizing.Place(geometry, requested, w, h, detail.View, options ?? new());
             detail = detail with
@@ -297,6 +333,9 @@ static class ExplodedGeometry
 
             effectiveSizing = new(PrintScale.Density(options ?? new()) / frame.Scale, frame.Scale, frame.Center, w, h);
         }
+        if ((long)w * h > remainingPixels)
+            throw new InvalidOperationException("View layers exceed the retained-pixel memory budget (16,777,216 pixels). Reduce view sizes.");
+        token.ThrowIfCancellationRequested();
         var pixels = DetailSampling.Render(geometry.Capture, source.Maps, detail.Caption, detail.View, frame, token);
         if (detail.Guides)
         {

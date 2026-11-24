@@ -270,6 +270,11 @@ public sealed partial class BlueprintMod
                 }
             }
             catch (InvalidOperationException) { valid = false; }
+            if (!resizeText)
+                candidate = candidate with
+                {
+                    Bounds = CanvasMotion.KeepOnPage(candidate.Bounds, Options)
+                };
             Outline(candidate.Bounds, valid ? 0xFF8EDD8Eu : 0xFF7777FFu);
             if (!ImGui.IsMouseDown(ImGuiMouseButton.Left))
             {
@@ -281,7 +286,7 @@ public sealed partial class BlueprintMod
             }
             return true;
         }
-        var hit = hovered ? document.Scene.FreeText.LastOrDefault(b => b.Bounds.Contains(point) || Vec.Distance(point, new(b.Bounds.Right, b.Bounds.Bottom)) * factor < 18) : null;
+        var hit = hovered ? document.Scene.FreeText.FirstOrDefault(b => canvasTarget?.Id == b.Id) : null;
         if (hovered && ImGui.IsMouseClicked(ImGuiMouseButton.Left) && hit == null)
             selectedText = -1;
         foreach (var b in document.Scene.FreeText.Where(b => b.Id == selectedText || b == hit))

@@ -80,8 +80,8 @@ public sealed partial class BlueprintMod
             {
                 Height = Math.Min(area.Height, Math.Max(150, PerformancePainting.Height(data, candidate, candidate.FontSize, scene.Options.TitleBlock?.Title)))
             }, scene.Options, 300, 150);
-            var clear = (existing ? null : FrameLayout.Clear(box, SpecObstacles(block.Id).Concat(scene.Visible.Values.Select(v => v.Bounds)).Concat(scene.Captions.Select(c => c.Bounds)), area, false, 300, 150, FrameLayout.Gap, b => PerformancePainting.Font(data, candidate with { Bounds = b }, scene.Options.TitleBlock?.Title) > 0, boundary: PageLayout.TitleBounds(Options)))
-                ?? FrameLayout.Clear(box, SpecObstacles(block.Id), area, false, 300, 150, snapPanels ? FrameLayout.Gap : 0, b => PerformancePainting.Font(data, candidate with { Bounds = b }, scene.Options.TitleBlock?.Title) > 0, boundary: PageLayout.TitleBounds(Options));
+            var clear = (existing ? null : ClearPanelPlacement(box, SpecObstacles(block.Id).Concat(scene.Visible.Values.Select(v => v.Bounds)).Concat(scene.Captions.Select(c => c.Bounds)), area, false, 300, 150, FrameLayout.Gap, b => PerformancePainting.Font(data, candidate with { Bounds = b }, scene.Options.TitleBlock?.Title) > 0, boundary: PageLayout.TitleBounds(Options)))
+                ?? ClearPanelPlacement(box, SpecObstacles(block.Id), area, false, 300, 150, snapPanels ? FrameLayout.Gap : 0, b => PerformancePainting.Font(data, candidate with { Bounds = b }, scene.Options.TitleBlock?.Title) > 0, boundary: PageLayout.TitleBounds(Options));
             if (clear is { } found)
                 return block with
                 {
@@ -145,7 +145,9 @@ public sealed partial class BlueprintMod
             };
             box = SnapPanel(box, -1000 - dragging.Id, specResize, factor);
             box = specResize ? FrameLayout.Resize(box, Options, 300, 150) : FrameLayout.Clamp(box, Options, 300, 150);
-            box = FrameLayout.Clear(box, SpecObstacles(dragging.Id), FrameLayout.Area(Options), specResize, 300, 150, snapPanels ? FrameLayout.Gap : 0, b => PerformancePainting.Font(document.Scene.Performance, dragging with { Bounds = b }, document.Scene.Options.TitleBlock?.Title) > 0, boundary: PageLayout.TitleBounds(Options)) ?? dragging.Bounds;
+            box = ClearPanelPlacement(box, SpecObstacles(dragging.Id), FrameLayout.Area(Options), specResize, 300, 150, snapPanels ? FrameLayout.Gap : 0, b => PerformancePainting.Font(document.Scene.Performance, dragging with { Bounds = b }, document.Scene.Options.TitleBlock?.Title) > 0, boundary: PageLayout.TitleBounds(Options)) ?? dragging.Bounds;
+            if (!specResize)
+                box = CanvasMotion.KeepOnPage(box, Options);
             Outline(box, 0xFF8EDD8E);
             PanelGrip(box, factor, origin);
             if (!ImGui.IsMouseDown(ImGuiMouseButton.Left))
@@ -166,7 +168,7 @@ public sealed partial class BlueprintMod
                 Outline(b.Bounds, 0xFF88D8FF);
                 PanelGrip(b.Bounds, factor, origin);
             }
-            if (!hovered || !over && !corner)
+            if (!hovered || canvasTarget?.Id != b.Id || !over && !corner)
                 continue;
             if (ImGui.IsMouseClicked(ImGuiMouseButton.Right))
             {
@@ -175,7 +177,7 @@ public sealed partial class BlueprintMod
                 SpecPopupDrawn = false;
             }
             hoveredSpec = b.Id;
-            if (corner || point.Y < b.Bounds.Y + Math.Max(64, 22 / factor))
+            if (corner || over)
             {
                 ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
                 if (ImGui.IsMouseClicked(ImGuiMouseButton.Left))
@@ -221,7 +223,10 @@ public sealed partial class BlueprintMod
                     bool followsTitle = b.VehicleName == null;
                     if (ImGui.Checkbox("Use title-block title", ref followsTitle))
                     {
-                        b = b with { VehicleName = followsTitle ? null : specVehicleName.ToString() };
+                        b = b with
+                        {
+                            VehicleName = followsTitle ? null : specVehicleName.ToString()
+                        };
                         specVehicleName.SetValue(SpecMetrics.VehicleName(data, b, drawingName).AsSpan());
                     }
                     if (followsTitle)
@@ -231,7 +236,10 @@ public sealed partial class BlueprintMod
                     bool renamed = ImGui.InputText("Vehicle name", specVehicleName);
                     specVehicleName.EvaluateLength();
                     if (renamed)
-                        b = b with { VehicleName = specVehicleName.ToString() };
+                        b = b with
+                        {
+                            VehicleName = specVehicleName.ToString()
+                        };
                     ImGui.EndDisabled();
                     PrintUiText.Wrapped(followsTitle
                         ? "Follows the drawing title; uses the captured craft name when the title is blank."
@@ -364,7 +372,7 @@ public sealed partial class BlueprintMod
                     {
                         Border = border
                     };
-                if (ImGui.Checkbox("Paper background", ref fill))
+                if (!Options.FreeLayout && ImGui.Checkbox("Paper background", ref fill))
                     b = b with
                     {
                         Fill = fill

@@ -78,7 +78,7 @@ static class CompositionRegeneration
         var captions = after.Captions.Select(c => before.Captions.FirstOrDefault(old => old.ViewId == c.ViewId && old.Text == c.Text) is { } old
             ? ViewCaption.Resize(c, after.Views.Single(v => v.Id == c.ViewId), old.FontSize) : c).ToArray();
         var details = previous.Details.Select(d => d with { Bounds = ExplodedPainting.ClampFrame(MapBox(d.Bounds), fresh.Options), Camera = reuseDetailPixels ? d.Camera : null }).ToArray();
-        if (repaging)
+        if (repaging && !fresh.Options.FreeLayout)
         {
             var occupied = after.Views.Select(v => DrawingPlacements.Footprint(v, fresh.Options.Captions)).Append(PageLayout.TitleBounds(fresh.Options)).ToList();
             Box Place(Box box, Func<Box, bool>? content = null)
@@ -158,11 +158,11 @@ static class CompositionRegeneration
             var bounds = AnnotationText.Bounds(changed);
             return changed with
             {
-                X = Math.Clamp(changed.X, 0, fresh.PixelWidth - bounds.Width),
-                Y = Math.Clamp(changed.Y, 0, fresh.PixelHeight - bounds.Height)
+                X = fresh.Options.FreeLayout ? changed.X : Math.Clamp(changed.X, 0, fresh.PixelWidth - bounds.Width),
+                Y = fresh.Options.FreeLayout ? changed.Y : Math.Clamp(changed.Y, 0, fresh.PixelHeight - bounds.Height)
             };
         }).ToArray();
-        if (repaging && after.FreeText.Length > 0)
+        if (repaging && !fresh.Options.FreeLayout && after.FreeText.Length > 0)
         {
             var placedText = new List<FreeTextBox>();
             var clearScene = after.WithFreeText([]);

@@ -6,6 +6,20 @@ namespace Blueprint;
 
 public sealed partial class BlueprintMod
 {
+    static void BeginDirectDimension()
+    {
+        if (document == null)
+            return;
+        var views = document.Scene.Views.Where(HeightDimensions.Eligible).ToArray();
+        if (views.Length == 0)
+        {
+            status = "Add a front, side or isometric view for a height dimension.";
+            return;
+        }
+        int id = views.FirstOrDefault(v => v.Id == selectedCanvasView)?.Id ?? views[Math.Clamp(heightViewIndex, 0, views.Length - 1)].Id;
+        BeginHeight(new(id));
+    }
+
     static int selectedHeight = -1;
     static int heightViewIndex, heightGap = 90, heightControlsView = -1;
     static HeightDimension? heightControlsValue;
@@ -122,7 +136,7 @@ public sealed partial class BlueprintMod
             draw.AddLine(Screen(mark.X, mark.TextBounds.Bottom + 10), Screen(mark.X, mark.Bottom), color, 1.5f);
             draw.AddLine(Screen(mark.X - 22, mark.Top), Screen(mark.X + 22, mark.Top), color, 1.5f);
             draw.AddLine(Screen(mark.X - 22, mark.Bottom), Screen(mark.X + 22, mark.Bottom), color, 1.5f);
-            draw.AddText(ImGui.GetFont(), HeightDimensions.Font * factor, Screen(mark.TextBounds.X, mark.TextBounds.Y), color, mark.Text);
+            draw.AddRect(Screen(mark.TextBounds.X - 3, mark.TextBounds.Y - 3), Screen(mark.TextBounds.Right + 3, mark.TextBounds.Bottom + 3), color);
         }
         if (scene.Dimensions.FirstOrDefault(d => d.ViewId == selectedHeight) is { } selected)
             DrawMark(HeightDimensions.Place(scene, selected), 0xFF88D8FF);
@@ -135,7 +149,9 @@ public sealed partial class BlueprintMod
             }
             var proposed = HeightDimensions.Move(scene, dragging, point.X + heightGrabOffset);
             var mark = HeightDimensions.Place(scene, proposed);
-            bool clear = !scene.Specs.Any(b => b.Bounds.Overlaps(mark.Bounds)) && !scene.Details.Any(d => d.Definition.Bounds.Overlaps(mark.Bounds)) && !PrintTables.Panels(scene, document.Labels).Any(t => t.Bounds.Overlaps(mark.Bounds));
+            proposed = HeightDimensions.Move(scene, proposed, mark.X + CanvasMotion.Limit(mark.Bounds, Vec.Zero, Options.Page).X);
+            mark = HeightDimensions.Place(scene, proposed);
+            bool clear = scene.Options.FreeLayout || !scene.Specs.Any(b => b.Bounds.Overlaps(mark.Bounds)) && !scene.Details.Any(d => d.Definition.Bounds.Overlaps(mark.Bounds)) && !PrintTables.Panels(scene, document.Labels).Any(t => t.Bounds.Overlaps(mark.Bounds));
             DrawMark(mark, clear ? 0xFF8EDD8E : 0xFF7777FF);
             ImGui.SetMouseCursor(ImGuiMouseCursor.ResizeEW);
             if (!ImGui.IsMouseDown(ImGuiMouseButton.Left))
@@ -154,7 +170,7 @@ public sealed partial class BlueprintMod
         }
         if (!hovered || ControlsLocked || partMenuOpen)
             return false;
-        var hit = scene.Dimensions.LastOrDefault(d => HeightDimensions.Hit(HeightDimensions.Place(scene, d), point, 7 / factor));
+        var hit = scene.Dimensions.FirstOrDefault(d => canvasTarget?.Id == d.ViewId);
         if (hit == null)
             return false;
         var current = HeightDimensions.Place(scene, hit);

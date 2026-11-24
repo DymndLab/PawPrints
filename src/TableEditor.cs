@@ -49,6 +49,31 @@ public sealed partial class BlueprintMod
         draw.AddLine(corner - new float2(7, 0), corner - new float2(0, 7), 0xFF88D8FF, 2);
     }
 
+    static void DeleteTable(int id)
+    {
+        if (!CanEditAnnotations || sheet == null || document == null || id is < 0 or > 1)
+            return;
+        var current = sheet with
+        {
+            Scene = document.Scene,
+            Labels = document.Labels,
+            Details = document.Details
+        };
+        var options = id == 0 ? current.Options with
+        {
+            PartsTable = false
+        } : current.Options with
+        {
+            FlagTable = false
+        };
+        var main = sheet.PoseMain ?? basePrint ?? sheet;
+        composingLabels = renderKeepsDocument = renderAppliesSettings = true;
+        renderAdoptsHistory = false;
+        progress = "Removing table";
+        StartRender(token => PreviewUpdates.Render(current, main, options, token));
+        selectedTable = -1;
+    }
+
     static void QueueTables(TableLayout tables)
     {
         if (busy || sheet == null || document == null)
@@ -88,8 +113,10 @@ public sealed partial class BlueprintMod
             box = resizeTable ? FrameLayout.Resize(box, Options, 280, 100) : FrameLayout.Clamp(box, Options, 280, 100);
             float minimum = PrintTables.Height(sheet.Scene, document.Labels, dragTable, box.Width, 14);
             box = resizeTable ? FrameLayout.Resize(box, Options, 280, minimum) : FrameLayout.Clamp(box, Options, 280, minimum);
-            box = FrameLayout.Clear(box, PanelNeighbors(-1 - dragTable), FrameLayout.Area(Options), resizeTable, 280, 100, snapPanels ? FrameLayout.Gap : 0,
+            box = ClearPanelPlacement(box, PanelNeighbors(-1 - dragTable), FrameLayout.Area(Options), resizeTable, 280, 100, snapPanels ? FrameLayout.Gap : 0,
                 b => PrintTables.Font(sheet.Scene, document.Labels, dragTable, b) > 0, boundary: PageLayout.TitleBounds(Options)) ?? tableStart;
+            if (!resizeTable)
+                box = CanvasMotion.KeepOnPage(box, Options);
             Outline(box, 0xFF8EDD8E);
             PanelGrip(box, factor, origin);
             if (!ImGui.IsMouseDown(ImGuiMouseButton.Left))
@@ -111,9 +138,9 @@ public sealed partial class BlueprintMod
                 Outline(panel.Bounds, 0xFF88D8FF);
                 PanelGrip(panel.Bounds, factor, origin);
             }
-            if (!hovered || !over && !corner)
+            if (!hovered || canvasTarget?.Id != panel.Id || !over && !corner)
                 continue;
-            bool header = point.Y < panel.Bounds.Y + Math.Max(56, 22 / factor);
+            bool header = over;
             if (header || corner)
             {
                 ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);

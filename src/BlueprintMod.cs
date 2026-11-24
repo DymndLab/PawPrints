@@ -62,7 +62,7 @@ public sealed partial class BlueprintMod
     static string progress = "";
     static string? exportFolder;
     static bool busy => renderTask != null || saveTask != null || logoTask != null || exportFolderTask != null;
-    static PrintOptions Options => new(view, theme, grid, archivalWear > 0, emphasis switch { 1 => 5, 2 => 10, _ => 0 }, layout, visibleViews, captions, partsTable, flagTable, drawingSize, pageOrientation, pageAspect, brand, TitleData, arrangement, boxLayout, drawingPlacement, zones, customWidth, customHeight, archivalWear, outputTarget == 0 ? DrawingOutput.DesktopBackground : DrawingOutput.Image);
+    static PrintOptions Options => new(view, theme, grid, archivalWear > 0, emphasis switch { 1 => 5, 2 => 10, _ => 0 }, layout, visibleViews, captions, partsTable, flagTable, drawingSize, pageOrientation, pageAspect, brand, TitleData, arrangement, boxLayout, drawingPlacement, zones, customWidth, customHeight, archivalWear, outputTarget == 0 ? DrawingOutput.DesktopBackground : DrawingOutput.Image, FreeLayout: true);
 
 
 
@@ -296,6 +296,7 @@ public sealed partial class BlueprintMod
                 preview?.Dispose();
                 preview = replacement;
                 replacement = null;
+                ReportCanvasClipping(sheet, result);
                 sheet = result;
                 if (result.PoseMain != null && result.Options.Boxes != null)
                     boxLayout = result.Options.Boxes;
@@ -337,8 +338,13 @@ public sealed partial class BlueprintMod
                 detailCommitQueued = false;
                 renderAdoptsHistory = false;
                 status = result.Notice ?? $"Preview ready - {result.Options.OutputPage.Width} x {result.Options.OutputPage.Height} PNG. Hover over a part and drag out a label.";
-                if (creatingBlank) setupStage = SetupStage.Editing;
-                if (captureForView) { captureForView = false; BeginViewDraft(null, captureViewCamera); }
+                if (creatingBlank)
+                    setupStage = SetupStage.Editing;
+                if (captureForView)
+                {
+                    captureForView = false;
+                    BeginViewDraft(null, captureViewCamera);
+                }
                 PrintDiagnostics.Record("preview.ready");
                 Console.WriteLine("[PawPrints] Preview ready: " + sheet.Title);
             }
@@ -361,7 +367,8 @@ public sealed partial class BlueprintMod
                 creatingBlank = false;
                 captureForView = false;
                 replacement?.Dispose();
-                if (job != null) renderJobs.Finish(job);
+                if (job != null)
+                    renderJobs.Finish(job);
                 cancellation = null;
                 renderPolicy = null;
                 renderAppliesSettings = false;
@@ -468,8 +475,16 @@ public sealed partial class BlueprintMod
             {
                 if (shown)
                 {
-                    if (sheet == null && setupStage == SetupStage.Editing) setupStage = SetupStage.Choose;
-                    if (setupStage != SetupStage.Editing) { DrawDrawingSetup(editor); return; }
+                    if (sheet == null && setupStage == SetupStage.Editing)
+                        setupStage = SetupStage.Choose;
+                    if (setupStage != SetupStage.Editing)
+                    {
+                        DrawDrawingSetup(editor);
+                        return;
+                    }
+                    if (!ImGui.IsWindowFocused(ImGuiFocusedFlags.RootAndChildWindows) &&
+                        (choosingProjectionSource || ghostPress != null || groupDrag != null || dragView != null || dragText != null || dragSpec != null || dragKitten != null || dragHeight != null || dragLabel != null || dragDetail != null || dragTable >= 0))
+                        CancelPlacement();
                     DrawWorkspaceHeader(editor);
                     ImGui.Separator();
                     annotationKeysActive = !ShowingTemplates && ImGui.IsWindowFocused(ImGuiFocusedFlags.RootAndChildWindows) && !ImGui.GetIO().WantTextInput;
@@ -508,6 +523,7 @@ public sealed partial class BlueprintMod
                     DrawFlagnoteDialog();
                     DrawDetailScopeDialog();
                     DrawPoseDialog();
+                    DrawPrimaryDeletion();
                     DrawViewSizeDialog();
                     DrawSpecDialog();
                     DrawTextDialog();

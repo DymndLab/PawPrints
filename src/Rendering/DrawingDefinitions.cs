@@ -69,11 +69,11 @@ static class DrawingDefinitions
         var roots = drawing.Views.ToDictionary(v => v.Id, Root);
         foreach (var members in drawing.Views.GroupBy(v => roots[v.Id]))
             if (members.Count() > 1)
-                groups.Add(new(members.Key, members.Key, members.Select(v => v.Id).ToImmutableArray(), drawing.Ratio));
+                groups.Add(new(members.Key, members.Key, members.Select(v => v.Id).ToImmutableArray(), ProjectionGroups.Ratio(drawing, members.Key)));
         foreach (var view in drawing.Views)
         {
             var bounds = document.Scene.Views.FirstOrDefault(v => v.Id == view.Id)?.Bounds ?? new Box(view.X, view.Y, 0, 0);
-            views.Add(new(view.Id, view.Camera, bounds, drawing.Ratio, view.Parent,
+            views.Add(new(view.Id, view.Camera, bounds, ProjectionGroups.Ratio(drawing, view.Id), view.Parent,
                 groups.Any(g => g.Id == roots[view.Id]) ? roots[view.Id] : null, Axes: view.Axes));
         }
         foreach (var detail in content.Details)
@@ -94,7 +94,7 @@ static class DrawingDefinitions
         return new(document.Id, new(options.OutputTarget, options.OutputPage.Width, options.OutputPage.Height, options.Page.Width, options.Page.Height),
             new(options.Theme, options.Grid, options.Emphasis, options.Archive ? options.WearLevel : 0,
                 options.Zones, true, options.TitleBlock is { } title ? title with { Logo = null } : null, asset),
-            new(views.ToImmutableArray(), groups.ToImmutableArray(), layers.ToImmutableArray()),
+            new(views.ToImmutableArray(), groups.ToImmutableArray(), CanvasObjects.All(document.Scene, content.Labels).ToImmutableArray()),
             sheet.PoseSource?.Assembly.Topology?.Binding, content.Labels.ToImmutableArray(),
             content.FreeText.ToImmutableArray(), content.Dimensions.ToImmutableArray(),
             content.Specs.ToImmutableArray(), content.Poses.ToImmutableArray(),

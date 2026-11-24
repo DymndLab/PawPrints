@@ -163,6 +163,7 @@ static class KittenReferences
     public static KittenReference Clamp(RenderScene scene, KittenReference reference)
     {
         var b = Bounds(scene, reference);
+        if (scene.Options.FreeLayout) { CanvasBounds.Require(b); return reference; }
         var a = FrameLayout.Area(scene.Options);
         if (b.Width > a.Width || b.Height > a.Height)
             throw new InvalidOperationException("The scale reference does not fit at this drawing scale. Reduce View scale first.");
@@ -186,8 +187,9 @@ static class KittenReferences
             return;
         foreach (var kitten in scene.Kittens)
         {
+            canvas.HitTarget = new(DrawingObjectKind.ScaleReference, kitten.Id);
             var model = Model(scene, kitten);
-            if (!PageLayout.Fits(Bounds(scene, kitten), scene.Options))
+            if (!(scene.Options.FreeLayout ? CanvasBounds.Safe(Bounds(scene, kitten)) : PageLayout.Fits(Bounds(scene, kitten), scene.Options)))
                 throw new InvalidOperationException("Keep the scale reference inside the sheet and clear of the title block.");
             var p = Project(model, kitten.View, Scale(scene, kitten), Axes(scene, kitten));
             int pixelWidth = (int)p.Width, pixelHeight = (int)p.Height;

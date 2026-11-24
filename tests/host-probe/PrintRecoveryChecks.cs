@@ -30,6 +30,20 @@ static class PrintRecoveryChecks
             var doc = Activator.CreateInstance(Type("AnnotationDocument"), new object?[] { scene, null })!;
             Set("sheet", sheet);
             Set("document", doc);
+            var setup = modType.GetField("setupStage", flags)!.FieldType;
+            Set("setupStage", Enum.Parse(setup, "Editing"));
+            Call("RequestNewDrawing");
+            check((bool)Get("newDrawingDialog")! && Get("setupStage")!.ToString() == "Editing"
+                && ReferenceEquals(Get("sheet"), sheet) && ReferenceEquals(Get("document"), doc),
+                "New drawing asks first without clearing or leaving the accepted drawing");
+            Set("newDrawingDialog", false);
+            check(Get("setupStage")!.ToString() == "Editing" && ReferenceEquals(Get("document"), doc),
+                "Canceling New drawing retains the current editor and document");
+            Call("ConfirmNewDrawing");
+            check(!(bool)Get("newDrawingDialog")! && Get("setupStage")!.ToString() == "Choose"
+                && ReferenceEquals(Get("sheet"), sheet) && ReferenceEquals(Get("document"), doc),
+                "Confirming New drawing opens setup while keeping the previous drawing recoverable");
+
             var changed = Copy(accepted, ("Theme", 3), ("Orientation", 2), ("Drawing", null),
                 ("TitleBlock", Copy(accepted.GetType().GetProperty("TitleBlock")!.GetValue(accepted)!, ("Title", "Pending title"))));
             Call("AdoptPrintSettings", changed);
@@ -64,7 +78,8 @@ static class PrintRecoveryChecks
         }
         finally
         {
-            for (int i = 0; i < fields.Length; i++) fields[i].SetValue(null, saved[i]);
+            for (int i = 0; i < fields.Length; i++)
+                fields[i].SetValue(null, saved[i]);
         }
     }
 }

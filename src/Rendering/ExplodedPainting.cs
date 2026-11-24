@@ -9,7 +9,7 @@ static class ExplodedPainting
 
     public static Box ClampFrame(Box b, PrintOptions options)
     {
-        return FrameLayout.Clamp(b, options, 200, 180);
+        return FrameLayout.Clamp(b, options, options.FreeLayout ? 64 : 200, 180);
     }
 
 
@@ -17,6 +17,7 @@ static class ExplodedPainting
     {
         if (details.Length > Limit)
             throw new InvalidOperationException($"Up to {Limit} exploded details per sheet.");
+        long remainingPixels = 16_777_216 - (original.MainInk?.Sum(t => (long)t.Width * t.Height) ?? 0);
         var source = original.DetailSource ?? throw new InvalidOperationException("Refresh the craft to capture its assembly hierarchy.");
         var baseline = original.Scene!;
         int w = original.PixelWidth, h = original.PixelHeight;
@@ -26,20 +27,23 @@ static class ExplodedPainting
         var meshOwners = (int[])baseline.MeshOwners!.Clone();
         var viewOwners = Enumerable.Repeat(-1, w * h).ToArray();
         foreach (var view in baseline.Views)
-            for (int y = (int)view.Bounds.Y; y < view.Bounds.Bottom; y++)
-                for (int x = (int)view.Bounds.X; x < view.Bounds.Right; x++)
-                    viewOwners[y * w + x] = view.Id;
+            for (int y = Math.Max(0, (int)view.Bounds.Y); y < Math.Min(h, view.Bounds.Bottom); y++)
+                for (int x = Math.Max(0, (int)view.Bounds.X); x < Math.Min(w, view.Bounds.Right); x++)
+                    viewOwners[y * w + x] = baseline.PixelViews?[y * w + x] ?? view.Id;
         var nodes = source.Assembly.Nodes;
         var partIds = nodes.Select((n, i) => (n.Id, Part: baseline.Parts.Length + i)).ToDictionary(p => p.Id, p => p.Part);
         var parts = baseline.Parts.Concat(nodes.Select(n => new LabelPart(partIds[n.Id], n.Name, n.TemplateId, [], true, n.Id))).ToArray();
         var rendered = new List<RenderedDetail>();
+        var fullVisuals = new Dictionary<(int View, int Part), PartVisual>();
         var views = baseline.Views.ToList();
         var reserved = baseline.Reserved.Where(b => !baseline.Captions.Any(c => c.Bounds == b)).ToList();
         foreach (var detail in details)
         {
             token.ThrowIfCancellationRequested();
-            if (detail.Bounds != ClampFrame(detail.Bounds, original.Options) || !PageLayout.Fits(detail.Bounds, original.Options))
-                throw new InvalidOperationException("Keep the detail frame inside the drawing area.");
+            CanvasBounds.Require(detail.Bounds);
+            if (detail.Bounds.Width < (original.Options.FreeLayout ? 64 : 200) || detail.Bounds.Height < 180 ||
+                (double)(detail.Bounds.Width - 24) * (detail.Bounds.Height - CaptionSpace) > (long)w * h)
+                throw new InvalidOperationException("Exploded view exceeds the render tile size budget.");
             // Movement reuses the exact tile; geometry edits/resize rerender only this detail.
             var poses = baseline.Poses;
             bool samePose = displayed.Scene != null && !displayed.Scene.detailsCacheInvalid && displayed.Scene.Poses.SequenceEqual(poses);
@@ -56,17 +60,25 @@ static class ExplodedPainting
                 ? prior with
                 {
                     Definition = detail
-                } : ExplodedGeometry.Render(original.PoseSource is { } poseSource ? new ExplodedSource(PartPoses.Apply(poseSource, poses, detail.ViewId), source.Maps) : source, detail, token, original.Options);
-            var box = detail.Bounds;
+                } : ExplodedGeometry.Render(original.PoseSource is { } poseSource ? new ExplodedSource(PartPoses.Apply(poseSource, poses, detail.ViewId), source.Maps) : source, detail, token, original.Options, original.Options.FreeLayout ? remainingPixels : long.MaxValue);
+            if (original.Options.FreeLayout)
+            {
+                remainingPixels -= (long)tile.Pixels.Width * tile.Pixels.Height;
+                if (remainingPixels < 0)
+                    throw new InvalidOperationException("View layers exceed the retained-pixel memory budget (16,777,216 pixels). Reduce view sizes.");
+            }
+            var box = tile.Definition.Bounds;
             int left = (int)box.X + 12, top = (int)box.Y + 12;
-            int inkLeft = tile.Pixels.Width, inkRight = -1, inkBottom = -1;
+            int inkLeft = tile.Pixels.Width, inkTop = tile.Pixels.Height, inkRight = -1, inkBottom = -1;
             // Only ink is composited. Empty pixels preserve lower views and picking.
             for (int y = 0; y < tile.Pixels.Height; y++)
                 for (int x = 0; x < tile.Pixels.Width; x++)
                 {
                     int q = y * tile.Pixels.Width + x;
-                    if (tile.Pixels.MeshOwners[q] < 0 && tile.Pixels.Ink[q] == 0) continue;
+                    if (tile.Pixels.MeshOwners[q] < 0 && tile.Pixels.Ink[q] == 0)
+                        continue;
                     inkLeft = Math.Min(inkLeft, x);
+                    inkTop = Math.Min(inkTop, y);
                     inkRight = Math.Max(inkRight, x);
                     inkBottom = Math.Max(inkBottom, y);
                 }
@@ -76,35 +88,44 @@ static class ExplodedPainting
                     int q = y * tile.Pixels.Width + x, index = (top + y) * w + left + x;
                     canvas.Ink(left + x, top + y, tile.Pixels.Ink[q] / 255f);
                     int mesh = tile.Pixels.MeshOwners[q];
-                    if (mesh < 0 || tile.Pixels.Ink[q] == 0)
+                    if (mesh < 0 || tile.Pixels.Ink[q] == 0 || left + x < 0 || top + y < 0 || left + x >= w || top + y >= h)
                         continue;
                     inkLeft = Math.Min(inkLeft, x);
+                    inkTop = Math.Min(inkTop, y);
                     inkRight = Math.Max(inkRight, x);
                     inkBottom = Math.Max(inkBottom, y);
                     viewOwners[index] = detail.ViewId;
                     owners[index] = partIds[tile.Groups[mesh]];
                     meshOwners[index] = tile.Meshes[mesh];
                 }
+            if (original.Options.FreeLayout)
+                foreach (var pair in ViewAnchors.Measure(tile.Pixels, tile.Groups.Select(g => partIds[g]).ToArray(), new(left, top, tile.Pixels.Width, tile.Pixels.Height), token))
+                    fullVisuals[(detail.ViewId, pair.Key)] = pair.Value;
             views.Add(new(detail.ViewId, SheetLayout.ViewName(detail.ViewId), new(left, top, tile.Pixels.Width, tile.Pixels.Height), tile.Frame));
             string heading = SheetLayout.ViewName(detail.ViewId);
             string caption = AnnotationText.Clean(detail.Caption, 60);
             int longest = Math.Max(heading.Length, caption.Length);
-            int font = Math.Min(40, Math.Max(12, (int)((box.Width - 32) / Math.Max(1, longest * .62f))));
+            int font = original.Options.FreeLayout ? 32 : Math.Min(40, Math.Max(12, (int)((box.Width - 32) / Math.Max(1, longest * .62f))));
             float center = inkLeft <= inkRight ? left + (inkLeft + inkRight) * .5f : box.Center.X;
             string scale = "SCALE " + PrintScale.Ratio(tile.Frame, original.Options);
             float textWidth = Math.Max(longest * NativeText.MonoWidth(font), scale.Length * NativeText.MonoWidth(15));
-            center = Math.Clamp(center, box.X + 8 + textWidth / 2, Math.Max(box.X + 8 + textWidth / 2, box.Right - 8 - textWidth / 2));
             int captionY = top + Math.Max(0, inkBottom) + 18;
             canvas.Text(heading, (int)(center - heading.Length * NativeText.MonoWidth(font) / 2), captionY, font, 1);
             canvas.Text(caption, (int)(center - caption.Length * NativeText.MonoWidth(font) / 2), captionY + font + 4, font, 1);
             canvas.Text(scale, (int)(center - scale.Length * NativeText.MonoWidth(15) / 2), captionY + 2 * font + 8, 15, 1);
             var captionBounds = new Box(center - textWidth / 2, captionY, textWidth, 2 * font + 27);
             reserved.Add(captionBounds);
-            rendered.Add(tile with { CaptionBounds = captionBounds, CaptionFont = font });
+            rendered.Add(tile with
+            {
+                CaptionBounds = captionBounds,
+                CaptionFont = font,
+                GeometryBounds = inkRight < inkLeft ? new(left, top, 0, 0) : new(left + inkLeft, top + inkTop, inkRight - inkLeft + 1, inkBottom - inkTop + 1)
+            });
         }
         NativeText.Apply(canvas.Pixels, w, h, canvas.Runs);
         var scene = new RenderScene(canvas.Pixels, owners, parts, views.ToArray(), reserved.ToArray(), original.Options, viewOwners)
         {
+            PickingInk = baseline.PickingInk,
             MeshOwners = meshOwners,
             MeshNodes = source.Assembly.MeshNodes,
             Details = rendered.ToArray(),
@@ -116,6 +137,8 @@ static class ExplodedPainting
         scene = scene.WithKittens(displayed.Scene?.Kittens ?? [], displayed.Scene?.KittenModel);
         scene = scene.WithPoses(baseline.Poses).WithPerformance(baseline.Performance).WithSpecs(displayed.Scene?.Specs ?? []).WithDrawing(baseline.Drawing);
         // A frame may cover the main drawing, but must not destroy its label anchors.
+        foreach (var pair in fullVisuals)
+            scene.Visible[pair.Key] = pair.Value;
         foreach (var item in baseline.Visible)
             scene.Visible[item.Key] = item.Value;
         var adjusted = labels.Where(l => l.ViewId < 1000 || scene.Visible.ContainsKey((l.ViewId, l.PartId))).Select(label =>
@@ -136,8 +159,8 @@ static class ExplodedPainting
             var textBox = AnnotationText.Bounds(label);
             var changed = label with
             {
-                X = Math.Clamp(label.X + shift.X, 0, w - textBox.Width),
-                Y = Math.Clamp(label.Y + shift.Y, 0, h - textBox.Height)
+                X = original.Options.FreeLayout ? label.X + shift.X : Math.Clamp(label.X + shift.X, 0, w - textBox.Width),
+                Y = original.Options.FreeLayout ? label.Y + shift.Y : Math.Clamp(label.Y + shift.Y, 0, h - textBox.Height)
             };
             if (changed.Attachment is { } anchor && displayed.Scene!.Visible.TryGetValue((label.ViewId, label.PartId), out var before) && scene.Visible.TryGetValue((label.ViewId, label.PartId), out var after))
             {
