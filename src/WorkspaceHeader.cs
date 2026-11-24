@@ -38,17 +38,20 @@ public sealed partial class BlueprintMod
         ImGui.BeginDisabled(sheet == null || !PrintIsCurrent);
         if (PrintUiStyle.PrimaryButton("Save PNG"))
             Save();
+        PrintUiStyle.ShowUnavailableCursor(ControlsLocked || sheet == null || !PrintIsCurrent);
         ImGui.EndDisabled();
         ImGui.EndDisabled();
         Next("New drawing...");
         ImGui.BeginDisabled(ControlsLocked);
         if (ImGui.Button("New drawing..."))
             RequestNewDrawing();
+        PrintUiStyle.ShowUnavailableCursor(ControlsLocked);
         ImGui.EndDisabled();
         Next(actions[2]);
         ImGui.BeginDisabled(ControlsLocked || exportFolder == null);
         if (PrintUiStyle.YellowButton("View exported drawings"))
             OpenExportFolder();
+        PrintUiStyle.ShowUnavailableCursor(ControlsLocked || exportFolder == null);
         if (ImGui.IsItemHovered())
             PrintUiText.Tooltip("Open the folder containing your exported PNG drawings.");
         ImGui.EndDisabled();

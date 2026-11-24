@@ -5,6 +5,8 @@ sealed record AssemblyPose(Vector3 Origin, Vector3 X, Vector3 Y, Vector3 Z);
 sealed record AssemblyNode(uint Id, uint? Parent, string Name, string TemplateId, bool Subpart, AssemblyPose? Pose = null);
 sealed record AssemblyCapture(Capture Geometry, AssemblyNode[] Nodes, uint[] MeshNodes, bool[] Internal)
 {
+    public IReadOnlyDictionary<uint, ExplodedMount>? PosedMounts { get; init; }
+    public IReadOnlyDictionary<uint, ExplodedMount>? Mounts => PosedMounts ?? Topology?.Mounts;
     public SourceTopology? Topology
     {
         get; init;
@@ -21,6 +23,7 @@ sealed record ExplodedDetail(int Id, uint Scope, Box Bounds, string Caption, int
 }
 sealed record DetailGeometry(Capture Capture, int[] OriginalMeshes, uint[] GroupNodes, Vector3[] OriginalCenters, Vector3[] MovedCenters)
 {
+    public Dictionary<uint, (Vector3 Start, Vector3 End)> MountGuides { get; init; } = [];
     public uint Anchor
     {
         get; init;
@@ -28,6 +31,7 @@ sealed record DetailGeometry(Capture Capture, int[] OriginalMeshes, uint[] Group
 }
 sealed record RenderedDetail(ExplodedDetail Definition, ProjectionFrame Frame, int[] Meshes, uint[] Groups, ViewPixels Pixels)
 {
+    public IReadOnlyDictionary<uint, ExplodedMount>? Mounts { get; init; }
     public int CaptionFont
     {
         get; init;
@@ -237,6 +241,7 @@ static class ExplodedGeometry
     {
         if (group == AnchorGroup(source, detail))
             return Vector3.Zero;
+        if (source.Mounts?.GetValueOrDefault(group) is { } mount) return mount.Normal;
         var scope = AssemblyGraph.Included(source, detail);
         var center = Center(source.Geometry.Meshes.Where((_, i) => scope.Contains(source.MeshNodes[i]) && AssemblyGraph.GroupFor(source, detail, source.MeshNodes[i]) == group && (detail.IncludeInternal || !source.Internal[i])).SelectMany(m => m.Vertices).Select(World));
         return Direction(RootPose(source, detail), detail, group, center);
@@ -294,6 +299,29 @@ static class ExplodedGeometry
     }
 
 
+    public static Dictionary<uint, Vector3> DragAxes(RenderedDetail view, AssemblyCapture source, uint group, bool single, bool slide)
+    {
+        var mounted = view.Mounts?.GetValueOrDefault(group);
+        if (mounted == null)
+            return slide ? [] : new() { [group] = GroupDirection(source, view.Definition, group) };
+        var visible = view.Groups.ToHashSet();
+        var members = single ? [group] : source.Topology?.RadialSymmetry.GetValueOrDefault(group) ?? [group];
+        var axes = new Dictionary<uint, Vector3>();
+        foreach (uint id in members.Append(group).Distinct())
+        {
+            if (id == view.Anchor || !visible.Contains(id) || view.Mounts?.GetValueOrDefault(id) is not { } m ||
+                m.Host != mounted.Host || m.Interior != mounted.Interior) continue;
+            var axis = slide ? m.Slide : m.Normal;
+            if (axis.LengthSquared() > .5f) axes.Add(id, axis);
+        }
+        return axes;
+    }
+
+
+    public static float DragDistance(IReadOnlyDictionary<uint, Vector3> axes, uint grabbed, ProjectionFrame frame, Vector2 fromPress) =>
+        axes.TryGetValue(grabbed, out var axis) ? Vector3.Dot(DragOffset(frame, axis, fromPress), axis) : 0;
+
+
     public static Vector3 DragOffset(ProjectionFrame frame, Vector3 direction, Vector2 delta)
     {
         var projected = new Vector2(Vector3.Dot(direction, frame.Right), -Vector3.Dot(direction, frame.Up));
@@ -319,23 +347,44 @@ static class ExplodedGeometry
         uint anchor = AnchorGroup(source, detail);
         var originalCenters = new List<Vector3>();
         var movedCenters = new List<Vector3>();
-        for (int g = 0; g < grouped.Length; g++)
+        var groupsById = grouped.ToDictionary(g => g.Key);
+        var centers = grouped.ToDictionary(g => g.Key,
+            g => Center(g.SelectMany(i => source.Geometry.Meshes[i].Vertices).Select(World)));
+        var settings = (detail.Groups ?? []).ToDictionary(g => g.Node);
+        var shifts = new Dictionary<uint, Vector3>();
+        var guides = new Dictionary<uint, (Vector3 Start, Vector3 End)>();
+        var computing = new HashSet<uint>();
+        Vector3 Shift(uint id)
         {
-            var group = grouped[g];
-            var setting = (detail.Groups ?? []).FirstOrDefault(s => s.Node == group.Key);
-            if (setting?.Hidden == true)
-                continue;
-            var pts = group.SelectMany(i => source.Geometry.Meshes[i].Vertices).Select(World).ToArray();
-            var groupCenter = (pts.Aggregate(new Vector3(float.PositiveInfinity), Vector3.Min) + pts.Aggregate(new Vector3(float.NegativeInfinity), Vector3.Max)) * .5f;
-            Vector3 delta = Vector3.Zero;
-            if (group.Key != detail.Scope && group.Key != anchor)
+            if (id == detail.Scope || id == anchor || !groupsById.ContainsKey(id)) return Vector3.Zero;
+            if (shifts.TryGetValue(id, out var known)) return known;
+            if (!computing.Add(id)) return Vector3.Zero;
+            var offset = settings.GetValueOrDefault(id)?.Offset ?? Vector3.Zero;
+            Vector3 shift;
+            if (source.Mounts?.GetValueOrDefault(id) is { } mount)
             {
-                var direction = Direction(root, detail, group.Key, groupCenter);
-                // Successive attached parts need distinct distances. Equal
-                // shifts leave parent and child apparently joined. Depth is
-                // measured in actual groups, never authored mesh nesting.
-                delta = direction * (size * .28f * detail.Separation * Math.Max(1, AssemblyGraph.Depth(source, detail, group.Key)) + Vector3.Dot(setting?.Offset ?? Vector3.Zero, direction));
+                var hostShift = Shift(mount.Host);
+                float distance = size * (mount.Interior ? .19f : .14f) * detail.Separation;
+                shift = hostShift + mount.Normal * (distance + Vector3.Dot(offset, mount.Normal))
+                    + mount.Slide * Vector3.Dot(offset, mount.Slide);
+                guides[id] = (mount.Point + hostShift, mount.Point + shift);
             }
+            else
+            {
+                var direction = Direction(root, detail, id, centers[id]);
+                shift = direction * (size * .28f * detail.Separation * Math.Max(1, AssemblyGraph.Depth(source, detail, id))
+                    + Vector3.Dot(offset, direction));
+            }
+            computing.Remove(id);
+            shifts[id] = shift;
+            return shift;
+        }
+
+        foreach (var group in grouped)
+        {
+            if (settings.GetValueOrDefault(group.Key)?.Hidden == true) continue;
+            var groupCenter = centers[group.Key];
+            var delta = Shift(group.Key);
             foreach (int i in group)
             {
                 var m = source.Geometry.Meshes[i];
@@ -355,7 +404,8 @@ static class ExplodedGeometry
             throw new InvalidOperationException("Keep at least one detail group visible.");
         return new(new(meshes.ToArray()), indices.ToArray(), nodes.ToArray(), originalCenters.ToArray(), movedCenters.ToArray())
         {
-            Anchor = anchor
+            Anchor = anchor,
+            MountGuides = guides
         };
     }
 
@@ -431,13 +481,16 @@ static class ExplodedGeometry
         {
             Vector2 Project(Vector3 p) => new(w * .5f + Vector3.Dot(p - frame.Center, frame.Right) * frame.Scale, h * .5f - Vector3.Dot(p - frame.Center, frame.Up) * frame.Scale);
             var paths = Enumerable.Range(0, geometry.GroupNodes.Length).DistinctBy(i => geometry.GroupNodes[i])
-                .Select(i => (Project(geometry.OriginalCenters[i]), Project(geometry.MovedCenters[i])));
+                .Select(i => geometry.MountGuides.TryGetValue(geometry.GroupNodes[i], out var mount)
+                    ? (Project(mount.Start), Project(mount.End))
+                    : (Project(geometry.OriginalCenters[i]), Project(geometry.MovedCenters[i])));
             pixels = AssemblyGuidePainting.Paint(pixels, paths, detail.GuideLine, token);
         }
 
         return new(detail, frame, geometry.OriginalMeshes, geometry.GroupNodes, pixels)
         {
             Anchor = geometry.Anchor,
+            Mounts = source.Assembly.Mounts,
             Sizing = effectiveSizing
         };
     }

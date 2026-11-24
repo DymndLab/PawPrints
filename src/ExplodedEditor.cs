@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Blueprint.Rendering;
 using Brutal.ImGuiApi;
+using Brutal.GlfwApi;
 using Brutal.Numerics;
 using Vec = System.Numerics.Vector2;
 using V3 = System.Numerics.Vector3;
@@ -14,7 +15,9 @@ public sealed partial class BlueprintMod
     static int selectedDetail = -1, detailCaptionMenuId = -1;
     static ExplodedDetail? pendingDetail, dragDetail, detailEdit;
     static uint? dragGroup, selectedGroup;
-    static V3 dragAxis;
+    static readonly Dictionary<(bool Single, bool Slide), Dictionary<uint, V3>> groupDragModes = [];
+    static Dictionary<int, uint> groupDragParts = [];
+    static (bool Single, bool Slide)? groupDragMode;
     static bool resizeDetail;
     static Vec detailPress, detailOffset;
     static readonly ImInputString detailCaption = new(256);
@@ -54,6 +57,9 @@ public sealed partial class BlueprintMod
         pendingDetail = null;
         dragDetail = null;
         dragGroup = null;
+        groupDragModes.Clear();
+        groupDragMode = null;
+        groupDragParts.Clear();
         detailScopeOpen = false;
         ClearScope();
         dragTable = -1;
@@ -261,7 +267,8 @@ public sealed partial class BlueprintMod
                 uint id = selectedGroup.Value;
                 var setting = (detailEdit.Groups ?? []).FirstOrDefault(g => g.Node == id) ?? new(id, V3.Zero);
                 bool anchored = id == (sheet?.Scene?.Details.FirstOrDefault(d => d.Definition.Id == detailEdit.Id)?.Anchor ?? detailEdit.Scope);
-                ImGui.BeginDisabled(anchored);
+                bool mounted = source.Mounts?.ContainsKey(id) == true;
+                ImGui.BeginDisabled(anchored || mounted);
                 int groupAxis = setting.Axis;
                 string[] groupAxes = ["Use separation axis", "Root X axis", "Root Y axis", "Root Z axis"];
                 ImGui.Text("Group movement axis");
@@ -276,6 +283,8 @@ public sealed partial class BlueprintMod
                         Camera = null
                     });
                 ImGui.EndDisabled();
+                if (mounted)
+                    PrintUiText.Wrapped("Movement follows the attachment. Shift moves one part. Alt slides surface mounts along their host.");
                 if (anchored)
                     PrintUiText.Wrapped(id == detailEdit.Scope ? "Assembly root stays fixed." : "Central body stays fixed as the base of this assembly.");
                 bool hidden = setting.Hidden;
@@ -401,37 +410,60 @@ public sealed partial class BlueprintMod
             }
             if (dragGroup is { } group)
             {
-                var delta = point - detailPress;
                 var item = sheet!.Scene!.Details.First(d => d.Definition.Id == dragging.Id);
                 var dragFrame = item.Sizing?.Spread is > 0 ? item.Frame with
                 {
                     Scale = item.Sizing.Spread.Value
                 } : item.Frame;
-                var offset = ExplodedGeometry.DragOffset(dragFrame, dragAxis, delta);
-                var screenDelta = new Vec(V3.Dot(offset, dragFrame.Right), -V3.Dot(offset, dragFrame.Up)) * dragFrame.Scale;
-                int groupPart = basePrint!.Scene!.Parts.Length + Array.FindIndex(basePrint.DetailSource!.Assembly.Nodes, n => n.Id == group);
-                foreach (var visual in sheet.Scene.Visible.Where(v => v.Key.View == dragging.ViewId && v.Key.Part == groupPart))
+                var keys = ImGui.GetIO();
+                var window = KSA.Program.GetWindow();
+                bool Down(GlfwKey key) => window.GetKey(key) == GlfwKeyAction.Press;
+                bool single = keys.KeyShift || Down(GlfwKey.LeftShift) || Down(GlfwKey.RightShift);
+                bool slide = keys.KeyAlt || Down(GlfwKey.LeftAlt) || Down(GlfwKey.RightAlt);
+                bool held = ImGui.IsMouseDown(ImGuiMouseButton.Left);
+                (bool Single, bool Slide) mode = !held && groupDragMode is { } last ? last : (single, slide);
+                if (!groupDragModes.TryGetValue(mode, out var axes))
+                {
+                    axes = ExplodedGeometry.DragAxes(item, basePrint!.DetailSource!.Assembly, group, mode.Single, mode.Slide);
+                    groupDragModes[mode] = axes;
+                }
+                if (groupDragMode != mode)
+                {
+                    groupDragMode = mode;
+                    status = axes.TryGetValue(group, out var axis) && Project(axis).LengthSquared() >= .01f
+                        ? mode.Slide ? mode.Single ? "Sliding one part" : "Sliding linked parts"
+                            : mode.Single ? "Moving one part" : "Moving along attachment axes"
+                        : mode.Slide ? "This part has no usable slide direction in this view."
+                            : "This movement axis points into the page. Switch views or hold Alt to try sliding.";
+                }
+                float distance = ExplodedGeometry.DragDistance(axes, group, dragFrame, point - detailPress);
+                Vec Project(V3 v) => new(V3.Dot(v, dragFrame.Right), -V3.Dot(v, dragFrame.Up));
+                foreach (var visual in sheet.Scene.Visible.Where(v => v.Key.View == dragging.ViewId))
+                {
+                    if (!groupDragParts.TryGetValue(visual.Key.Part, out var id) ||
+                        !axes.TryGetValue(id, out var direction)) continue;
+                    var screenDelta = Project(direction) * (distance * dragFrame.Scale);
                     Outline(visual.Value.Bounds with
                     {
                         X = visual.Value.Bounds.X + screenDelta.X,
                         Y = visual.Value.Bounds.Y + screenDelta.Y
                     }, 0xFF8EDD8E);
-                if (!ImGui.IsMouseDown(ImGuiMouseButton.Left))
+                }
+                if (!held)
                 {
-                    if (delta.Length() * factor < 2)
+                    if (Math.Abs(distance) * dragFrame.Scale * factor < 2)
                     {
                         CancelDetailGesture();
                         return true;
                     }
-                    var setting = (dragging.Groups ?? []).FirstOrDefault(g => g.Node == group) ?? new(group, V3.Zero);
+                    var settings = (dragging.Groups ?? []).ToDictionary(g => g.Node);
+                    foreach (var (id, direction) in axes)
+                    {
+                        var setting = settings.GetValueOrDefault(id) ?? new(id, V3.Zero);
+                        settings[id] = setting with { Offset = setting.Offset + direction * distance };
+                    }
                     CancelDetailGesture();
-                    QueueDetail(WithGroup(dragging, setting with
-                    {
-                        Offset = setting.Offset + offset
-                    }) with
-                    {
-                        Camera = item.Frame
-                    });
+                    QueueDetail(dragging with { Groups = settings.Values.ToArray(), Camera = item.Frame });
                 }
             }
             else
@@ -508,16 +540,16 @@ public sealed partial class BlueprintMod
             finally { ImGui.EndPopup(); }
             return true;
         }
-        if (hit != null && hovered && !ControlsLocked)
-        {
-            bool grip = Vec.Distance(point, new(hit.Bounds.Right, hit.Bounds.Bottom)) * factor < 18;
-            ImGui.SetMouseCursor(grip ? ImGuiMouseCursor.ResizeNWSE : ImGuiMouseCursor.ResizeAll);
-        }
-        if (hit == null || !hovered || !ImGui.IsMouseClicked(ImGuiMouseButton.Left))
+        if (hit == null || !hovered || ControlsLocked)
             return false;
-        bool corner = Vec.Distance(point, new(hit.Bounds.Right, hit.Bounds.Bottom)) * factor < 18, header = sheet!.Scene!.Details.First(d => d.Definition.Id == hit.Id).CaptionBounds.Contains(point);
-        if (corner || header || placeKind != 2 && !pickingPartTool)
+        var scene = sheet!.Scene!;
+        var renderedDetail = scene.Details.First(d => d.Definition.Id == hit.Id);
+        bool corner = Vec.Distance(point, new(hit.Bounds.Right, hit.Bounds.Bottom)) * factor < 18;
+        bool header = renderedDetail.CaptionBounds.Contains(point);
+        if (corner || header)
         {
+            ImGui.SetMouseCursor(corner ? ImGuiMouseCursor.ResizeNWSE : ImGuiMouseCursor.ResizeAll);
+            if (!ImGui.IsMouseClicked(ImGuiMouseButton.Left)) return false;
             SelectDetail(hit.Id);
             dragDetail = hit;
             resizeDetail = corner;
@@ -525,29 +557,30 @@ public sealed partial class BlueprintMod
             detailOffset = point - new Vec(hit.Bounds.X, hit.Bounds.Y);
             return true;
         }
-        if (placeKind == 2 && sheet!.Scene!.PickNode(point) is { } node)
+
+        // Placement tools and the part context menu still get their normal input.
+        if (pickingPartTool || scene.PickSurface(hit.ViewId, point) is not { } picked ||
+            scene.Parts.FirstOrDefault(p => p.Id == picked.Part)?.NodeId is not { } groupId)
+            return false;
+        bool anchored = groupId == (renderedDetail.Anchor ?? hit.Scope);
+        ImGui.SetMouseCursor(anchored ? ImGuiMouseCursor.NotAllowed : ImGuiMouseCursor.ResizeAll);
+        if (!ImGui.IsMouseClicked(ImGuiMouseButton.Left)) return false;
+
+        SelectDetail(hit.Id);
+        selectedGroup = groupId;
+        if (anchored)
         {
-            SelectDetail(hit.Id);
-            var source = basePrint!.DetailSource!.Assembly;
-            selectedGroup = AssemblyGraph.GroupFor(source, hit, node);
-            if (selectedGroup == ExplodedGeometry.AnchorGroup(source, hit))
-            {
-                ReportFailure("Assembly base stays fixed. Select another group to move it.");
-                return true;
-            }
-            dragAxis = ExplodedGeometry.GroupDirection(source, hit, selectedGroup.Value);
-            var frame = sheet.Scene.Details.First(d => d.Definition.Id == hit.Id).Frame;
-            if (MathF.Pow(V3.Dot(dragAxis, frame.Right), 2) + MathF.Pow(V3.Dot(dragAxis, frame.Up), 2) < .01f)
-            {
-                ReportFailure("This axis points into the page. Change the detail view to move this group.");
-                return true;
-            }
-            dragDetail = hit;
-            dragGroup = selectedGroup;
-            resizeDetail = false;
-            detailPress = point;
+            status = "The assembly base stays fixed. Drag the caption to move the whole view.";
             return true;
         }
-        return false;
+        groupDragModes.Clear();
+        groupDragMode = null;
+        groupDragParts = scene.Parts.Where(p => p.DetailOnly && p.NodeId.HasValue)
+            .ToDictionary(p => p.Id, p => p.NodeId!.Value);
+        dragDetail = hit;
+        dragGroup = groupId;
+        resizeDetail = false;
+        detailPress = point;
+        return true;
     }
 }

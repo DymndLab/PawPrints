@@ -1,6 +1,8 @@
 using Blueprint.Rendering;
 using KSA;
 using System.Runtime.CompilerServices;
+using Brutal.Numerics;
+using Vec = System.Numerics.Vector3;
 
 namespace Blueprint;
 
@@ -49,6 +51,8 @@ static class CraftIdentityCapture
         var pending = new Stack<Part>(roots);
         var nodes = new List<SourcePart>();
         var links = new List<SourceLink>();
+        var mounts = new Dictionary<uint, ExplodedMount>();
+        var symmetry = new Dictionary<uint, uint[]>();
         var connections = new HashSet<Part.Connection>(ReferenceEqualityComparer.Instance);
         while (pending.TryPop(out var part))
         {
@@ -61,6 +65,19 @@ static class CraftIdentityCapture
                 pending.Push(owner);
                 links.Add(new(SourceLinkKind.Ownership, JointKey.Between(
                     new(owner.InstanceId, ""), new(part.InstanceId, "")), interior));
+            }
+            if (part.SymmetryLink is { } linked)
+            {
+                foreach (var layer in linked.Symmetries)
+                {
+                    var members = layer.Parts.Distinct().ToArray();
+                    if (members.Any(p => ReferenceEquals(p, part)))
+                    {
+                        if (members.Length >= 2)
+                            symmetry[part.InstanceId] = members.Select(p => p.InstanceId).ToArray();
+                        break;
+                    }
+                }
             }
             foreach (var child in part.SubParts) pending.Push(child);
             foreach (var connection in part.Connections)
@@ -83,6 +100,8 @@ static class CraftIdentityCapture
                     var p = connector.PositionVehicleAsmb;
                     return new((float)p.Y, (float)p.Z, (float)p.X);
                 }
+                RecordMount(a, b);
+                RecordMount(b, a);
                 var pa = Position(a);
                 var pb = Position(b);
                 links.Add(new(SourceLinkKind.Structural, JointKey.Between(Endpoint(a), Endpoint(b)),
@@ -92,6 +111,29 @@ static class CraftIdentityCapture
         }
         foreach (var link in fuel)
             links.Add(new(SourceLinkKind.Fuel, JointKey.Between(new(link.PartA.InstanceId, ""), new(link.PartB.InstanceId, ""))));
-        return new(binding, nodes, links);
+        return new(binding, nodes, links) { Mounts = mounts, RadialSymmetry = symmetry };
+
+        static Vec World(double3 point) => new((float)point.Y, (float)point.Z, (float)point.X);
+
+        void RecordMount(Part.Connection.IConnector endpoint, Part.Connection.IConnector other)
+        {
+            if (endpoint is not Part.Connector connector) return;
+            bool surface = (connector.Flags & Part.Connector.Flag.ToSurface) != 0;
+            bool interior = (connector.Flags & Part.Connector.Flag.Internal) != 0;
+            if (!surface && !interior) return;
+            var mounted = surface ? connector.Parent : other.ConnectionPart;
+            var host = surface ? other.ConnectionPart : connector.Parent;
+            if (mounted.TreeParent != host) return;
+            var normal = World(double3.UnitX.Transform(connector.Asmb2VehicleAsmb)) * (surface ? -1 : 1);
+            var longitudinal = World(double3.UnitX.Transform(host.Asmb2VehicleAsmb));
+            if (!float.IsFinite(normal.LengthSquared()) || normal.LengthSquared() < .5f) return;
+            normal = Vec.Normalize(normal);
+            // Internal axial joints include the main engine mount.
+            if (interior && Math.Abs(Vec.Dot(longitudinal, normal)) > .5f) return;
+            var slide = longitudinal - normal * Vec.Dot(longitudinal, normal);
+            if (slide.LengthSquared() > 1e-6f) slide = Vec.Normalize(slide);
+            else slide = Vec.Zero;
+            mounts.TryAdd(mounted.InstanceId, new(host.InstanceId, World(connector.PositionVehicleAsmb), normal, slide, interior));
+        }
     }
 }

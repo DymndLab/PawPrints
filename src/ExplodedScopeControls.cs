@@ -184,10 +184,12 @@ public sealed partial class BlueprintMod
         ImGui.SameLine();
         ImGui.BeginDisabled(scopeUndo.Count == 0);
         if (ImGui.Button("Undo"u8)) UndoScope(false);
+        PrintUiStyle.ShowUnavailableCursor(scopeUndo.Count == 0);
         ImGui.EndDisabled();
         ImGui.SameLine();
         ImGui.BeginDisabled(scopeRedo.Count == 0);
         if (ImGui.Button("Redo"u8)) UndoScope(true);
+        PrintUiStyle.ShowUnavailableCursor(scopeRedo.Count == 0);
         ImGui.EndDisabled();
         ImGui.SameLine();
         ImGui.BeginDisabled(scopePreview == null);
@@ -202,6 +204,7 @@ public sealed partial class BlueprintMod
             ImGui.EndDisabled();
             return;
         }
+        PrintUiStyle.ShowUnavailableCursor(scopePreview == null);
         ImGui.EndDisabled();
 
         draft = scopeDraft!;
@@ -215,6 +218,7 @@ public sealed partial class BlueprintMod
             ChangeScope(draft with { Selection = new(draft.Scope, [], []), Camera = null });
             draft = scopeDraft!;
         }
+        PrintUiStyle.ShowUnavailableCursor(!canIncludeAll);
         ImGui.EndDisabled();
 
         if (scopeTask?.IsCompleted == true && scopePreview == null)

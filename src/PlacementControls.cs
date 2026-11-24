@@ -18,8 +18,10 @@ public sealed partial class BlueprintMod
         bool ready = canSwitchTool && sheet?.PoseSource != null;
         bool Button(string label, bool available = true, bool active = false, bool captureRequired = true)
         {
-            ImGui.BeginDisabled(!(captureRequired ? ready : canSwitchTool) || !available);
+            bool disabled = !(captureRequired ? ready : canSwitchTool) || !available;
+            ImGui.BeginDisabled(disabled);
             bool clicked = active ? PrintUiStyle.YellowButton(label, new float2(-1, 0)) : ImGui.Button(label, new float2(-1, 0));
+            PrintUiStyle.ShowUnavailableCursor(disabled);
             ImGui.EndDisabled();
             if (clicked && placingText) CancelTextPlacement();
             return clicked;

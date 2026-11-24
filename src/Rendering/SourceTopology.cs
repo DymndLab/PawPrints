@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Numerics;
 
 namespace Blueprint.Rendering;
 
@@ -13,12 +14,15 @@ readonly record struct JointKey(JointEndpoint A, JointEndpoint B)
         a.Part < b.Part || a.Part == b.Part && string.CompareOrdinal(a.Connector, b.Connector) <= 0
             ? new(a, b) : new(b, a);
 }
+sealed record ExplodedMount(uint Host, Vector3 Point, Vector3 Normal, Vector3 Slide, bool Interior);
 sealed record SourceLink(SourceLinkKind Kind, JointKey Key, bool Internal = false, System.Numerics.Vector3? Position = null, bool EndJoint = false);
 
 // IDs are authoritative only within Session. Native serialized LocalInstanceId
 // values are traversal numbers, not restart-safe identity. Never match by name.
 sealed class SourceTopology
 {
+    public IReadOnlyDictionary<uint, ExplodedMount> Mounts { get; init; } = new Dictionary<uint, ExplodedMount>();
+    public IReadOnlyDictionary<uint, uint[]> RadialSymmetry { get; init; } = new Dictionary<uint, uint[]>();
     public SourceBinding Binding { get; }
     public ImmutableArray<SourcePart> Parts { get; }
     public ImmutableArray<SourceLink> Links { get; }

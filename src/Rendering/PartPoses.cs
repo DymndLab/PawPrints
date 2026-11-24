@@ -78,7 +78,18 @@ static class PartPoses
         return a with
         {
             Geometry = new(meshes),
-            Nodes = nodes
+            Nodes = nodes,
+            PosedMounts = a.Mounts?.ToDictionary(p => p.Key, p =>
+            {
+                var mount = p.Value;
+                if (!transforms.TryGetValue(mount.Host, out var matrix)) return mount;
+                return mount with
+                {
+                    Point = Vector3.Transform(mount.Point, matrix),
+                    Normal = Vector3.Normalize(Vector3.TransformNormal(mount.Normal, matrix)),
+                    Slide = mount.Slide == Vector3.Zero ? Vector3.Zero : Vector3.Normalize(Vector3.TransformNormal(mount.Slide, matrix))
+                };
+            })
         };
     }
 

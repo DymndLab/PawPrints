@@ -85,6 +85,12 @@ static class PrintUiStyle
     }
 
 
+    public static void ShowUnavailableCursor(bool disabled)
+    {
+        if (disabled && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetMouseCursor(ImGuiMouseCursor.NotAllowed);
+    }
+
     public static void Help(string text)
     {
         if (!ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))

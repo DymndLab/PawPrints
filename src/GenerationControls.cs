@@ -30,6 +30,7 @@ public sealed partial class BlueprintMod
         ImGui.BeginDisabled(reason != null);
         if (PrintUiStyle.YellowButton("Generate PawPrint##" + id))
             TryGenerate(editor);
+        PrintUiStyle.ShowUnavailableCursor(reason != null);
         ImGui.EndDisabled();
         PrintUiStyle.Help(reason ?? "Capture the craft and apply print settings. Existing notes and detail frames are kept.");
     }

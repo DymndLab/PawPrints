@@ -44,7 +44,8 @@ static class DetailPartSizing
         {
             Capture = new(meshes),
             OriginalCenters = geometry.OriginalCenters.Select(MoveCenter).ToArray(),
-            MovedCenters = geometry.MovedCenters.Select(MoveCenter).ToArray()
+            MovedCenters = geometry.MovedCenters.Select(MoveCenter).ToArray(),
+            MountGuides = geometry.MountGuides.ToDictionary(g => g.Key, g => (MoveCenter(g.Value.Start), MoveCenter(g.Value.End)))
         }, frame,
             new(sizing.Ratio, spread, center, size.Width, size.Height));
     }
@@ -103,7 +104,8 @@ static class DetailPartSizing
         {
             Capture = new(meshes),
             OriginalCenters = geometry.OriginalCenters.Select(MoveCenter).ToArray(),
-            MovedCenters = geometry.MovedCenters.Select(MoveCenter).ToArray()
+            MovedCenters = geometry.MovedCenters.Select(MoveCenter).ToArray(),
+            MountGuides = geometry.MountGuides.ToDictionary(g => g.Key, g => (MoveCenter(g.Value.Start), MoveCenter(g.Value.End)))
         },
             new(width, height, scale, center, axes.Right, axes.Up, axes.Toward), new(sizing.Ratio, spread, center, width, height));
     }

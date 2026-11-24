@@ -190,6 +190,46 @@ static class ExplodedChecks
         var parentShift = separated.MovedCenters[parentIndex] - separated.OriginalCenters[parentIndex];
         var childShift = separated.MovedCenters[childIndex] - separated.OriginalCenters[childIndex];
         check(AssemblyGraph.Depth(attached, detail, 2) == 1 && AssemblyGraph.Depth(attached, detail, 3) == 2 && Vector3.Distance(childShift, parentShift) > 1, "Successive actual parts receive distinct axis distances instead of translating together while still joined");
+        var mounts = new Dictionary<uint, ExplodedMount>
+        {
+            [3] = new(2, new(1, 2, 0), Vector3.UnitX, Vector3.UnitY, false),
+            [4] = new(2, new(-1, 2, 0), -Vector3.UnitX, Vector3.UnitY, false)
+        };
+        var radial = attached with
+        {
+            Topology = new(new(Guid.NewGuid(), 1), nodes.Select(n => new SourcePart(n.Id, n.TemplateId, null, false)), [])
+            {
+                Mounts = mounts,
+                RadialSymmetry = new Dictionary<uint, uint[]> { [3] = [3, 4] }
+            }
+        };
+        var mounted = ExplodedGeometry.Build(radial, detail with { Groups = [new(3, new(.5f, .35f, 20))] });
+        var guide = mounted.MountGuides[3];
+        check(guide.Start == mounts[3].Point + parentShift && guide.End.X > guide.Start.X &&
+            Math.Abs(guide.End.Y - guide.Start.Y - .35f) < .0001f && guide.End.Z == guide.Start.Z,
+            "Mounted guide starts on the displaced host and separates along its normal plus the tangent offset");
+        var tile = new RenderedDetail(detail, new(1, 1, 1, Vector3.Zero, Vector3.UnitX, Vector3.UnitY, Vector3.UnitZ),
+            [], [1, 3, 4], new(1, 1, [0], [-1])) { Anchor = 1, Mounts = mounts };
+        check(ExplodedGeometry.DragAxes(tile, radial, 3, false, false).OrderBy(a => a.Key).Select(a => a.Value)
+            .SequenceEqual(new[] { Vector3.UnitX, -Vector3.UnitX }), "Symmetry members drag along their own outward normals");
+        check(ExplodedGeometry.DragAxes(tile, radial, 3, false, true).Values.All(a => a == Vector3.UnitY) &&
+            ExplodedGeometry.DragAxes(tile, radial, 3, true, true).Keys.SequenceEqual(new[] { 3u }),
+            "Alt uses the host tangent and Shift isolates the grabbed member");
+        check(ExplodedGeometry.DragAxes(tile with { Groups = [1, 3] }, radial, 3, false, false).Keys.SequenceEqual(new[] { 3u }),
+            "Omitted symmetry members do not receive drag offsets");
+        var outwardAxes = ExplodedGeometry.DragAxes(tile, radial, 3, false, false);
+        var slideAxes = ExplodedGeometry.DragAxes(tile, radial, 3, false, true);
+        var fromPress = new Vector2(5, -4);
+        var outward = outwardAxes[3] * ExplodedGeometry.DragDistance(outwardAxes, 3, tile.Frame, fromPress);
+        var slide = slideAxes[3] * ExplodedGeometry.DragDistance(slideAxes, 3, tile.Frame, fromPress);
+        check(outward == new Vector3(5, 0, 0) && slide == new Vector3(0, 4, 0),
+            "Alt reprojects the same click-to-pointer delta onto slide without retaining the outward preview");
+        var soloSlide = ExplodedGeometry.DragAxes(tile, radial, 3, true, true);
+        check(soloSlide.Count == 1 && soloSlide[3] * ExplodedGeometry.DragDistance(soloSlide, 3, tile.Frame, fromPress) == slide,
+            "Shift during a slide keeps the original click anchor and excludes the other symmetry members");
+        var interiorMounts = mounts.ToDictionary(p => p.Key, p => p.Value with { Interior = true });
+        check(ExplodedGeometry.DragAxes(tile with { Mounts = interiorMounts }, radial, 3, false, true).Count == 2,
+            "Perpendicular cargo-bay mounts can also slide along the bay tangent");
         CheckRootedScope(check);
         check(AssemblyGraph.PartAncestors(assembly, 3).SequenceEqual(new uint[] { 2, 1 }), "Scope picker walks actual craft parts, omitting authored model components");
         check(AssemblyGraph.Ancestors(assembly, 3).SequenceEqual(new uint[] { 3, 2, 1 }), "Detail scope walks authored subpart and attached ancestor chain to root");
