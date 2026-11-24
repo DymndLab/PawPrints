@@ -183,6 +183,7 @@ public sealed partial class BlueprintMod
         };
         preview = new(sheet);
         document = new(scene);
+        RememberAcceptedDocument();
         sourceEditor = editor;
         sourceCraft = editor.EditingSpace.Id;
         status = "Load a craft, then place its primary view.";
@@ -240,14 +241,11 @@ public sealed partial class BlueprintMod
         }
         var poses = current.Scene!.Poses;
         var obstacles = document.Details.Select(d => d.Bounds).Concat(PrintTables.Panels(document.Scene, current.Labels).Select(t => t.Bounds)).Concat(document.Scene.Specs.Select(b => b.Bounds)).ToArray();
-        cancellation?.Dispose();
-        cancellation = new();
-        var token = cancellation.Token;
         renderKeepsDocument = true;
         renderAdoptsHistory = undo;
         composingLabels = true;
         progress = "Composing drawing views";
-        renderTask = Task.Run(() =>
+        StartRender(token =>
         {
             var fresh = PosePainting.RenderMain(source, current.Title, options, current.Warnings, poses, token, composeAnnotations: false);
             DrawingPlacements.Validate(fresh.Scene!.Views, options);
@@ -260,7 +258,7 @@ public sealed partial class BlueprintMod
                 PoseMain = fresh,
                 Notice = "Drawing updated. Project from any view, or place an independent view. Ctrl+Z undoes this change."
             };
-        }, token);
+        });
     }
 
 

@@ -246,7 +246,10 @@ static class CraftCapture
                 textures.Remove(key);
             warnings.Add("Internal detail geometry omitted: " + e.Message);
         }
-        var assembly = new AssemblyCapture(new(meshes.ToArray()), nodes.Values.ToArray(), identities.Select(p => p.InstanceId).ToArray(), Enumerable.Range(0, meshes.Count).Select(i => i >= exteriorCount).ToArray());
+        var assembly = new AssemblyCapture(new(meshes.ToArray()), nodes.Values.ToArray(), identities.Select(p => p.InstanceId).ToArray(), Enumerable.Range(0, meshes.Count).Select(i => i >= exteriorCount).ToArray())
+        {
+            Topology = CraftIdentityCapture.Take(tree)
+        };
         foreach (var node in assembly.Nodes)
             AssemblyGraph.Ancestors(assembly, node.Id);
         var poses = PoseCapture.Take(tree, assembly, support);

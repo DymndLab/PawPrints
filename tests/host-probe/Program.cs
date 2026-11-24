@@ -192,6 +192,8 @@ Require(after.Count(i => i.Calls(replacement)) == callCount, "Production menu tr
 PrintRecoveryChecks.Run(modType, mod, Require);
 SelectionChecks.Run(modType, Require);
 FuelHoseCaptureChecks.Run(host, mod, Require);
+CraftIdentityChecks.Run(host, mod, Require);
+RenderBoundaryChecks.Run(modType, mod, Require);
 Console.WriteLine("PASS host contracts and real-IL menu rewrite. No patches installed; native game acceptance remains separate.");
 
 bool IsExitLabel(FieldInfo field)

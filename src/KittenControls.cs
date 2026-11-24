@@ -92,13 +92,10 @@ public sealed partial class BlueprintMod
             // Resolve the asset on the game thread; only a path and detached data
             // enter the worker. No model asset is redistributed with the mod.
             string? path = kittens.Any(k => k.Kind == ScaleReferenceKind.Kitten) && scene.KittenModel == null ? ModLibrary.Get<Gltf2Reference>("KittenGlb").Source?.Value?.ModPath : null;
-            cancellation?.Dispose();
-            cancellation = new();
-            var token = cancellation.Token;
             renderKeepsDocument = true;
             composingLabels = true;
             progress = "Drawing scale references";
-            renderTask = Task.Run(() =>
+            StartRender(token =>
             {
                 token.ThrowIfCancellationRequested();
                 var model = scene.KittenModel;
@@ -113,7 +110,7 @@ public sealed partial class BlueprintMod
                 {
                     Notice = "Scale reference updated. Drag it to move; Ctrl+Z undoes the edit."
                 };
-            }, token);
+            });
         }
         catch (Exception e) { ReportFailure("Scale reference unavailable: " + e.Message); }
     }

@@ -75,20 +75,20 @@ public sealed partial class BlueprintMod
         var historyOptions = document.Scene.Options;
         var source = sheet with { Scene = document.Scene, Details = document.Details, Labels = document.Labels };
         var main = sheet.PoseMain ?? basePrint ?? sheet;
-        cancellation?.Dispose();
-        cancellation = new();
-        var token = cancellation.Token;
+        var acceptedOptions = sheet.Options;
+        bool hadDetails = sheet.Details.Length > 0;
+        var historyTables = document.Tables;
         composingLabels = true;
         renderKeepsDocument = true;
         renderAdoptsHistory = true;
         progress = "Updating print";
-        renderTask = Task.Run(() => changedPose
+        StartRender(token => changedPose
             ? PosePainting.Rebuild(source with { Options = historyOptions }, source.Scene.Poses, token, true)
-            : sheet.Options != historyOptions
+            : acceptedOptions != historyOptions
                 ? PreviewUpdates.Render(source, main, historyOptions, token)
-                : (main.DetailSource != null && (source.Details.Length > 0 || sheet.Details.Length > 0)
-                    ? ExplodedPainting.Compose(main, source, source.Details, source.Labels, token, tables: document.Tables, captions: source.Scene.Captions)
-                    : AnnotationPainting.Compose(source, source.Labels, token)) with { Notice = "Print updated." }, token);
+                : (main.DetailSource != null && (source.Details.Length > 0 || hadDetails)
+                    ? ExplodedPainting.Compose(main, source, source.Details, source.Labels, token, tables: historyTables, captions: source.Scene.Captions)
+                    : AnnotationPainting.Compose(source, source.Labels, token)) with { Notice = "Print updated." });
     }
 
     static void ApplyPrintStyle(int line, int tip)

@@ -207,15 +207,12 @@ public sealed partial class BlueprintMod
         var current = sheet;
         var labels = document.Labels;
         var tables = document.Tables;
-        cancellation?.Dispose();
-        cancellation = new();
-        var token = cancellation.Token;
         composingLabels = true;
         renderKeepsDocument = true;
         detailCommitQueued = true;
         progress = "Drawing exploded detail";
         status = progress;
-        renderTask = Task.Run(() => ExplodedPainting.Compose(original, current, details, labels, token, true, tables) with { Notice = "Exploded detail updated. Drag its caption to move; drag the lower-right corner to resize." }, token);
+        StartRender(token => ExplodedPainting.Compose(original, current, details, labels, token, true, tables) with { Notice = "Exploded detail updated. Drag its caption to move; drag the lower-right corner to resize." });
     }
 
 

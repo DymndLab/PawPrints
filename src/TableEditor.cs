@@ -55,13 +55,10 @@ public sealed partial class BlueprintMod
             return;
         var current = sheet;
         var labels = document.Labels.Select(l => l with { ManualPlacement = true }).ToArray();
-        cancellation?.Dispose();
-        cancellation = new();
-        var token = cancellation.Token;
         composingLabels = true;
         renderKeepsDocument = true;
         progress = "Laying out tables";
-        renderTask = Task.Run(() => AnnotationPainting.Compose(current, labels, token, tables) with { Notice = "Table updated. Drag its heading to move; drag the corner to resize." }, token);
+        StartRender(token => AnnotationPainting.Compose(current, labels, token, tables) with { Notice = "Table updated. Drag its heading to move; drag the corner to resize." });
     }
 
     static bool DrawTableCanvas(Vec point, float factor, float2 origin, bool hovered, bool editable)

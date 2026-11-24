@@ -54,14 +54,11 @@ public sealed partial class BlueprintMod
             Scene = document.Scene.WithFreeText(boxes)
         };
         var labels = document.Labels;
-        cancellation?.Dispose();
-        cancellation = new();
-        var token = cancellation.Token;
         composingLabels = true;
         renderKeepsDocument = true;
         renderAdoptsHistory = false;
         progress = "Updating text";
-        renderTask = Task.Run(() => AnnotationPainting.Compose(source, labels, token) with { Notice = "Text updated. Drag to move; double-click or right-click to edit." }, token);
+        StartRender(token => AnnotationPainting.Compose(source, labels, token) with { Notice = "Text updated. Drag to move; double-click or right-click to edit." });
     }
 
 

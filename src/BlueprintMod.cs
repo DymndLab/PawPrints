@@ -95,7 +95,7 @@ public sealed partial class BlueprintMod
         FlushTitlePreferences();
         enabled = false;
         open = false;
-        cancellation?.Cancel();
+        InvalidateRendering();
         CancelTextPreview();
         CancelGhost();
         DisposeGhosts();
@@ -110,6 +110,9 @@ public sealed partial class BlueprintMod
         basePrint = null;
         sourceEditor = null;
         document = null;
+        acceptedDocument = null;
+        acceptedDefinition = null;
+        renderSourceTree = null;
         CancelPlacement();
         ResetDetailEditor();
         harmony?.UnpatchAll(Owner);
@@ -130,7 +133,7 @@ public sealed partial class BlueprintMod
             PrintDiagnostics.Record("game.shutdown");
             enabled = false;
             open = false;
-            cancellation?.Cancel();
+            InvalidateRendering();
             CancelTextPreview();
             CancelGhost();
             DisposeGhosts();
@@ -140,6 +143,9 @@ public sealed partial class BlueprintMod
             basePrint = null;
             sourceEditor = null;
             document = null;
+            acceptedDocument = null;
+            acceptedDefinition = null;
+            renderSourceTree = null;
             CancelPlacement();
             ResetDetailEditor();
         }
@@ -156,13 +162,16 @@ public sealed partial class BlueprintMod
         {
             if (!ReferenceEquals(sourceEditor, __instance))
                 return;
-            cancellation?.Cancel();
+            InvalidateRendering();
             preview?.Dispose();
             preview = null;
             sheet = null;
             basePrint = null;
             sourceEditor = null;
             document = null;
+            acceptedDocument = null;
+            acceptedDefinition = null;
+            renderSourceTree = null;
             CancelPlacement();
             ResetDetailEditor();
             drawingPlacement = new(100, []);
@@ -203,11 +212,8 @@ public sealed partial class BlueprintMod
             renderKeepsDocument = !startFresh && previous != null;
             sourceEditor = editor;
             sourceCraft = capture.Name;
-            cancellation?.Dispose();
-            cancellation = new();
-            var token = cancellation.Token;
             progress = "Reading materials";
-            renderTask = Task.Run(() =>
+            StartRender(token =>
             {
                 PrintDiagnostics.Record("generate.render.begin");
                 var maps = new Dictionary<string, Texture>();
@@ -219,7 +225,7 @@ public sealed partial class BlueprintMod
                 var poseSource = new PoseSource(capture.Assembly!, capture.Poses, capture.Geometry.Meshes.Length, parts, maps, capture.Performance);
                 return PrintGeneration.Render(poseSource, capture.Geometry, capture.Name, options,
                     capture.Warnings, previous, startFresh, token);
-            }, token);
+            });
         }
         catch (Exception e) { renderAppliesSettings = false; PrintDiagnostics.Error("generate.capture", e); ReportFailure("Export unavailable: " + e.Message); Console.WriteLine("[PawPrints] " + e); }
     }
@@ -236,39 +242,34 @@ public sealed partial class BlueprintMod
         if (renderTask?.IsCompleted == true)
         {
             var completed = renderTask;
+            var job = renderJobs.Current;
             renderTask = null;
+            PreviewTexture? replacement = null;
             try
             {
-                var result = completed.GetAwaiter().GetResult();
-                if (cancellation?.IsCancellationRequested == true)
+                if (job == null || !ReferenceEquals(job.Task, completed) || !renderJobs.Matches(job, CurrentRenderRevision))
                 {
-                    status = "Preview cancelled.";
+                    _ = completed.Exception;
+                    PrintDiagnostics.Record("preview.discarded.stale");
+                    drawingNotices.Add(new("preview.stale", "Discarded an outdated render result."));
                     return;
                 }
-                var regenerated = result.RegeneratedBase;
-                result = result with
+                var result = completed.GetAwaiter().GetResult();
+                if (!renderJobs.CanAccept(job, CurrentRenderRevision))
                 {
-                    RegeneratedBase = null
-                };
-                if (result.Scene != null && result.Scene.Drawing == null)
-                {
-                    var adopted = DrawingPlacements.FromScene(result.Scene);
-                    var adoptedOptions = result.Options with
-                    {
-                        Drawing = adopted
-                    };
-                    result = result with
-                    {
-                        Options = adoptedOptions,
-                        Scene = result.Scene.WithOptions(adoptedOptions).WithDrawing(adopted)
-                    };
-                    if (regenerated != null)
-                        regenerated = regenerated with
-                        {
-                            Options = adoptedOptions,
-                            Scene = regenerated.Scene!.WithOptions(adoptedOptions).WithDrawing(adopted)
-                        };
+                    KeepAcceptedPrintEditable();
+                    status = "Preview cancelled. Your drawing is still available.";
+                    return;
                 }
+                var policy = renderPolicy ?? throw new InvalidOperationException("Render request has no commit policy.");
+                renderKeepsDocument = policy.KeepDocument;
+                renderAdoptsHistory = policy.AdoptHistory;
+                renderAppliesSettings = policy.ApplySettings;
+                var prepared = DrawingAcceptance.Prepare(result, document, renderKeepsDocument, renderAdoptsHistory);
+                result = prepared.Sheet;
+                var regenerated = prepared.RegeneratedBase;
+                // Allocate/upload before changing accepted state or disposing its preview.
+                replacement = new PreviewTexture(result);
                 if (renderAdoptsHistory)
                 {
                     AdoptPrintSettings(result.Options);
@@ -293,9 +294,9 @@ public sealed partial class BlueprintMod
                 draftRatio = drawingPlacement?.Ratio ?? 100;
                 partsTable = result.Options.PartsTable;
                 flagTable = result.Options.FlagTable;
-                var replacement = new PreviewTexture(result);
                 preview?.Dispose();
                 preview = replacement;
+                replacement = null;
                 sheet = result;
                 if (result.PoseMain != null && result.Options.Boxes != null)
                     boxLayout = result.Options.Boxes;
@@ -318,18 +319,14 @@ public sealed partial class BlueprintMod
                     beforeTemplates = null;
                     beforeDrawing = null;
                 }
-                if (regenerated != null && document != null && result.Scene != null)
-                    document.Regenerate(result.Scene, result.Labels, result.Details);
-                else if (renderKeepsDocument && document != null && result.Scene != null)
-                    document.Rebind(result.Scene, result.Labels, result.Details, !renderAdoptsHistory);
-                else if (result.Scene != null && !ReferenceEquals(document?.Scene, result.Scene))
+                document = prepared.Document;
+                acceptedDocument = document.Fork();
+                acceptedDefinition = prepared.Definition;
+                if (!renderKeepsDocument)
                 {
-                    document = new(result.Scene, result.Labels);
                     selectedLabel = -1;
                     CancelPlacement();
                 }
-                else if (document != null && !document.Labels.SequenceEqual(result.Labels) && !document.Apply(result.Labels, out var reason))
-                    throw new InvalidOperationException(reason);
                 if (renderKeepsDocument)
                 {
                     int label = selectedLabel;
@@ -360,6 +357,10 @@ public sealed partial class BlueprintMod
             }
             finally
             {
+                replacement?.Dispose();
+                if (job != null) renderJobs.Finish(job);
+                cancellation = null;
+                renderPolicy = null;
                 renderAppliesSettings = false;
                 renderAdoptsHistory = false;
             }
@@ -402,15 +403,17 @@ public sealed partial class BlueprintMod
             return;
         PrintDiagnostics.State("editor", open ? "open" : "closed");
         EnsureDrawingTitle(editor);
-        Poll();
         if (sourceEditor != null && (!ReferenceEquals(sourceEditor, editor) || sourceCraft != editor.EditingSpace.Id))
         {
-            cancellation?.Cancel();
+            InvalidateRendering();
             sheet = null;
             preview?.Dispose();
             preview = null;
             sourceEditor = null;
             document = null;
+            acceptedDocument = null;
+            acceptedDefinition = null;
+            renderSourceTree = null;
             basePrint = null;
             CancelPlacement();
             ResetDetailEditor();
@@ -420,6 +423,14 @@ public sealed partial class BlueprintMod
             printStyleDirty = false;
             status = "Craft changed. Generate a fresh preview.";
         }
+        else if (renderSourceTree != null && !ReferenceEquals(renderSourceTree, editor.EditingSpace.Parts))
+        {
+            InvalidateRendering();
+            KeepAcceptedPrintEditable();
+            renderSourceTree = editor.EditingSpace.Parts;
+            status = "Craft changed. Generate to update this drawing.";
+        }
+        Poll();
         if (!open)
         {
             viewSizeDialog = false;

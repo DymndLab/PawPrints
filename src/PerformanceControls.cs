@@ -41,14 +41,11 @@ public sealed partial class BlueprintMod
             Scene = document.Scene.WithSpecs(specs)
         };
         var labels = document.Labels.Select(l => l with { ManualPlacement = true }).ToArray();
-        cancellation?.Dispose();
-        cancellation = new();
-        var token = cancellation.Token;
         renderKeepsDocument = true;
         renderAdoptsHistory = false;
         composingLabels = true;
         progress = "Drawing performance blocks";
-        renderTask = Task.Run(() => AnnotationPainting.Compose(current, labels, token) with { Notice = "Performance updated. Drag a heading to move, corner to resize; right-click for options." }, token);
+        StartRender(token => AnnotationPainting.Compose(current, labels, token) with { Notice = "Performance updated. Drag a heading to move, corner to resize; right-click for options." });
     }
 
 

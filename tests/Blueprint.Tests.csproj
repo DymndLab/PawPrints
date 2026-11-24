@@ -19,6 +19,7 @@
     <Compile Include="../src/CaptureStats.cs" />
     <Compile Include="../src/PrintDiagnostics.cs" />
     <Compile Include="CaptureStatsChecks.cs" />
+    <Compile Include="FoundationChecks.cs" />
     <Compile Include="CurvatureChecks.cs" />
     <Compile Include="PartSupportChecks.cs" />
     <Compile Include="../src/LogoPicker.cs" />

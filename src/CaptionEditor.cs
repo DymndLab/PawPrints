@@ -15,14 +15,11 @@ public sealed partial class BlueprintMod
         var captions = scene.Captions.Select(c => c.ViewId == id ? ViewCaption.Resize(c, scene.Views.Single(v => v.Id == c.ViewId), size) : c).ToArray();
         var labels = document!.Labels.Select(l => l with { ManualPlacement = true }).ToArray();
         var tables = document.Tables;
-        cancellation?.Dispose();
-        cancellation = new();
-        var token = cancellation.Token;
         renderKeepsDocument = true;
         renderAdoptsHistory = false;
         composingLabels = true;
         progress = "Updating view caption";
-        renderTask = Task.Run(() => AnnotationPainting.Compose(current with { Scene = scene.WithCaptions(captions) }, labels, token, tables) with { Notice = "View caption updated. Ctrl+Z undoes the size change." }, token);
+        StartRender(token => AnnotationPainting.Compose(current with { Scene = scene.WithCaptions(captions) }, labels, token, tables) with { Notice = "View caption updated. Ctrl+Z undoes the size change." });
     }
 
 

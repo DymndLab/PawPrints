@@ -12,6 +12,7 @@ public sealed partial class BlueprintMod
     {
         if (busy || sheet == null || document == null)
             return;
+        RestoreAcceptedDocument();
         AdoptPrintSettings(sheet.Options);
         printStyleDirty = false;
         var label = sheet.Labels.FirstOrDefault();

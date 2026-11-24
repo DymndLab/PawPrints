@@ -12,6 +12,7 @@ public sealed partial class BlueprintMod
 
     static void ReportFailure(string message)
     {
+        drawingNotices.Add(new("operation.failed", message));
         if (message.StartsWith("Preview failed:", StringComparison.Ordinal)
             || message.StartsWith("Invalid page size:", StringComparison.Ordinal)
             || message.StartsWith("Export unavailable:", StringComparison.Ordinal))

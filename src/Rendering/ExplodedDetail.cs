@@ -3,7 +3,10 @@ namespace Blueprint.Rendering;
 
 sealed record AssemblyPose(Vector3 Origin, Vector3 X, Vector3 Y, Vector3 Z);
 sealed record AssemblyNode(uint Id, uint? Parent, string Name, string TemplateId, bool Subpart, AssemblyPose? Pose = null);
-sealed record AssemblyCapture(Capture Geometry, AssemblyNode[] Nodes, uint[] MeshNodes, bool[] Internal);
+sealed record AssemblyCapture(Capture Geometry, AssemblyNode[] Nodes, uint[] MeshNodes, bool[] Internal)
+{
+    public SourceTopology? Topology { get; init; }
+}
 sealed record ExplodedSource(AssemblyCapture Assembly, IReadOnlyDictionary<string, Texture> Maps);
 sealed record ExplodedGroup(uint Node, Vector3 Offset, bool Hidden = false, int Axis = 0);
 sealed record DetailSizing(float Ratio, float? Spread = null, Vector3? Center = null, int Width = 0, int Height = 0);

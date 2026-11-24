@@ -7,6 +7,7 @@ public sealed partial class BlueprintMod
 {
     static void CloseExport()
     {
+        cancellation?.Cancel();
         FlushTitlePreferences();
         open = false;
         viewSizeDialog = false;

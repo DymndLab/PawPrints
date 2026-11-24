@@ -25,6 +25,10 @@ Simplify placement to selecting a view and clicking to place the preview. Improv
 
 Investigate actual attachment points and placement axes for guide origins and disassembly directions. Separate assembly-guide style from annotation-leader preferences. Revisit hoses whose endpoints separate during explosion; this is lower priority than assembled hose correctness.
 
+## Sectional and cutaway views
+
+Explore a user-defined cutting plane for revealing internal craft structure, enclosed engines and other components. Let the player position and rotate the plane, including angled cuts, choose which side remains visible, and preview the result in the drawing. The cut affects only that view and leaves the craft intact. This covers internal craft geometry; IVA cabin rendering is a separate question. Validate geometry availability, section linework and memory/performance costs before committing to implementation. Future work, outside the current workflow refactor scope.
+
 ## Linework refinement
 
 Reduce residual specks around curved transitions while preserving genuine shoulders, collars, boundaries and silhouettes across different craft.

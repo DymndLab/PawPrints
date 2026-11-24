@@ -40,13 +40,10 @@ public sealed partial class BlueprintMod
         if (dimension != null)
             dimensions.Add(dimension);
         var scene = document.Scene.WithDimensions(dimensions.ToArray());
-        cancellation?.Dispose();
-        cancellation = new();
-        var token = cancellation.Token;
         renderKeepsDocument = true;
         composingLabels = true;
         progress = "Updating craft height";
-        renderTask = Task.Run(() => AnnotationPainting.Compose(current with { Scene = scene }, labels, token) with { Notice = "Height dimension updated. Ctrl+Z undoes this change." }, token);
+        StartRender(token => AnnotationPainting.Compose(current with { Scene = scene }, labels, token) with { Notice = "Height dimension updated. Ctrl+Z undoes this change." });
     }
 
 

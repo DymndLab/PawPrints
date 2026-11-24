@@ -366,6 +366,8 @@ static class LeaderRouting
 
 sealed class AnnotationDocument
 {
+    public Guid Id { get; private set; } = Guid.NewGuid();
+    public long Revision { get; private set; }
     public RenderScene Scene
     {
         get; private set;
@@ -380,11 +382,40 @@ sealed class AnnotationDocument
     public const int Limit = 120;
 
 
-    sealed record State(PartLabel[] Labels, ExplodedDetail[] Details, TableLayout Tables, ViewCaptionMark[] Captions, HeightDimension[] Dimensions, KittenReference[] Kittens, PartPose[] Poses, SpecBlock[] Specs, FreeTextBox[] FreeText, DrawingPlacement? Drawing, PrintOptions Options);
-    readonly List<State> undo = [], redo = [];
+    readonly List<DrawingContent> undo = [], redo = [];
 
 
-    State Snapshot() => new(Labels, Details, Tables, Scene.Captions, Scene.Dimensions, Scene.Kittens, Scene.Poses, Scene.Specs, Scene.FreeText, Scene.Drawing, Scene.Options);
+    public DrawingContent Snapshot() => new DrawingContent(Labels, Details, Tables, Scene.Captions, Scene.Dimensions, Scene.Kittens, Scene.Poses, Scene.Specs, Scene.FreeText, Scene.Drawing, Scene.Options).Copy();
+
+    public AnnotationDocument Fork() => new(this);
+
+    AnnotationDocument(AnnotationDocument source)
+    {
+        Id = source.Id;
+        Revision = source.Revision;
+        Scene = source.Scene;
+        Labels = source.Labels;
+        Details = source.Details;
+        Tables = source.Tables;
+        Routes = source.Routes;
+        nextId = source.nextId;
+        undo = [.. source.undo];
+        redo = [.. source.redo];
+    }
+
+    public void Restore(AnnotationDocument accepted)
+    {
+        if (Id != accepted.Id) throw new InvalidOperationException("Cannot restore a different drawing.");
+        Scene = accepted.Scene;
+        Labels = accepted.Labels;
+        Details = accepted.Details;
+        Tables = accepted.Tables;
+        Routes = accepted.Routes;
+        nextId = Math.Max(nextId, accepted.nextId);
+        undo.Clear(); undo.AddRange(accepted.undo);
+        redo.Clear(); redo.AddRange(accepted.redo);
+        Revision = checked(Revision + 1);
+    }
 
 
     void Remember()
@@ -405,6 +436,7 @@ sealed class AnnotationDocument
         Tables = scene.Tables;
         Labels = labels;
         Details = details;
+        Revision = checked(Revision + 1);
         if (labels.Length > 0)
             nextId = Math.Max(nextId, labels.Max(l => l.Id) + 1);
         RefreshRoutes();
@@ -458,6 +490,7 @@ sealed class AnnotationDocument
         Remember();
         Labels = labels;
         Routes = routes;
+        Revision = checked(Revision + 1);
         if (labels.Length > 0)
             nextId = Math.Max(nextId, labels.Max(l => l.Id) + 1);
         return true;
@@ -474,7 +507,8 @@ sealed class AnnotationDocument
         Labels = state.Labels;
         Details = state.Details;
         Tables = state.Tables;
-        Scene = Scene.WithTables(Tables).WithCaptions(state.Captions, false).WithDimensions(state.Dimensions).WithKittens(state.Kittens).WithPoses(state.Poses).WithSpecs(state.Specs).WithFreeText(state.FreeText).WithDrawing(state.Drawing).WithOptions(state.Options);
+        Scene = state.ApplyTo(Scene);
+        Revision = checked(Revision + 1);
         undo.RemoveAt(undo.Count - 1);
         if (changedPaper)
             Routes = [];
@@ -493,7 +527,8 @@ sealed class AnnotationDocument
         Labels = state.Labels;
         Details = state.Details;
         Tables = state.Tables;
-        Scene = Scene.WithTables(Tables).WithCaptions(state.Captions, false).WithDimensions(state.Dimensions).WithKittens(state.Kittens).WithPoses(state.Poses).WithSpecs(state.Specs).WithFreeText(state.FreeText).WithDrawing(state.Drawing).WithOptions(state.Options);
+        Scene = state.ApplyTo(Scene);
+        Revision = checked(Revision + 1);
         redo.RemoveAt(redo.Count - 1);
         if (changedPaper)
             Routes = [];

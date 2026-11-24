@@ -52,14 +52,11 @@ public sealed partial class BlueprintMod
             Options = options,
             Scene = scene
         };
-        cancellation?.Dispose();
-        cancellation = new();
-        var token = cancellation.Token;
         renderKeepsDocument = true;
         renderAdoptsHistory = false;
         composingLabels = true;
         progress = "Placing table";
-        renderTask = Task.Run(() => AnnotationPainting.Compose(current, labels, token) with { Notice = "Table updated. Drag its heading or resize grip. Ctrl+Z undoes this change." }, token);
+        StartRender(token => AnnotationPainting.Compose(current, labels, token) with { Notice = "Table updated. Drag its heading or resize grip. Ctrl+Z undoes this change." });
     }
 
 

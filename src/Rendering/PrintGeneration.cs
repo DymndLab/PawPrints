@@ -12,6 +12,9 @@ static class PrintGeneration
             previous = null;
             options = options with { Drawing = null, Boxes = options.Boxes?.ClearBlankFits() };
         }
+        if (previous?.PoseSource?.Assembly.Topology is { } oldSource && source.Assembly.Topology is { } newSource &&
+            oldSource.Binding.Session != newSource.Binding.Session)
+            throw new InvalidOperationException("This drawing's craft identity could not be retained. Start a new drawing to use this craft.");
         if (previous?.Scene?.Drawing != null && options.Drawing != null && previous.Options.Page != options.Page)
             options = options with { Drawing = DrawingPlacements.Repage(previous.Scene, options) };
         var poses = previous?.Scene?.Poses ?? [];

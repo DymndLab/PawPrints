@@ -24,6 +24,16 @@ PawPrints has one runtime assembly, `PawPrints.dll`, installed under `mods/PawPr
 
 The renderer's document/history operations and the editor's transient gestures have different lifetimes. Keep pending placement, accepted composition and asynchronous render results separate. A failed generation must retain the last accepted print.
 
+## Document and render boundaries
+
+`RenderJobControls.cs` routes sheet jobs through `Rendering/RenderJobs.cs`. Each request captures its document identity/revision, source epoch and commit policy. Superseded, cancelled or stale results cannot publish a preview. Source changes are checked before polling completion; closing the workspace cancels pending rendering. Workers receive detached inputs. Native capture remains synchronous on the editor thread; these job contracts do not make native capture incremental.
+
+`DrawingContent.cs` holds compact editable definitions for history, without scene rasters or captured meshes. `AnnotationDocument` advances a revision for edits and history navigation. `DrawingAcceptance.Prepare` prepares a separate document before preview upload; the accepted checkpoint restores definitions and undo/redo stacks after a failed update. Nested definition records are shared as immutable values, retaining the existing editor's equality semantics.
+
+`CraftIdentityCapture.cs` copies part identity and connections into `SourceTopology`. Real structural joints retain both part/connector endpoints, with ownership and fuel links represented separately. Surviving native Part objects retain a source session across tree replacement; newly loaded objects require rebinding even if their numeric IDs or names match. Save-local IDs are traversal identifiers, not persistent part identity. `PrintGeneration` rejects a mismatched source session while preserving the accepted drawing.
+
+`DrawingDefinitions.cs` describes output/canvas dimensions, appearance, projection groups, view scopes and layer order. The existing renderer supplies accepted definitions through an adapter. Its bounded, versioned JSON schemas are internal drafts: layout templates exclude appearance and craft bindings; drawing drafts retain them. These are not user-facing Save/Open functionality or complete migration of every legacy object. Budget/reservation and cache-ownership interfaces declare the next integration boundary; existing capture/material/page limits still enforce resource safeguards.
+
 ## Rendering code
 
 - `BlueprintRenderer.cs` and `Sheet.cs` coordinate rendering and sheet data.

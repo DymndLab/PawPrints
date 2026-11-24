@@ -35,16 +35,13 @@ public sealed partial class BlueprintMod
             return;
         var current = PendingStyle(sheet with { Scene = document.Scene, Labels = document.Labels, Details = document.Details });
         var main = sheet.PoseMain ?? basePrint ?? sheet;
-        cancellation?.Dispose();
-        cancellation = new();
-        var token = cancellation.Token;
         composingLabels = true;
         renderKeepsDocument = true;
         renderAdoptsHistory = false;
         renderAppliesSettings = true;
         progress = "Updating preview";
         PrintDiagnostics.Record("preview.live.begin");
-        renderTask = Task.Run(() => PreviewUpdates.Render(current, main, request.Options, token), token);
+        StartRender(token => PreviewUpdates.Render(current, main, request.Options, token));
     }
 
     static void AdoptPrintSettings(PrintOptions o)
