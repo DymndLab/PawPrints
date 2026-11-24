@@ -9,14 +9,13 @@ public sealed partial class BlueprintMod
 {
     static ExportPreferences? exportPreferences;
     static Task<string?>? exportFolderTask;
-    static bool exportSetupOpen, exportPrompted;
+    static bool exportSetupOpen;
     static string? exportFolderError;
 
     static void InitializeExportFolder()
     {
         exportPreferences = new(ProfileStorage.FromResolvedProfile(KSA.Constants.DocumentsFolderPath));
         exportFolder = null;
-        exportPrompted = false;
         exportSetupOpen = false;
         exportFolderError = null;
         try

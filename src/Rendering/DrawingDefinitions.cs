@@ -91,7 +91,7 @@ static class DrawingDefinitions
         var logo = options.TitleBlock?.Logo;
         var asset = logo == null ? null : assets.GetValue(logo, image =>
             new(Convert.ToHexString(SHA256.HashData(image.Rgba)), image.Width, image.Height));
-        return new(document.Id, new(DrawingOutput.Image, options.OutputPage.Width, options.OutputPage.Height, options.Page.Width, options.Page.Height),
+        return new(document.Id, new(options.OutputTarget, options.OutputPage.Width, options.OutputPage.Height, options.Page.Width, options.Page.Height),
             new(options.Theme, options.Grid, options.Emphasis, options.Archive ? options.WearLevel : 0,
                 options.Zones, true, options.TitleBlock is { } title ? title with { Logo = null } : null, asset),
             new(views.ToImmutableArray(), groups.ToImmutableArray(), layers.ToImmutableArray()),

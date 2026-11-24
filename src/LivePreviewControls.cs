@@ -46,6 +46,7 @@ public sealed partial class BlueprintMod
 
     static void AdoptPrintSettings(PrintOptions o)
     {
+        outputTarget = o.OutputTarget == DrawingOutput.DesktopBackground ? 0 : 1;
         view = o.View; theme = o.Theme; grid = o.Grid; archivalWear = o.Archive ? o.WearLevel : 0;
         emphasis = o.Emphasis >= 10 ? 2 : o.Emphasis >= 5 ? 1 : 0;
         layout = o.Layout; visibleViews = o.VisibleViews; captions = o.Captions;

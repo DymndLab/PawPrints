@@ -21,6 +21,10 @@ Refresh drawings more naturally after editing the craft, preserve references to 
 
 Simplify placement to selecting a view and clicking to place the preview. Improve hover and selection legibility and use clearer Delete labels. Add custom dimensions between two selected points as a later extension.
 
+## Tolerances
+
+Add tolerances to individual dimensions and a configurable **General Tolerances** area in the title block. Explore symmetric plus/minus, unequal upper/lower deviations and limit dimensions, with explicit units and precision. Individual tolerances override general values. Formats and defaults need design review. Future work outside the current workflow refactor.
+
 ## Exploded views
 
 Investigate actual attachment points and placement axes for guide origins and disassembly directions. Separate assembly-guide style from annotation-leader preferences. Revisit hoses whose endpoints separate during explosion; this is lower priority than assembled hose correctness.

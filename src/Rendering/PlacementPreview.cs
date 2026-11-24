@@ -40,7 +40,7 @@ static class PlacementPreviews
             }
         }
         NativeText.Apply(canvas.Pixels, w, h, canvas.Runs);
-        var ink = SheetLayout.Colors(options.Theme).Ink;
+        var ink = new Vector3(255, 221, 68);
         var rgba = new byte[w * h * 4];
         for (int i = 0; i < w * h; i++)
         {

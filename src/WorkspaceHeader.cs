@@ -43,7 +43,7 @@ public sealed partial class BlueprintMod
         Next("New drawing...");
         ImGui.BeginDisabled(ControlsLocked);
         if (ImGui.Button("New drawing..."))
-            newDrawingDialog = true;
+            setupStage = SetupStage.Choose;
         ImGui.EndDisabled();
         Next(actions[2]);
         ImGui.BeginDisabled(ControlsLocked || exportFolder == null);

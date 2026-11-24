@@ -5,7 +5,7 @@ sealed record TextSpan(string Text, bool Outline = false, float Scale = 1, int S
 sealed record TextRun(string Text, int X, int Y, int Height, Vector3 Color, bool Bold = false, bool Italic = false, bool Outline = false, string? Face = null, TextSpan[]? Spans = null, bool Underline = false);
 
 sealed record PrintOptions(int View = 0, int Theme = 0, bool Grid = true, bool Archive = false, int Emphasis = 10, int Layout = 0, int VisibleViews = 15, bool Captions = true,
-    bool PartsTable = false, bool FlagTable = false, int DrawingSize = 0, int Orientation = 0, int Aspect = 0, int Brand = 0, TitleBlockData? TitleBlock = null, int Arrangement = 0, FixedViewLayout? Boxes = null, DrawingPlacement? Drawing = null, bool Zones = true, int CustomWidth = 2560, int CustomHeight = 1440, int WearLevel = 3)
+    bool PartsTable = false, bool FlagTable = false, int DrawingSize = 0, int Orientation = 0, int Aspect = 0, int Brand = 0, TitleBlockData? TitleBlock = null, int Arrangement = 0, FixedViewLayout? Boxes = null, DrawingPlacement? Drawing = null, bool Zones = true, int CustomWidth = 2560, int CustomHeight = 1440, int WearLevel = 3, DrawingOutput OutputTarget = DrawingOutput.Image)
 {
     public PageSize Page => Orientation == 3 ? PageSize.Workspace(CustomWidth, CustomHeight) : PageSize.From(Orientation, Aspect);
     public PageSize OutputPage => Orientation == 3 ? PageSize.Custom(CustomWidth, CustomHeight) : Page;

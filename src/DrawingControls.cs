@@ -13,7 +13,6 @@ public sealed partial class BlueprintMod
     static Vec viewPress;
     static int viewMenu = -1, selectedView = -1, selectedCanvasView = -1;
     static int projectionStyle; // Third-angle default; first-angle reverses the unfolded faces.
-    static PartTree? workspaceAttempt;
     static Task<PlacementPreview>? ghostTask;
     static CancellationTokenSource? ghostCancel;
     static PlacementPreview? ghostPixels;
@@ -117,6 +116,13 @@ public sealed partial class BlueprintMod
         if (ghostPixels == null || ghostTexture?.Image is not { } image)
             return true;
         var area = ghostWholePage ? new Box(0, 0, Options.Page.Width, Options.Page.Height) : viewDraft != null ? DrawingPlacements.Area(Options) : FrameLayout.Area(Options);
+        if (viewDraft != null && !hovered) point = area.Center;
+        if (hovered && viewDraft != null && CurrentDrawing().Views.Length == 0 && ImGui.GetIO().KeyShift && ImGui.GetIO().MouseWheel != 0)
+        {
+            draftRatio = Math.Clamp(draftRatio * MathF.Pow(1.1f, -ImGui.GetIO().MouseWheel), .01f, 100000f);
+            PrepareView();
+            return true;
+        }
         var raw = new Box(point.X - ghostPixels.Width / 2f, point.Y - ghostPixels.Height / 2f, ghostPixels.Width, ghostPixels.Height);
         var box = ghostPosition?.Invoke(raw) ?? FrameLayout.Clamp(raw, Options, raw.Width, raw.Height);
         if (ghostPixels.CaptionAnchor is { } anchor)
@@ -132,20 +138,20 @@ public sealed partial class BlueprintMod
         }
         bool inside = box.X >= area.X && box.Y >= area.Y && box.Right <= area.Right && box.Bottom <= area.Bottom && (ghostWholePage || PageLayout.Fits(box, Options));
         bool valid = (ghostValid?.Invoke(box) ?? true) && inside;
-        if (hovered)
+        if (hovered || viewDraft != null)
         {
             var a = origin + new float2(box.X * factor, box.Y * factor);
             var z = origin + new float2(box.Right * factor, box.Bottom * factor);
             var draw = ImGui.GetWindowDrawList();
             draw.AddImage(image, a, z);
-            draw.AddRect(a, z, valid ? 0xFF8EDD8Eu : 0xFF7777FFu, 0, ImDrawFlags.None, 2);
+            draw.AddRect(a, z, viewDraft != null ? 0xFF44DDFFu : valid ? 0xFF8EDD8Eu : 0xFF7777FFu, 0, ImDrawFlags.None, 2);
             DrawAlignmentGuides(factor, origin);
             if (viewDraft is { } draft && (draft.RollDirection >= 0 || !DrawingPlacements.Oblique(draft.Camera)) && draft.Parent is { } parent && document?.Scene.Views.FirstOrDefault(v => v.Id == parent) is { } source)
             {
                 var c = origin + new float2(source.Bounds.Center.X * factor, source.Bounds.Center.Y * factor);
                 draw.AddLine(c, origin + new float2(box.Center.X * factor, (box.Y + (box.Height - (Options.Captions ? ViewCaption.Band : 0)) / 2) * factor), 0x889DDDFF, 1);
             }
-            if (valid && ImGui.IsMouseClicked(ImGuiMouseButton.Left))
+            if (hovered && valid && ImGui.IsMouseClicked(ImGuiMouseButton.Left))
             {
                 var commit = ghostCommit!;
                 CancelGhost();
@@ -155,38 +161,6 @@ public sealed partial class BlueprintMod
                 PrintUiText.Tooltip(!inside ? "Keep the view and caption inside the drawing area." : viewPlacementIssue);
         }
         return true;
-    }
-
-
-    static void EnsureWorkspace(VehicleEditor editor)
-    {
-        if (templatesOpen || busy || sheet?.PoseSource != null)
-            return;
-        var tree = editor.EditingSpace.Parts;
-        if (tree != null && !ReferenceEquals(workspaceAttempt, tree))
-        {
-            workspaceAttempt = tree;
-            Generate(editor);
-            return;
-        }
-        if (sheet != null)
-            return;
-        var options = Options;
-        var colors = SheetLayout.Colors(options.Theme);
-        var c = new Canvas(options.Page.Width, options.Page.Height, colors.Paper, colors.Ink, options);
-        PageLayout.Decorate(c, editor.EditingSpace.Id, options);
-        NativeText.Apply(c.Pixels, options.Page.Width, options.Page.Height, c.Runs);
-        var scene = new RenderScene(c.Pixels, Enumerable.Repeat(-1, options.Page.Width * options.Page.Height).ToArray(), [], [], options: options);
-        sheet = new(editor.EditingSpace.Id, options, c.Pixels, Sheet.MakePreview(c.Pixels), [])
-        {
-            Scene = scene
-        };
-        preview = new(sheet);
-        document = new(scene);
-        RememberAcceptedDocument();
-        sourceEditor = editor;
-        sourceCraft = editor.EditingSpace.Id;
-        status = "Load a craft, then place its primary view.";
     }
 
 
@@ -271,8 +245,17 @@ public sealed partial class BlueprintMod
     static void BeginViewDraft(int? parent, int? cameraOverride)
     {
         requestedSettingsTab = "Place";
-        if (sheet?.PoseSource == null || document == null)
+        if (document == null) return;
+        if (sheet?.PoseSource == null)
+        {
+            if (KSA.Program.Editor is { } editor && !busy)
+            {
+                captureForView = true; captureViewCamera = cameraOverride;
+                Generate(editor);
+                if (renderTask == null) captureForView = false;
+            }
             return;
+        }
         var drawing = CurrentDrawing();
         if (drawing.Views.Length >= DrawingPlacements.Limit)
         {
@@ -434,28 +417,13 @@ public sealed partial class BlueprintMod
                 ImGui.SetCursorScreenPos(start + new float2(0, 240));
                 ImGui.Dummy(new float2(1, 1));
             }
-            if (CurrentDrawing().Views.Length == 0)
-            {
-                ImGui.Text("Print scale 1 :");
-                ImGui.SetNextItemWidth(-1);
-                if (ImGui.InputFloat("##Primary scale"u8, ref draftRatio))
-                {
-                    var keep = viewDraft;
-                    CancelGhost();
-                    viewDraft = keep;
-                }
-                if (ImGui.Button("Preview scale"u8))
-                    PrepareView();
-            }
-            else
-                ImGui.Text($"Shared print scale 1:{CurrentDrawing().Ratio:0.##}");
-            PrintUiText.Wrapped("Move over the paper, then click. Green fits; red needs more room. Orthographic projections align to their source. Wheel zooms; Space pans.");
+            PrintUiText.Wrapped("Click the yellow preview to place it. Hold Shift and scroll to resize the first view. Right-click cancels.");
             if (ImGui.Button("Cancel placement"u8))
                 CancelGhost();
         }
         else
         {
-            ImGui.BeginDisabled(ControlsLocked || sheet?.PoseSource == null);
+            ImGui.BeginDisabled(ControlsLocked);
             bool empty = document?.Scene.Views.All(v => v.Id >= 1000) != false;
             if (PrintUiStyle.PrimaryButton(empty ? "Place primary view" : "Place independent view"))
                 BeginView();
@@ -564,7 +532,7 @@ public sealed partial class BlueprintMod
             var plans = Plans(moved);
             foreach (var plan in plans)
                 if (drawing.Views.Single(v => v.Id == plan.Id) != moved.Views.Single(v => v.Id == plan.Id))
-                    Outline(DrawingPlacements.Footprint(plan, Options.Captions), valid ? 0xFF8EDD8Eu : 0xFF7777FFu);
+                    Outline(DrawingPlacements.Footprint(plan, Options.Captions), viewDraft != null ? 0xFF44DDFFu : valid ? 0xFF8EDD8Eu : 0xFF7777FFu);
             if (!ImGui.IsMouseDown(ImGuiMouseButton.Left))
             {
                 dragView = null;

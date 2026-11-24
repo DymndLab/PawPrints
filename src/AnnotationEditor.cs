@@ -385,7 +385,7 @@ public sealed partial class BlueprintMod
         var mouse = ImGui.GetMousePos();
         Vec? zoomScroll = null;
         bool navigating = spaceHeld || (!ImGui.GetIO().WantTextInput && ImGui.IsKeyDown(ImGuiKey.Space));
-        if (canvasHovered && dragText == null && dragView == null && dragSpec == null && dragKitten == null && dragHeight == null && dragLabel == null && !DetailGesture && !draftHeld && !panning && ImGui.GetIO().MouseWheel != 0)
+        if (!(viewDraft != null && ImGui.GetIO().KeyShift) && canvasHovered && dragText == null && dragView == null && dragSpec == null && dragKitten == null && dragHeight == null && dragLabel == null && !DetailGesture && !draftHeld && !panning && ImGui.GetIO().MouseWheel != 0)
         {
             float next = PreviewNavigation.Zoom(zoom, ImGui.GetIO().MouseWheel);
             var before = ImGui.GetCursorScreenPos();

@@ -62,7 +62,7 @@ public sealed partial class BlueprintMod
     static string progress = "";
     static string? exportFolder;
     static bool busy => renderTask != null || saveTask != null || logoTask != null || exportFolderTask != null;
-    static PrintOptions Options => new(view, theme, grid, archivalWear > 0, emphasis switch { 1 => 5, 2 => 10, _ => 0 }, layout, visibleViews, captions, partsTable, flagTable, drawingSize, pageOrientation, pageAspect, brand, TitleData, arrangement, boxLayout, drawingPlacement, zones, customWidth, customHeight, archivalWear);
+    static PrintOptions Options => new(view, theme, grid, archivalWear > 0, emphasis switch { 1 => 5, 2 => 10, _ => 0 }, layout, visibleViews, captions, partsTable, flagTable, drawingSize, pageOrientation, pageAspect, brand, TitleData, arrangement, boxLayout, drawingPlacement, zones, customWidth, customHeight, archivalWear, outputTarget == 0 ? DrawingOutput.DesktopBackground : DrawingOutput.Image);
 
 
 
@@ -175,7 +175,6 @@ public sealed partial class BlueprintMod
             CancelPlacement();
             ResetDetailEditor();
             drawingPlacement = new(100, []);
-            workspaceAttempt = null;
             status = "Editor closed. Generate a fresh preview after loading a craft.";
         }
     }
@@ -338,6 +337,8 @@ public sealed partial class BlueprintMod
                 detailCommitQueued = false;
                 renderAdoptsHistory = false;
                 status = result.Notice ?? $"Preview ready - {result.Options.OutputPage.Width} x {result.Options.OutputPage.Height} PNG. Hover over a part and drag out a label.";
+                if (creatingBlank) setupStage = SetupStage.Editing;
+                if (captureForView) { captureForView = false; BeginViewDraft(null, captureViewCamera); }
                 PrintDiagnostics.Record("preview.ready");
                 Console.WriteLine("[PawPrints] Preview ready: " + sheet.Title);
             }
@@ -357,6 +358,8 @@ public sealed partial class BlueprintMod
             }
             finally
             {
+                creatingBlank = false;
+                captureForView = false;
                 replacement?.Dispose();
                 if (job != null) renderJobs.Finish(job);
                 cancellation = null;
@@ -418,7 +421,6 @@ public sealed partial class BlueprintMod
             CancelPlacement();
             ResetDetailEditor();
             drawingPlacement = new(100, []);
-            workspaceAttempt = null;
             livePreviewGate.Reset();
             printStyleDirty = false;
             status = "Craft changed. Generate a fresh preview.";
@@ -442,12 +444,6 @@ public sealed partial class BlueprintMod
             panning = false;
             return;
         }
-        if (!exportPrompted)
-        {
-            exportPrompted = true;
-            exportSetupOpen = exportFolder == null;
-        }
-        EnsureWorkspace(editor);
         if (!workspaceFocus.Prepare(new float2(viewport.Size.X, viewport.Size.Y), NativeDialogOpen))
         {
             annotationKeysActive = false;
@@ -472,6 +468,8 @@ public sealed partial class BlueprintMod
             {
                 if (shown)
                 {
+                    if (sheet == null && setupStage == SetupStage.Editing) setupStage = SetupStage.Choose;
+                    if (setupStage != SetupStage.Editing) { DrawDrawingSetup(editor); return; }
                     DrawWorkspaceHeader(editor);
                     ImGui.Separator();
                     annotationKeysActive = !ShowingTemplates && ImGui.IsWindowFocused(ImGuiFocusedFlags.RootAndChildWindows) && !ImGui.GetIO().WantTextInput;

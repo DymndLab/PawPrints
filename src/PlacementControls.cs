@@ -17,11 +17,10 @@ public sealed partial class BlueprintMod
             return clicked;
         }
 
-        if (Button("Primary View"))
-        {
-            BeginView();
-            ImGui.OpenPopup("Place view settings"u8);
-        }
+        ImGui.BeginDisabled(!CanEditAnnotations);
+        if (ImGui.Button("Primary View", new float2(-1, 0))) BeginView();
+        ImGui.EndDisabled();
+        if (viewDraft != null) DrawDrawingControls();
         if (Button("Secondary View", document?.Scene.Drawing?.Views.Length > 0))
             ImGui.OpenPopup("Choose source view"u8);
         if (Button("Exploded View"))
@@ -61,15 +60,6 @@ public sealed partial class BlueprintMod
 
     static void DrawPlacementSettings()
     {
-        ImGui.SetNextWindowSize(new float2(340, 0), ImGuiCond.Appearing);
-        if (ImGui.BeginPopup("Place view settings"u8))
-        {
-            if (viewDraft != null)
-                DrawDrawingControls();
-            if (viewDraft == null || ImGui.Button("Place on sheet"u8))
-                ImGui.CloseCurrentPopup();
-            ImGui.EndPopup();
-        }
         if (ImGui.BeginPopup("Choose source view"u8))
         {
             ImGui.Text("Project from");
