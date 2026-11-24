@@ -17,7 +17,7 @@ sealed record ScopeDefinition(uint? Root, ImmutableArray<JointKey> Cuts, Immutab
     ImmutableArray<uint>? VisibleParts = null);
 sealed record ViewDefinition(int Id, int Camera, Box Bounds, float Ratio, int? Parent = null,
     int? Group = null, bool Exploded = false, ViewAxes? Axes = null, ScopeDefinition? Scope = null,
-    bool NeedsScopeBinding = false);
+    bool NeedsScopeBinding = false, int Alignment = 0, int RollDirection = -1, int ProjectionAngle = 3);
 sealed record ProjectionGroup(int Id, int Primary, ImmutableArray<int> Members, float Ratio);
 sealed record DrawingLayout(ImmutableArray<ViewDefinition> Views, ImmutableArray<ProjectionGroup> Groups,
     ImmutableArray<DrawingObject> Layers);
@@ -74,7 +74,8 @@ static class DrawingDefinitions
         {
             var bounds = document.Scene.Views.FirstOrDefault(v => v.Id == view.Id)?.Bounds ?? new Box(view.X, view.Y, 0, 0);
             views.Add(new(view.Id, view.Camera, bounds, ProjectionGroups.Ratio(drawing, view.Id), view.Parent,
-                groups.Any(g => g.Id == roots[view.Id]) ? roots[view.Id] : null, Axes: view.Axes));
+                groups.Any(g => g.Id == roots[view.Id]) ? roots[view.Id] : null, Axes: view.Axes,
+                Alignment: view.Alignment, RollDirection: view.RollDirection, ProjectionAngle: view.ProjectionAngle));
         }
         foreach (var detail in content.Details)
             views.Add(new(detail.ViewId, detail.View, detail.Bounds, detail.Sizing?.Ratio ?? drawing.Ratio,
@@ -93,7 +94,7 @@ static class DrawingDefinitions
             new(Convert.ToHexString(SHA256.HashData(image.Rgba)), image.Width, image.Height));
         return new(document.Id, new(options.OutputTarget, options.OutputPage.Width, options.OutputPage.Height, options.Page.Width, options.Page.Height),
             new(options.Theme, options.Grid, options.Emphasis, options.Archive ? options.WearLevel : 0,
-                options.Zones, true, options.TitleBlock is { } title ? title with { Logo = null } : null, asset),
+                options.Zones, options.TitleBlockVisible, options.TitleBlock is { } title ? title with { Logo = null } : null, asset),
             new(views.ToImmutableArray(), groups.ToImmutableArray(), CanvasObjects.All(document.Scene, content.Labels).ToImmutableArray()),
             sheet.PoseSource?.Assembly.Topology?.Binding, content.Labels.ToImmutableArray(),
             content.FreeText.ToImmutableArray(), content.Dimensions.ToImmutableArray(),

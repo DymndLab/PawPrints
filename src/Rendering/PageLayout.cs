@@ -69,14 +69,14 @@ static class PageLayout
 
     public static int InnerWidth(PrintOptions options) => options.Page.Width - 2 * Margin;
 
-    public static int TitleTop(PrintOptions options) => options.TitleBlock == null ? Bottom(options) - 360 : CompanyTitleBlock.Top(options);
+    public static int TitleTop(PrintOptions options) => !options.TitleBlockVisible ? Bottom(options) : options.TitleBlock == null ? Bottom(options) - 360 : CompanyTitleBlock.Top(options);
 
     // Manual placement uses the printed inner frame, not automatic-layout padding.
     public static Box UpperArea(PrintOptions options) => new(Margin, Margin, InnerWidth(options), TitleTop(options) - Margin);
 
     public static Box Placement(PrintOptions options) => CompanyTitleBlock.ContentSized(options) ? new(Margin, Margin, InnerWidth(options), Bottom(options) - Margin) : UpperArea(options);
 
-    public static Box TitleBounds(PrintOptions options) => options.TitleBlock != null ? CompanyTitleBlock.Layout(options).Bounds : new(Margin, TitleTop(options), InnerWidth(options), Bottom(options) - TitleTop(options));
+    public static Box TitleBounds(PrintOptions options) => !options.TitleBlockVisible ? default : options.TitleBlock != null ? CompanyTitleBlock.Layout(options).Bounds : new(Margin, TitleTop(options), InnerWidth(options), Bottom(options) - TitleTop(options));
 
     public static bool Fits(Box box, PrintOptions options)
     {
@@ -114,6 +114,7 @@ static class PageLayout
         canvas.Line(Margin, Margin, Margin, bottom, .6f);
         canvas.Line(right, Margin, right, bottom, .6f);
         SheetZones.Paint(canvas, options);
+        if (!options.TitleBlockVisible) return;
         if (options.TitleBlock != null)
         {
             CompactPrintTitle.Draw(canvas, title, options, calculatedScale: calculatedScale);

@@ -3,7 +3,7 @@ using System.Text.Json;
 
 namespace Blueprint.Storage;
 
-sealed record TitlePreferences(TitleBlockData Data, string LogoFile, bool LivePreviewUpdates = false);
+sealed record TitlePreferences(TitleBlockData Data, string LogoFile, bool LivePreviewUpdates = false, bool TitleBlockVisible = true, int InitialsSizeVersion = 0);
 
 sealed class TitlePreferenceStore(ProfileStorage profile)
 {
@@ -32,16 +32,22 @@ sealed class TitlePreferenceStore(ProfileStorage profile)
         var saved = JsonSerializer.Deserialize<TitlePreferences>(File.ReadAllText(profile.Preferences));
         if (saved?.Data == null)
             throw new InvalidDataException("Title settings do not contain drawing defaults.");
-        return new(Defaults(saved.Data), FileName(saved.LogoFile), saved.LivePreviewUpdates);
+        int max = saved.InitialsSizeVersion == 0 ? 100 : InitialsFont.MaxPercent;
+        var data = Defaults(saved.Data) with
+        {
+            CreatorInitialsSize = Math.Clamp(saved.Data.CreatorInitialsSize, InitialsFont.MinPercent, max),
+            ApproverInitialsSize = Math.Clamp(saved.Data.ApproverInitialsSize, InitialsFont.MinPercent, max)
+        };
+        return saved with { Data = data, LogoFile = FileName(saved.LogoFile), InitialsSizeVersion = 1 };
     }
 
-    public void Save(TitleBlockData data, string logoFile, bool livePreviewUpdates = false)
+    public void Save(TitleBlockData data, string logoFile, bool livePreviewUpdates = false, bool titleBlockVisible = true)
     {
         Directory.CreateDirectory(profile.Logos);
         string temp = profile.Preferences + ".tmp";
         try
         {
-            File.WriteAllText(temp, JsonSerializer.Serialize(new TitlePreferences(Defaults(data), FileName(logoFile), livePreviewUpdates)));
+            File.WriteAllText(temp, JsonSerializer.Serialize(new TitlePreferences(Defaults(data), FileName(logoFile), livePreviewUpdates, titleBlockVisible, InitialsSizeVersion: 1)));
             File.Move(temp, profile.Preferences, true);
         }
         finally

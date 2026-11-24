@@ -26,4 +26,5 @@
     <Reference Include="$(LoaderDir)/StarMap.API.dll" Private="false" />
     <Reference Include="$(LoaderDir)/0Harmony.dll" Private="false" />
   </ItemGroup>
+  <Import Project="../build/PortableRendering.props" Condition="'$(PawPrintsPortableRendering)' == 'true'" />
 </Project>

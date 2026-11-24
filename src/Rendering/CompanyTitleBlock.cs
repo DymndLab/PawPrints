@@ -239,7 +239,7 @@ static class CompanyTitleBlock
 
     public static byte[] StampExportDate(Sheet sheet, string date)
     {
-        if (sheet.Options.TitleBlock == null)
+        if (!sheet.Options.TitleBlockVisible || sheet.Options.TitleBlock == null)
             return sheet.Rgb;
         var colors = SheetLayout.Colors(sheet.Options.Theme);
         var background = new Canvas(sheet.PixelWidth, sheet.PixelHeight, colors.Paper, colors.Ink, sheet.Options);

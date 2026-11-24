@@ -4,6 +4,8 @@ namespace Blueprint;
 
 public sealed partial class BlueprintMod
 {
+    static bool titleBlockVisible = true;
+
     static void DrawPreferencesControls()
     {
         if (ImGui.Checkbox("Live preview updates", ref livePreviewUpdates))
@@ -12,6 +14,13 @@ public sealed partial class BlueprintMod
             SaveTitlePreferences();
         }
         PrintUiStyle.Help("When on, the PawPrint preview updates as settings change. When off, click Generate PawPrint to apply layout and preference changes.");
+        ImGui.BeginDisabled(ControlsLocked);
+        if (ImGui.Checkbox("Show title block", ref titleBlockVisible))
+        {
+            SaveTitlePreferences();
+            RefreshTitleVisibility();
+        }
+        ImGui.EndDisabled();
         ImGui.Separator();
         ImGui.Text("Projection");
         ImGui.BeginDisabled(busy);

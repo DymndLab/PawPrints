@@ -62,7 +62,7 @@ public sealed partial class BlueprintMod
     static string progress = "";
     static string? exportFolder;
     static bool busy => renderTask != null || saveTask != null || logoTask != null || exportFolderTask != null;
-    static PrintOptions Options => new(view, theme, grid, archivalWear > 0, emphasis switch { 1 => 5, 2 => 10, _ => 0 }, layout, visibleViews, captions, partsTable, flagTable, drawingSize, pageOrientation, pageAspect, brand, TitleData, arrangement, boxLayout, drawingPlacement, zones, customWidth, customHeight, archivalWear, outputTarget == 0 ? DrawingOutput.DesktopBackground : DrawingOutput.Image, FreeLayout: true);
+    static PrintOptions Options => new(view, theme, grid, archivalWear > 0, emphasis switch { 1 => 5, 2 => 10, _ => 0 }, layout, visibleViews, captions, partsTable, flagTable, drawingSize, pageOrientation, pageAspect, brand, TitleData, arrangement, boxLayout, drawingPlacement, zones, customWidth, customHeight, archivalWear, outputTarget == 0 ? DrawingOutput.DesktopBackground : DrawingOutput.Image, FreeLayout: true, TitleBlockVisible: titleBlockVisible);
 
 
 
@@ -73,10 +73,19 @@ public sealed partial class BlueprintMod
         {
             var hash = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(typeof(VehicleEditor).Assembly.Location)));
             if (hash != SupportedHash)
-                throw new NotSupportedException("Paw Prints requires inspected KSA build 5901; no patches applied.");
+                throw new NotSupportedException(
+                    $"PawPrints requires the inspected KSA build 5901. Installed KSA.dll SHA-256: {hash}. No patches applied.");
             // StarMap resolves both -InstancePath and its environment override here.
             // Reading the environment first would bypass its precedence rules.
             PrintDiagnostics.Start(Path.Combine(KSA.Constants.DocumentsFolderPath, "logs"), PrintIdentity.Version);
+#if PAWPRINTS_PORTABLE_RENDERING
+            if (OperatingSystem.IsLinux())
+                PortableRendering.Initialize(Path.Combine(Path.GetDirectoryName(typeof(VehicleEditor).Assembly.Location)!,
+                    "Content", "Core", "JetBrainsMono-Regular.ttf"));
+#else
+            if (OperatingSystem.IsLinux())
+                throw new PlatformNotSupportedException("This PawPrints build uses the Windows drawing backend.");
+#endif
             InitializeExportFolder();
             InitializeTitleBlock();
             harmony = new Harmony(Owner);
@@ -181,7 +190,8 @@ public sealed partial class BlueprintMod
 
 
 
-    internal static void Generate(VehicleEditor editor, bool startFresh = false)
+    internal static void Generate(VehicleEditor editor, bool startFresh = false,
+        LayoutTemplate? starter = null, bool fitStarter = false)
     {
         EnsureDrawingTitle(editor);
         if (busy || !ValidTitleDates())
@@ -222,6 +232,9 @@ public sealed partial class BlueprintMod
                     maps.Add(pair.Key, pair.Value.Decode(token));
                 }
                 var poseSource = new PoseSource(capture.Assembly!, capture.Poses, capture.Geometry.Meshes.Length, parts, maps, capture.Performance);
+                if (starter != null)
+                    return StarterDrawings.Render(poseSource, capture.Geometry, capture.Name, options, capture.Warnings,
+                        starter, fitStarter, token);
                 return PrintGeneration.Render(poseSource, capture.Geometry, capture.Name, options,
                     capture.Warnings, previous, startFresh, token);
             });

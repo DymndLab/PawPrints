@@ -2,15 +2,17 @@ using Blueprint.Rendering;
 
 static class ImageDecodingChecks
 {
-    public static void Run(Action<bool, string> check)
+    public static void Run(Action<bool, string> check, Func<byte[], LogoImage>? decoder = null)
     {
+        bool wic = decoder == null;
+        decoder ??= WindowsPngDecoder.Decode;
         void Decode(byte[] encoded, byte[] expected, string name)
-            => check(WindowsPngDecoder.Decode(encoded).Rgba.SequenceEqual(expected), name);
+            => check(decoder(encoded).Rgba.SequenceEqual(expected), name);
         void Reject(byte[] encoded, string name)
         {
             try
             {
-                WindowsPngDecoder.Decode(encoded);
+                decoder(encoded);
             }
             catch (InvalidDataException) { check(true, name); return; }
             check(false, name);
@@ -41,25 +43,28 @@ static class ImageDecodingChecks
         Reject(PngFixture.Encode(4, 4, 8, 6, [0]), "Incomplete decompressed pixels are rejected");
         Reject("RIFFxxxxWEBP"u8.ToArray(), "Other image formats disguised as PNG are rejected");
         check(!CompanyLogo.Supported("badge.webp") && CompanyLogo.Supported("badge.PNG"), "Logo picker accepts only PNG extensions");
-        Exception? threadFailure = null;
-        var sta = new Thread(() =>
+        if (wic)
         {
-            try
+            Exception? threadFailure = null;
+            var sta = new Thread(() =>
             {
-                for (int i = 0; i < 30; i++)
-                    if (!WindowsPngDecoder.Decode(interlaced).Rgba.SequenceEqual(rgba))
-                        throw new Exception("STA decode changed pixels");
-            }
-            catch (Exception ex) { threadFailure = ex; }
-        });
-        if (!OperatingSystem.IsWindows())
-            throw new PlatformNotSupportedException("PNG logo checks require Windows.");
-        sta.SetApartmentState(ApartmentState.STA);
-        sta.Start();
-        sta.Join();
-        check(threadFailure == null, "PNG decoder balances COM ownership in an existing STA apartment");
-        check(Enumerable.Range(0, 12).AsParallel().All(_ => WindowsPngDecoder.Decode(interlaced).Rgba.SequenceEqual(rgba)),
-            "Concurrent worker PNG decoding uses independent COM objects");
+                try
+                {
+                    for (int i = 0; i < 30; i++)
+                        if (!WindowsPngDecoder.Decode(interlaced).Rgba.SequenceEqual(rgba))
+                            throw new Exception("STA decode changed pixels");
+                }
+                catch (Exception ex) { threadFailure = ex; }
+            });
+            if (!OperatingSystem.IsWindows())
+                throw new PlatformNotSupportedException("PNG logo checks require Windows.");
+            sta.SetApartmentState(ApartmentState.STA);
+            sta.Start();
+            sta.Join();
+            check(threadFailure == null, "PNG decoder balances COM ownership in an existing STA apartment");
+        }
+        check(Enumerable.Range(0, 12).AsParallel().All(_ => decoder(interlaced).Rgba.SequenceEqual(rgba)),
+            "Concurrent worker PNG decoding preserves pixels");
 
         byte[] transparent = ImageResampling.ResizeRgba([255, 0, 0, 255, 0, 0, 255, 0], 2, 1, 1, 1);
         check(transparent.SequenceEqual(new byte[] { 255, 0, 0, 128 }), "Logo resampling cannot bleed hidden transparent colour into its edges");

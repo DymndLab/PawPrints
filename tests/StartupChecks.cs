@@ -42,5 +42,44 @@ static class StartupChecks
         var png = File.ReadAllBytes(file);
         check(BinaryPrimitives.ReadInt32BigEndian(png.AsSpan(16,4)) == 1280 && BinaryPrimitives.ReadInt32BigEndian(png.AsSpan(20,4)) == 720,
             "Blank-to-one-view workflow exports the selected PNG dimensions");
+
+        var freshOptions = blank.Options with { TitleBlockVisible = false, PartsTable = true, FlagTable = true };
+        var selected = StarterDrawings.FromSelection([0, 2]);
+        var drawing = StarterDrawings.Render(source, geometry, "Fixture", freshOptions, [], selected, true, default);
+        check(drawing.Scene!.Drawing!.Views.Select(v => v.Camera).SequenceEqual(new[] { 0, 2 }) &&
+            drawing.Options.PartsTable && drawing.Options.FlagTable && !drawing.Options.TitleBlockVisible,
+            "Select Views renders exactly the chosen cameras and tables with the current title visibility");
+        var tablesOnly = StarterDrawings.Render(source, geometry, "Fixture", freshOptions, [],
+            StarterDrawings.FromSelection([]), true, default);
+        check(tablesOnly.Scene!.Views.Length == 0 && tablesOnly.Scene.Parts.Length == 1 && tablesOnly.Options.PartsTable,
+            "Tables-only setup keeps the requested table and adds no views");
+        var orthographic = StarterDrawings.All[0].Template;
+        var ortho = StarterDrawings.Render(source, geometry, "Fixture", blank.Options, [], orthographic, true, default);
+        var arrangement = ortho.Scene!.Drawing!;
+        check(arrangement.Views.Length == 3 && arrangement.Views.Count(v => v.Parent.HasValue) == 2 &&
+            ortho.Scene.Views.Select(v => v.Frame!.Scale).Distinct().Count() == 1,
+            "Orthographic starter has exactly three linked views sharing a fitted scale");
+        var isoExploded = StarterDrawings.Render(source, geometry, "Fixture", blank.Options, [],
+            StarterDrawings.All[2].Template, true, default);
+        check(isoExploded.Scene!.Drawing!.Views is [{ Camera: 4, Parent: null }] &&
+            isoExploded.Details is [{ Scope: 1 }] && isoExploded.PoseMain != null,
+            "ISO plus Exploded starts one standalone ISO and a whole-craft detail");
+        var layout = DrawingDefinitions.ToTemplate(DrawingDefinitions.FromAccepted(ortho, new AnnotationDocument(ortho.Scene)));
+        var profile = new Blueprint.Storage.ProfileStorage(Path.Combine(output, "starter-template-profile-" + Guid.NewGuid().ToString("N")));
+        new Blueprint.Storage.LayoutTemplateStore(profile).Save("My layout", layout);
+        var reopened = new Blueprint.Storage.LayoutTemplateStore(profile).ReadAll().Single();
+        var custom = StarterDrawings.Render(source, geometry, "Fixture", blank.Options with { Theme = 3, TitleBlockVisible = false },
+            [], reopened.Template, false, default);
+        check(reopened.Name == "My layout" && custom.Options.Theme == 3 && !custom.Options.TitleBlockVisible &&
+            custom.Scene!.Drawing!.Views.Zip(arrangement.Views).All(pair =>
+                Math.Abs(pair.First.X - pair.Second.X) * custom.PixelWidth <= 1 &&
+                Math.Abs(pair.First.Y - pair.Second.Y) * custom.PixelHeight <= 1 &&
+                pair.First with { X = pair.Second.X, Y = pair.Second.Y } == pair.Second),
+            "Custom layout reopens across store instances with its view geometry and current session appearance");
+        var invisibleTitle = PreviewUpdates.Render(ortho, ortho, ortho.Options with { TitleBlockVisible = false }, default);
+        check(PageLayout.TitleBounds(invisibleTitle.Options) == default &&
+            invisibleTitle.Scene!.Views.Select(v => v.Bounds).SequenceEqual(ortho.Scene.Views.Select(v => v.Bounds)) &&
+            ReferenceEquals(CompanyTitleBlock.StampExportDate(invisibleTitle, "2027-01-01"), invisibleTitle.Rgb),
+            "Hiding the title releases its space, preserves positions, and leaves the export title hidden");
     }
 }

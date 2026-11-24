@@ -3,7 +3,7 @@ using Blueprint.Rendering;
 static class CompanyLogoChecks
 {
 
-    public static void Run(Action<bool, string> check, string output)
+    public static void Run(Action<bool, string> check, string output, bool portable = false)
     {
         // A StringBuilder field cannot be marshalled inside OPENFILENAMEW.
         // Verify the real declaration before a user ever opens the native dialog.
@@ -35,7 +35,8 @@ static class CompanyLogoChecks
         Array.Fill(original, (byte)255);
         File.WriteAllBytes(path, PngFixture.Rgba(2048, 1, original));
         check(CompanyLogo.Load(path).UseThemeInk == true, "Decoded single-white PNG retains theme classification after resizing");
-        ImageDecodingChecks.Run(check);
+        if (!portable)
+            ImageDecodingChecks.Run(check);
         var legacy = System.Text.Json.JsonSerializer.Deserialize<TitleBlockData>("{\"Creator\":\"Test\"}")!;
         check(legacy.InitialsStyle == InitialsFont.Face && InitialsFont.Normalize("missing") == InitialsFont.Face, "Older title settings and unknown styles use Reenie Beanie");
         check(legacy.ApproverInitialsStyle == InitialsFont.ApproverFace && InitialsFont.Normalize("missing", InitialsFont.ApproverFace) == "Zeyada", "Missing or invalid approver style defaults independently to Zeyada");
@@ -46,6 +47,17 @@ static class CompanyLogoChecks
         check(independent.Runs.Any(r => r.Text == "Yn" && r.Face == "Kristi") && independent.Runs.Any(r => r.Text == "DHK" && r.Face == "Mr Dafoe"), "Creator and approver selections persist and render independently");
         foreach (string face in InitialsFont.Names)
         {
+            var cell = new Box(170, 105, 100, 38);
+            var c = new Canvas(440, 260, new(255, 255, 255), new(0, 0, 0), new(Grid: false));
+            InitialsFont.Draw(c, "Yn", cell, face, 100);
+            NativeText.Apply(c.Pixels, 440, 260, c.Runs);
+            check(Enumerable.Range(0, 440 * 260).All(i => c.Pixels[i * 3] >= 245 || cell.Contains(new(i % 440, i / 440))),
+                face + " at 100 percent fits the initials cell");
+            var enlarged = new Canvas(440, 260, new(255, 255, 255), new(0, 0, 0), new(Grid: false));
+            InitialsFont.Draw(enlarged, "Yn", cell, face, 300);
+            NativeText.Apply(enlarged.Pixels, 440, 260, enlarged.Runs);
+            check(Enumerable.Range(0, 440 * 260).Any(i => enlarged.Pixels[i * 3] < 245 && !cell.Contains(new(i % 440, i / 440))),
+                face + " at 300 percent paints outside the initials cell");
             var saved = new TitleBlockData(CreatorInitials: "Yn", InitialsStyle: face);
             var restored = System.Text.Json.JsonSerializer.Deserialize<TitleBlockData>(System.Text.Json.JsonSerializer.Serialize(saved))!;
             var sample = new Canvas(400, 100, new(255, 255, 255), new(0, 0, 0), new PrintOptions(Grid: false));

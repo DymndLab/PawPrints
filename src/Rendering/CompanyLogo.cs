@@ -52,7 +52,11 @@ static class CompanyLogo
 
     static LogoImage Decode(byte[] bytes)
     {
+#if PAWPRINTS_PORTABLE_RENDERING
+        var decoded = PortableRendering.Active ? PortableRendering.DecodePng(bytes) : WindowsPngDecoder.Decode(bytes);
+#else
         var decoded = WindowsPngDecoder.Decode(bytes);
+#endif
         // Classify original RGB codes before resizing can erase a faint colour.
         bool themeInk = UsesThemeInk(decoded.Rgba);
         double fit = Math.Min(1, 1024d / Math.Max(decoded.Width, decoded.Height));

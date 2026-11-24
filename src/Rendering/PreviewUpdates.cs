@@ -27,6 +27,13 @@ sealed class PreviewUpdateGate
 
 static class PreviewUpdates
 {
+    public static Sheet RenderBlank(Sheet previous, PrintOptions options, CancellationToken token)
+    {
+        var fresh = BlankDrawing.Create(previous.Title, options, token);
+        var scene = previous.Scene!.WithBase(fresh.Rgb, fresh.Options);
+        return AnnotationPainting.Compose(fresh with { Scene = scene }, previous.Labels, token);
+    }
+
     public static bool CanRepaint(Sheet main, PrintOptions desired)
     {
         var old = main.Options;
@@ -40,6 +47,7 @@ static class PreviewUpdates
                 WearLevel = old.WearLevel,
                 Zones = old.Zones,
                 TitleBlock = old.TitleBlock,
+                TitleBlockVisible = old.TitleBlockVisible,
                 Brand = old.Brand,
                 PartsTable = old.PartsTable,
                 FlagTable = old.FlagTable

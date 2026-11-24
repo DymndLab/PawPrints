@@ -212,6 +212,7 @@ public sealed partial class BlueprintMod
         }
         if (ImGui.Button("Use Template"u8))
             OpenTemplates();
+        DrawSaveTemplate();
         ImGui.EndDisabled();
 
         ImGui.Separator();

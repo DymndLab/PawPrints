@@ -15,13 +15,7 @@ public sealed partial class BlueprintMod
     {
         if (ControlsLocked || ShowingTemplates)
             return;
-        beforeTemplates = boxLayout;
-        beforeDrawing = drawingPlacement;
-        drawingPlacement = null;
-        templatesOpen = true;
-        annotationKeysActive = false;
-        spaceHeld = false;
-        panning = false;
+        BeginTemplateSetup();
     }
 
     static void DrawTemplateToolbar(VehicleEditor editor)

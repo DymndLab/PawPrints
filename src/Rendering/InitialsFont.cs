@@ -5,6 +5,7 @@ using System.Runtime.InteropServices;
 // Private to this process; no Windows font installation or game UI font changes.
 static class InitialsFont
 {
+    public const int MinPercent = 60, MaxPercent = 300;
     public const string Face = "Reenie Beanie", ApproverFace = "Zeyada";
     public static readonly string[] Names = ["Mr Dafoe", "Kristi", Face, "Nothing You Could Do", "Zeyada", "La Belle Aurore"];
     static readonly string[] Slugs = ["mrdafoe", "kristi", "reeniebeanie", "nothingyoucoulddo", "zeyada", "labelleaurore"];
@@ -21,13 +22,21 @@ static class InitialsFont
         {
             if (PreviewFonts.ContainsKey(face!))
                 return;
-            using var stream = typeof(InitialsFont).Assembly.GetManifestResourceStream("PawPrints.Fonts." + Slugs[index] + ".ttf")
-                ?? throw new InvalidOperationException("Bundled initials font is missing: " + face);
+            using var stream = OpenBundled(face!);
             using var buffer = new MemoryStream();
             stream.CopyTo(buffer);
             RegisterPreview(face!, buffer.ToArray());
         }
     }
+    public static Stream OpenBundled(string face)
+    {
+        int index = Array.IndexOf(Names, face);
+        if (index < 0)
+            throw new ArgumentException("Unknown initials font.", nameof(face));
+        return typeof(InitialsFont).Assembly.GetManifestResourceStream("PawPrints.Fonts." + Slugs[index] + ".ttf")
+            ?? throw new InvalidOperationException("Bundled initials font is missing: " + face);
+    }
+
     static readonly System.Collections.Concurrent.ConcurrentDictionary<string, IntPtr> PreviewFonts = new();
 
     public static bool IsRegistered(string? face) => face != null && (Names.Contains(face) || PreviewFonts.ContainsKey(face));
@@ -82,14 +91,16 @@ static class InitialsFont
         var reference = Measure(text, face, 100);
         if (reference.Width == 0 || reference.Height == 0)
             return;
-        float fill = Math.Clamp(percent, 60, 120) / 100f;
-        int size = Math.Clamp((int)Math.Floor(100 * Math.Min(box.Width / reference.Width, box.Height / reference.Height) * fill), 1, 160);
-        Box ink = Measure(text, face, size);
-        while (size > 1 && ink.Width > box.Width)
-        {
-            size--;
-            ink = Measure(text, face, size);
-        }
-        c.Text(text, (int)Math.Round(box.X + (leftAligned ? 0 : Math.Max(0, box.Width - ink.Width) * .55f) - ink.X), (int)Math.Round(box.Y + (box.Height - ink.Height) / 2 - ink.Y), size, 1, false, false, false, face);
+        const float padding = .94f;
+        int fit = Math.Clamp((int)Math.Floor(100 * Math.Min(box.Width / reference.Width, box.Height / reference.Height) * padding), 1, 160);
+        Box ink = Measure(text, face, fit);
+        while (fit > 1 && (ink.Width > box.Width || ink.Height > box.Height))
+            ink = Measure(text, face, --fit);
+
+        int size = Math.Max(1, (int)Math.Round(fit * Math.Clamp(percent, MinPercent, MaxPercent) / 100f));
+        float factor = (float)size / fit;
+        float x = box.X + (leftAligned && size <= fit ? 0 : (box.Width - ink.Width * factor) * .5f) - ink.X * factor;
+        float y = box.Y + (box.Height - ink.Height * factor) * .5f - ink.Y * factor;
+        c.Text(text, (int)Math.Round(x), (int)Math.Round(y), size, 1, false, false, false, face);
     }
 }

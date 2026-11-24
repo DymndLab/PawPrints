@@ -21,6 +21,7 @@
     <Compile Include="CaptureStatsChecks.cs" />
     <Compile Include="FoundationChecks.cs" />
     <Compile Include="StartupChecks.cs" />
+    <Compile Include="WearReview.cs" />
     <Compile Include="GroupChecks.cs" />
     <Compile Include="CurvatureChecks.cs" />
     <Compile Include="PartSupportChecks.cs" />
@@ -51,4 +52,5 @@
     <Compile Include="TitleLayoutChecks.cs" />
     <PackageReference Include="BCnEncoder.Net" Version="2.3.0" />
   </ItemGroup>
+  <Import Project="../build/PortableRendering.props" Condition="'$(PawPrintsPortableRendering)' == 'true'" />
 </Project>

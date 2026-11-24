@@ -17,9 +17,24 @@ public sealed partial class BlueprintMod
         return PrintStyles.Apply(current, (LeaderLine)defaultLine, (LeaderTip)defaultTip);
     }
 
+    static void RefreshTitleVisibility()
+    {
+        if (sheet == null || document == null) return;
+        var current = sheet with { Scene = document.Scene, Labels = document.Labels, Details = document.Details };
+        var main = sheet.PoseMain ?? basePrint ?? sheet;
+        var desired = sheet.Options with { TitleBlockVisible = titleBlockVisible };
+        renderKeepsDocument = true;
+        renderAdoptsHistory = false;
+        renderAppliesSettings = true;
+        composingLabels = true;
+        StartRender(token => current.PoseSource == null
+            ? PreviewUpdates.RenderBlank(current, desired, token)
+            : PreviewUpdates.Render(current, main, desired, token));
+    }
+
     static void PollLivePreview()
     {
-        if (!livePreviewUpdates || !open || sheet?.PoseSource == null || document == null || ShowingTemplates)
+        if (!livePreviewUpdates || !open || sheet == null || document == null || ShowingTemplates || setupStage != SetupStage.Editing)
             return;
         if (PrintIsCurrent)
         {
@@ -33,6 +48,8 @@ public sealed partial class BlueprintMod
         if (!livePreviewGate.Ready(request, Environment.TickCount64, livePreviewUpdates, busy,
             ControlsLocked || partMenuOpen || ImGui.IsMouseDown(ImGuiMouseButton.Left) || !datesReady))
             return;
+        if (sheet.PoseSource == null && (sheet.Options.Page != request.Options.Page || request.Options.PartsTable || request.Options.FlagTable))
+            return;
         var current = PendingStyle(sheet with { Scene = document.Scene, Labels = document.Labels, Details = document.Details });
         var main = sheet.PoseMain ?? basePrint ?? sheet;
         composingLabels = true;
@@ -41,11 +58,14 @@ public sealed partial class BlueprintMod
         renderAppliesSettings = true;
         progress = "Updating preview";
         PrintDiagnostics.Record("preview.live.begin");
-        StartRender(token => PreviewUpdates.Render(current, main, request.Options, token));
+        StartRender(token => current.PoseSource == null
+            ? PreviewUpdates.RenderBlank(current, request.Options, token)
+            : PreviewUpdates.Render(current, main, request.Options, token));
     }
 
     static void AdoptPrintSettings(PrintOptions o)
     {
+        titleBlockVisible = o.TitleBlockVisible;
         outputTarget = o.OutputTarget == DrawingOutput.DesktopBackground ? 0 : 1;
         view = o.View; theme = o.Theme; grid = o.Grid; archivalWear = o.Archive ? o.WearLevel : 0;
         emphasis = o.Emphasis >= 10 ? 2 : o.Emphasis >= 5 ? 1 : 0;

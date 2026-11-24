@@ -68,8 +68,9 @@ public sealed partial class BlueprintMod
             approverInitials.SetValue(d.ApproverInitials.AsSpan());
             initialsChoice = Array.IndexOf(InitialsFont.Names, InitialsFont.Normalize(d.InitialsStyle));
             approverStyleChoice = Array.IndexOf(InitialsFont.Names, InitialsFont.Normalize(d.ApproverInitialsStyle, InitialsFont.ApproverFace));
-            creatorInitialsSize = Math.Clamp(d.CreatorInitialsSize, 60, 120);
-            approverInitialsSize = Math.Clamp(d.ApproverInitialsSize, 60, 120);
+            titleBlockVisible = pref.TitleBlockVisible;
+            creatorInitialsSize = Math.Clamp(d.CreatorInitialsSize, InitialsFont.MinPercent, InitialsFont.MaxPercent);
+            approverInitialsSize = Math.Clamp(d.ApproverInitialsSize, InitialsFont.MinPercent, InitialsFont.MaxPercent);
             drawingSubtitle.SetValue((d.Subtitle ?? "GENERAL ARRANGEMENT").AsSpan());
             calculateScale = string.IsNullOrWhiteSpace(d.Scale);
             if (!calculateScale)
@@ -85,7 +86,7 @@ public sealed partial class BlueprintMod
     static void SaveTitlePreferences()
     {
         titleSaveDue = null;
-        try { titlePreferences?.Save(TitleData, logoName, livePreviewUpdates); }
+        try { titlePreferences?.Save(TitleData, logoName, livePreviewUpdates, titleBlockVisible); }
         catch (Exception e) { logoMessage = "Could not save title defaults: " + e.Message; }
     }
 
@@ -251,13 +252,15 @@ public sealed partial class BlueprintMod
                 SaveTitlePreferences();
             ImGui.Text("Initials size");
             ImGui.SetNextItemWidth(-1);
-            if (ImGui.SliderInt("##Initials size"u8, ref size, 60, 120, "%d%%"u8))
+            if (ImGui.SliderInt("##Initials size"u8, ref size, InitialsFont.MinPercent, InitialsFont.MaxPercent, "%d%%"u8))
                 SaveTitlePreferences();
             Field("Date", date);
             PrintUiStyle.Help("Use YYYY-MM-DD. The drawing export date is added automatically.");
         }
         finally { ImGui.PopID(); }
     }
+
+    static readonly ImInputString logoImportPath = new(4096);
 
     static void DrawCompanyControls()
     {
@@ -284,7 +287,16 @@ public sealed partial class BlueprintMod
             else
                 LoadLogo(Path.Combine(logoFolder, logoFiles[selected - 1]), false);
         }
-        if (ImGui.Button("Choose PNG..."u8))
+        if (OperatingSystem.IsLinux())
+        {
+            ImGui.InputText("PNG path"u8, logoImportPath);
+            var path = logoImportPath.ToString();
+            ImGui.BeginDisabled(!Path.IsPathFullyQualified(path));
+            if (ImGui.Button("Import PNG"u8))
+                LoadLogo(path, true);
+            ImGui.EndDisabled();
+        }
+        else if (ImGui.Button("Choose PNG..."u8))
         {
             var picker = LogoPicker.Choose(Process.GetCurrentProcess().MainWindowHandle, logoFolder);
             logoMessage = "Choose a logo file...";
@@ -299,7 +311,7 @@ public sealed partial class BlueprintMod
             try
             {
                 Directory.CreateDirectory(logoFolder);
-                Process.Start(new ProcessStartInfo(logoFolder) { UseShellExecute = true });
+                OpenDesktopFolder(logoFolder);
             }
             catch (Exception e) { logoMessage = e.Message; }
         }
