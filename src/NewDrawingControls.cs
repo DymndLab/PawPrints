@@ -365,12 +365,12 @@ public sealed partial class BlueprintMod
                 if (!setupGridOpened)
                 {
                     Array.Clear(setupViews);
-                    setupGrid = 0;
+                    setupGrid = default;
                     setupGridWarning = null;
                     setupPrimary = resolvedSetupPrimary = null;
                     setupWorkingGrid = SetupViewGrid.Empty(draft.Angle);
                     ClearSetupGesture();
-                    RefreshSetupViewIssues(0, [], null);
+                    RefreshSetupViewIssues(setupGrid, [], null);
                     setupParts = setupFlags = false;
                     setupGridOpened = true;
                 }

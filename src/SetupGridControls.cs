@@ -62,9 +62,7 @@ public sealed partial class BlueprintMod
         try
         {
             DrawOutputChoices(draft.Output);
-            int choice = setupGrid;
-            if (ImGui.Combo("Layout grid", ref choice, setupGridNames, setupGridNames.Length))
-                TrySetupLayout(choice, setupPrimary, setupWorkingGrid.Angle);
+            DrawSetupGridPicker();
             DrawSetupProjection(draft);
             DrawDraftPaper(draft);
             ImGui.Separator();
@@ -90,6 +88,78 @@ public sealed partial class BlueprintMod
         }
         DrawSetupUnlink();
         DrawSetupGridWarning();
+    }
+
+    static void DrawSetupGridPicker()
+    {
+        const int maxColumns = 5, maxRows = 4;
+        var current = (Columns: setupWorkingGrid.Columns, Rows: setupWorkingGrid.Rows);
+        ImGui.Text($"Grid Size   {current.Columns} x {current.Rows}");
+
+        float available = ImGui.GetContentRegionAvail().X;
+        float gap = Math.Max(2, MathF.Round(ImGui.GetFontSize() * .2f));
+        float cell = Math.Max(1, MathF.Floor(Math.Min(ImGui.GetFrameHeight(), (available - (maxColumns - 1) * gap) / maxColumns)));
+        float step = cell + gap;
+        var origin = ImGui.GetCursorScreenPos();
+        var pointer = ImGui.GetMousePos() - origin;
+        float width = maxColumns * step - gap, height = maxRows * step - gap;
+        (int Columns, int Rows)? preview = setupGridWarning == null && setupUnlink == null &&
+            ImGui.IsWindowHovered(ImGuiHoveredFlags.AllowWhenBlockedByActiveItem) &&
+            pointer.X >= 0 && pointer.Y >= 0 && pointer.X < width && pointer.Y < height
+            ? (1 + (int)(pointer.X / step), 1 + (int)(pointer.Y / step)) : null;
+        var highlight = preview ?? current;
+        var draw = ImGui.GetWindowDrawList();
+        bool released = ImGui.IsMouseReleased(ImGuiMouseButton.Left);
+        (int Columns, int Rows)? chosen = null;
+
+        ImGui.BeginGroup();
+        ImGui.PushID("setup-grid-size");
+        ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new float2(gap));
+        try
+        {
+            for (int row = 1; row <= maxRows; row++)
+            {
+                for (int col = 1; col <= maxColumns; col++)
+                {
+                    if (col > 1) ImGui.SameLine();
+                    ImGui.PushID((row - 1) * maxColumns + col);
+                    bool included = col <= highlight.Columns && row <= highlight.Rows;
+                    uint fill = !included ? 0xFF25272B : preview == null ? 0xFF3D444A : 0xFF573E2A;
+                    uint border = !included ? 0xFF42474D : preview == null ? 0xFF737D85 : 0xFFA77343;
+                    ImGui.PushStyleColor(ImGuiCol.Button, fill);
+                    ImGui.PushStyleColor(ImGuiCol.ButtonHovered, fill);
+                    ImGui.PushStyleColor(ImGuiCol.ButtonActive, fill);
+                    bool anchor = row == 1 && col == 1;
+                    bool clicked = ImGui.Button(anchor ? "X##cell"u8 : "##cell"u8, new float2(cell));
+                    ImGui.PopStyleColor(3);
+                    draw.AddRect(ImGui.GetItemRectMin(), ImGui.GetItemRectMax(), border, 2f);
+                    if (released && ImGui.IsItemDeactivated()) chosen = preview;
+                    else if (clicked) chosen = (col, row);
+                    if (anchor && ImGui.IsItemHovered())
+                        PrintUiText.Tooltip("Drag from X, or click a cell to set the grid size.");
+                    ImGui.PopID();
+                }
+            }
+        }
+        finally
+        {
+            ImGui.PopStyleVar();
+            ImGui.PopID();
+            ImGui.EndGroup();
+        }
+
+        bool beside = available >= width + ImGui.CalcTextSize("Automatic"u8).X + ImGui.GetFrameHeight() + gap * 4;
+        if (beside) ImGui.SameLine();
+        ImGui.BeginGroup();
+        bool automatic = setupGrid.Columns == 0;
+        if (ImGui.Checkbox("Automatic"u8, ref automatic))
+            chosen = automatic ? default((int Columns, int Rows)) : current;
+        if (beside && preview is { } pending && pending != current)
+            ImGui.TextDisabled($"{pending.Columns} x {pending.Rows}");
+        ImGui.EndGroup();
+
+        if (chosen is { } size && size != setupGrid)
+            TrySetupLayout(size, setupPrimary, setupWorkingGrid.Angle);
     }
 
     static void ReleaseSetupSketch()

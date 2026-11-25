@@ -8,7 +8,7 @@ Part poses affect the drawing without changing your craft. Rendering runs locall
 
 ## Get started
 
-**PawPrints 0.6.0** requires **Windows x64**, **KSA 2026.11.25.5949** and **StarMap 0.5.4**. Install it from Borea's Stable channel or use the release ZIP.
+**PawPrints 0.6.1** requires **Windows x64**, **KSA 2026.11.25.5949** and **StarMap 0.5.4**. Install it from Borea's Stable channel or use the release ZIP.
 
 Native Linux testing is pending. If you can test on a native Linux KSA and StarMap setup, [open or join a Linux testing discussion](https://github.com/DymndLab/PawPrints/issues).
 
@@ -19,6 +19,10 @@ Native Linux testing is pending. If you can test on a native Linux KSA and StarM
 Use **Save Drawing** to keep an editable project for the current craft. Large craft and high-resolution sheets can use substantial memory. Compatibility with third-party parts varies with their implementation.
 
 For problems, [open an issue](https://github.com/DymndLab/PawPrints/issues) with reproduction steps and your PawPrints, KSA and StarMap versions. See [security and local data](SECURITY.md) before sharing logs or files.
+
+## What’s new in 0.6.1
+
+- Arrange Views now has a visual grid picker. Drag from the X or click a cell to set your grid size.
 
 ## What’s new in 0.6.0
 
