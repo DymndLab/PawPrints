@@ -21,12 +21,12 @@ static class CompositionRegeneration
             {
                 Bounds = Map(spec.Bounds)
             };
-            if (previous.Performance is { } data && PerformancePainting.Font(data, b) == 0)
+            if (previous.Performance is { } data && PerformancePainting.Font(data, b, options.TitleBlock?.Title) == 0)
                 b = b with
                 {
                     Bounds = FrameLayout.Clamp(b.Bounds with
                     {
-                        Height = PerformancePainting.Height(data, b, 14)
+                        Height = PerformancePainting.Height(data, b, 14, options.TitleBlock?.Title)
                     }, options)
                 };
             boxes.Add(b.Bounds);
@@ -38,7 +38,8 @@ static class CompositionRegeneration
         return boxes.ToArray();
     }
 
-    public static Sheet Rebuild(Sheet fresh, Sheet previous, CancellationToken token, bool preservePaperPositions = false, bool reuseDetailPixels = false)
+    public static Sheet Rebuild(Sheet fresh, Sheet previous, CancellationToken token, bool preservePaperPositions = false,
+        bool reuseDetailPixels = false, CraftRefresh? refresh = null)
     {
         var before = previous.Scene ?? throw CannotKeep("the composition");
         var after = fresh.Scene ?? throw CannotKeep("the composition");
@@ -65,20 +66,27 @@ static class CompositionRegeneration
             return box;
         }
         bool repaging = fresh.Options.Page != previous.Options.Page;
-        var specs = before.Specs.Select(b => b with { Bounds = FrameLayout.Clamp(MapBox(b.Bounds), fresh.Options) }).ToArray();
+        var specs = (refresh?.Specs(before.Specs, after.Performance) ?? before.Specs)
+            .Select(b => b with { Bounds = FrameLayout.Clamp(MapBox(b.Bounds), fresh.Options) }).ToArray();
         if (repaging && after.Performance is { } performance)
-            specs = specs.Select(b => PerformancePainting.Font(performance, b) > 0 ? b : b with
+            specs = specs.Select(b => PerformancePainting.Font(performance, b, fresh.Options.TitleBlock?.Title) > 0 ? b : b with
             {
                 Bounds = FrameLayout.Clamp(b.Bounds with
                 {
-                    Height = PerformancePainting.Height(performance, b, 14)
+                    Height = PerformancePainting.Height(performance, b, 14, fresh.Options.TitleBlock?.Title)
                 }, fresh.Options)
             }).ToArray();
         var tables = new TableLayout(Table(before.Tables.Parts, 0), Table(before.Tables.Flagnotes, 1));
         var captions = after.Captions.Select(c => before.Captions.FirstOrDefault(old => old.ViewId == c.ViewId && old.Text == c.Text) is { } old
             ? ViewCaption.Resize(c, after.Views.Single(v => v.Id == c.ViewId), old.FontSize) : c).ToArray();
-        var details = previous.Details.Select(d => d with { Bounds = ExplodedPainting.ClampFrame(MapBox(d.Bounds), fresh.Options), Camera = reuseDetailPixels ? d.Camera : null }).ToArray();
-        if (repaging)
+        var details = previous.Details.Select(d => refresh?.Detail(d) ?? d)
+            .Select(d => d with
+            {
+                Bounds = !repaging && d.SourceIssue != DetailSourceIssue.None ? d.Bounds
+                    : ExplodedPainting.ClampFrame(MapBox(d.Bounds), fresh.Options),
+                Camera = reuseDetailPixels ? d.Camera : null
+            }).ToArray();
+        if (repaging && !fresh.Options.FreeLayout)
         {
             var occupied = after.Views.Select(v => DrawingPlacements.Footprint(v, fresh.Options.Captions)).Append(PageLayout.TitleBounds(fresh.Options)).ToList();
             Box Place(Box box, Func<Box, bool>? content = null)
@@ -89,7 +97,7 @@ static class CompositionRegeneration
                 return placed;
             }
             details = details.Select(d => d with { Bounds = Place(d.Bounds) }).ToArray();
-            specs = specs.Select(b => b with { Bounds = Place(b.Bounds, candidate => after.Performance != null && PerformancePainting.Font(after.Performance, b with { Bounds = candidate }) > 0) }).ToArray();
+            specs = specs.Select(b => b with { Bounds = Place(b.Bounds, candidate => after.Performance != null && PerformancePainting.Font(after.Performance, b with { Bounds = candidate }, fresh.Options.TitleBlock?.Title) > 0) }).ToArray();
             foreach (int id in new[] { 0, 1 })
             {
                 if (id == 0 ? !fresh.Options.PartsTable : !fresh.Options.FlagTable)
@@ -101,15 +109,16 @@ static class CompositionRegeneration
         }
         tables = PrintTables.Refit(after.WithTables(tables), previous.Labels,
             details.Select(d => d.Bounds).Concat(specs.Select(b => b.Bounds)));
-        foreach (var detail in details)
+        var nodes = fresh.DetailSource?.Assembly.Nodes.Select(n => n.Id).ToHashSet() ?? [];
+        foreach (var detail in details.Where(d => d.SourceIssue == DetailSourceIssue.None))
         {
-            var nodes = fresh.DetailSource?.Assembly.Nodes.Select(n => n.Id).ToHashSet() ?? [];
             if (!nodes.Contains(detail.Scope) || (detail.Seed is { } seed && !nodes.Contains(seed))
                 || (detail.Expanded ?? []).Any(n => !nodes.Contains(n)) || (detail.Groups ?? []).Any(g => !nodes.Contains(g.Node)))
                 throw CannotKeep($"detail {detail.Caption}");
         }
         // Recapture invalidates detail pixels. Appearance-only updates keep the same geometry.
-        var composed = details.Length > 0 ? ExplodedPainting.Compose(fresh, reuseDetailPixels ? previous : fresh, details, [], token, tables: tables, captions: captions)
+        var composed = details.Length > 0 ? ExplodedPainting.Compose(fresh, previous, details, [], token,
+            tables: tables, captions: captions, reuseTiles: reuseDetailPixels, preserveDisplayedContent: false)
             : fresh with
             {
                 Scene = after.WithTables(tables).WithCaptions(captions)
@@ -119,7 +128,7 @@ static class CompositionRegeneration
             Scene = composed.Scene!.WithDimensions(before.Dimensions.Select(d => d.X is { } x ? HeightDimensions.Move(composed.Scene!, d, MapPoint(d.ViewId, x, 0).X) : d).ToArray())
         };
         after = composed.Scene!;
-        after = after.WithKittens([], before.KittenModel);
+        after = after.WithWear(before.WearMarks).WithKittens([], before.KittenModel);
         after = after.WithKittens(before.Kittens.Select(k => KittenReferences.Clamp(after, k with { X = k.X * sx, Y = k.Y * sy })).ToArray());
         after = after.WithSpecs(specs);
         after = after.WithFreeText(before.FreeText.Select(b => FreeTextPainting.Fit(b with { Bounds = MapBox(b.Bounds) }, fresh.Options)).ToArray());
@@ -127,22 +136,39 @@ static class CompositionRegeneration
         {
             Scene = after
         };
-        var labels = FlagnoteNumbers.Normalize(previous.Labels, fresh.Options.FlagTable).Select(label =>
+        var oldParts = before.Parts.ToDictionary(p => p.Id);
+        var newParts = after.Parts.ToLookup(p => (p.DetailOnly, p.NodeId));
+        var labels = new List<PartLabel>(previous.Labels.Length);
+        foreach (var label in previous.Labels)
         {
             token.ThrowIfCancellationRequested();
-            var oldPart = before.Parts.Single(p => p.Id == label.PartId);
-            var part = after.Parts.SingleOrDefault(p => p.DetailOnly == oldPart.DetailOnly && (oldPart.NodeId is { } node
-                ? p.NodeId == node : p.Id == oldPart.Id && p.TemplateId == oldPart.TemplateId));
+            var oldPart = oldParts[label.PartId];
+            var part = newParts[(oldPart.DetailOnly, oldPart.NodeId)].SingleOrDefault(p =>
+                oldPart.NodeId.HasValue || p.Id == oldPart.Id && p.TemplateId == oldPart.TemplateId);
+            if (refresh != null && (part == null || !refresh.Keeps(oldPart)))
+            {
+                refresh.RemovedLabel();
+                continue;
+            }
             var oldView = before.Views.SingleOrDefault(v => v.Id == label.ViewId);
             var newView = after.Views.SingleOrDefault(v => v.Id == label.ViewId);
-            if (part == null || newView == null || !preservePaperPositions && oldView?.Name != newView.Name || !after.Visible.TryGetValue((label.ViewId, part.Id), out var visible))
-                throw CannotKeep($"label ‘{label.Text}’");
+            bool projectionChanged = before.Options.FreeLayout && after.Options.FreeLayout &&
+                oldView?.Frame is { } oldFrame && newView?.Frame is { } newFrame &&
+                (oldFrame.Right != newFrame.Right || oldFrame.Up != newFrame.Up || oldFrame.Toward != newFrame.Toward);
+            bool wasVisible = before.Visible.TryGetValue((label.ViewId, label.PartId), out var oldVisible);
+            if (part == null || newView == null || !preservePaperPositions && !projectionChanged && oldView?.Name != newView.Name)
+                throw CannotKeep($"label ?{label.Text}?");
+            bool isVisible = after.Visible.TryGetValue((label.ViewId, part.Id), out var visible);
+            if (refresh == null && !isVisible && !(after.Options.FreeLayout && (projectionChanged || !wasVisible)))
+                throw CannotKeep($"label ?{label.Text}?");
             LeaderPoint? pin = preservePaperPositions && label.AttachmentPinned ? label.Attachment : null;
-            if (!preservePaperPositions && label.AttachmentPinned && label.Attachment is { } anchor && before.Visible.TryGetValue((label.ViewId, label.PartId), out var oldVisible))
+            if ((!preservePaperPositions || refresh != null) && label.AttachmentPinned && label.Attachment is { } anchor && oldVisible != null && visible != null)
             {
                 var a = oldVisible.Bounds;
                 var b = visible.Bounds;
                 pin = new(b.X + (anchor.X - a.X) * b.Width / Math.Max(1, a.Width), b.Y + (anchor.Y - a.Y) * b.Height / Math.Max(1, a.Height));
+                if (projectionChanged && label.FlagNote)
+                    pin = LeaderRouting.SnapAttachment(after, label with { PartId = part.Id }, pin.Vector, float.PositiveInfinity);
             }
             var position = MapPoint(label.ViewId, label.X, label.Y);
             var changed = label with
@@ -156,21 +182,22 @@ static class CompositionRegeneration
                 Key = label.FlagNote ? label.Key : (fresh.Options.PartsTable && !part.DetailOnly ? PrintTables.PartKey(after, part.Id) : null)
             };
             var bounds = AnnotationText.Bounds(changed);
-            return changed with
+            labels.Add(changed with
             {
-                X = Math.Clamp(changed.X, 0, fresh.PixelWidth - bounds.Width),
-                Y = Math.Clamp(changed.Y, 0, fresh.PixelHeight - bounds.Height)
-            };
-        }).ToArray();
-        if (repaging && after.FreeText.Length > 0)
+                X = fresh.Options.FreeLayout ? changed.X : Math.Clamp(changed.X, 0, fresh.PixelWidth - bounds.Width),
+                Y = fresh.Options.FreeLayout ? changed.Y : Math.Clamp(changed.Y, 0, fresh.PixelHeight - bounds.Height)
+            });
+        }
+        var retained = FlagnoteNumbers.Normalize(labels.ToArray(), fresh.Options.FlagTable);
+        if (repaging && !fresh.Options.FreeLayout && after.FreeText.Length > 0)
         {
             var placedText = new List<FreeTextBox>();
             var clearScene = after.WithFreeText([]);
-            if (!LeaderRouting.TryLayout(clearScene, labels, out var textRoutes, out var textReason))
+            if (!LeaderRouting.TryLayout(clearScene, retained, out var textRoutes, out var textReason))
                 throw new InvalidOperationException(textReason);
             foreach (var text in after.FreeText)
             {
-                var space = TextBoxPlacement.Space(clearScene.WithFreeText(placedText.ToArray()), labels, textRoutes);
+                var space = TextBoxPlacement.Space(clearScene.WithFreeText(placedText.ToArray()), retained, textRoutes);
                 var box = FrameLayout.Clear(text.Bounds, space.Obstacles, FrameLayout.Area(fresh.Options), false,
                     text.Bounds.Width, text.Bounds.Height, fits: space.Clear)
                     ?? throw CannotKeep("all text boxes on this paper size");
@@ -185,12 +212,15 @@ static class CompositionRegeneration
                 Scene = after
             };
         }
-        var result = AnnotationPainting.Compose(composed, labels, token);
+        var result = AnnotationPainting.Compose(composed, retained, token);
         return result with
         {
             RegeneratedBase = fresh,
             PoseMain = fresh,
-            Notice = repaging ? "Paper updated. Ctrl+Z restores the previous layout." : "PawPrint generated. Notes, poses, detail frames and table positions retained. New undo history started."
+            Refresh = refresh?.Review(),
+            Notice = refresh != null ? "Drawing updated from the vehicle." : repaging
+                ? "Paper updated. Ctrl+Z restores the previous layout."
+                : "PawPrint generated. Notes, poses, detail frames and table positions retained. New undo history started."
         };
     }
 }

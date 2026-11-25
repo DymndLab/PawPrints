@@ -50,7 +50,7 @@ static class PerformanceAcceptance
             throw new Exception($"{label}: captured={actual}, native={expected}");
     }
 
-    // Real 5901 objects, independently enumerated: the portable renderer tests
+    // Real KSA objects, independently enumerated: the portable renderer tests
     // cannot catch dropping a rocket/core or using another nozzle's gimbal.
     static object CheckEngine(EngineController engine, object captured)
     {
@@ -65,15 +65,18 @@ static class PerformanceAcceptance
         int cores = 0;
         foreach (var rocket in engine.Rockets)
         {
-            foreach (var core in rocket.Cores)
+            var rocketCores = rocket.Cores;
+            var conditions = new RocketCoreConditions[rocketCores.Length];
+            rocket.ComputeCoreConditions(1f, conditions);
+            for (int i = 0; i < rocketCores.Length; i++)
             {
+                var core = rocketCores[i];
                 cores++;
                 foreach (var phase in core.Reaction.ReactantPhases)
                     propellants.Add(phase.Name);
-                var conditions = rocket.ComputeCoreConditions(core, 1);
                 foreach (var nozzle in core.Nozzles)
                 {
-                    float thrust = nozzle.ComputePerformance(in conditions, 0).GetTotalThrust();
+                    float thrust = nozzle.ComputePerformance(in conditions[i], 0).GetTotalThrust();
                     if (float.IsFinite(thrust) && thrust > 0)
                         candidates.Add((nozzle, thrust));
                 }
@@ -125,11 +128,14 @@ static class PerformanceAcceptance
             }
             else if (phase == 1 && ++frames > 120)
             {
+                if (Acceptance.LoadPending(KSA.Program.Editor!))
+                    return;
                 Set("drawingPlacement", null!);
                 Set("partsTable", false);
                 Set("flagTable", false);
                 Call("OpenExport");
-                Call("Generate", KSA.Program.Editor!);
+                Call("Generate", KSA.Program.Editor!, true, null!, false);
+                Set("creatingBlank", true);
                 phase = 2;
             }
             else if (phase == 2 && Field("renderTask") == null)
@@ -248,7 +254,11 @@ static class PerformanceAcceptance
                         return;
                     var draft = Field("specDraft")!;
                     var fields = Enum.ToObject(draft.GetType().GetProperty("Fields")!.PropertyType, 1L | 2 | 4 | 8 | 256 | 512 | 1024 | 2048 | 4096 | 8192 | 16384 | 65536);
-                    var fitted = Call("FitSpec", Copy(draft, ("Fields", fields))) ?? throw new Exception("Vehicle block cannot fit");
+                    // Free placement can overlap blocks. Keep the vehicle block clear of
+                    // the engine block and its leader for this routing scenario.
+                    var bounds = Get(draft, "Bounds");
+                    var placed = Activator.CreateInstance(bounds.GetType(), 60f, Get(bounds, "Y"), Get(bounds, "Width"), Get(bounds, "Height"))!;
+                    var fitted = Call("FitSpec", Copy(draft, ("Fields", fields), ("Bounds", placed))) ?? throw new Exception("Vehicle block cannot fit");
                     Call("CancelPlacement");
                     Call("QueueSpecs", Specs(specs.GetValue(0)!, fitted));
                     phase = 9;
@@ -257,7 +267,7 @@ static class PerformanceAcceptance
                 {
                     if (specs.Length != 2)
                         throw new Exception("Vehicle block: " + Field("status"));
-                    Call("Generate", KSA.Program.Editor!);
+                    Call("Generate", KSA.Program.Editor!, false, null!, false);
                     phase = 10;
                 }
                 else if (phase == 10)

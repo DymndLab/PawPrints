@@ -22,7 +22,9 @@ public sealed partial class BlueprintMod
     // History owns the logo lifetime; filename lookup must not retain discarded images.
     static readonly System.Runtime.CompilerServices.ConditionalWeakTable<LogoImage, string> knownLogoNames = new();
     static TitlePreferenceStore? titlePreferences;
-    static long? titleSaveDue;
+    static TitlePreferences profileDefaults = new(new(), "", InitialsSizeVersion: 1);
+    static NewDrawingDraft? logoDraftOwner;
+    static AnnotationDocument? logoDocumentOwner;
     static int creatorInitialsSize = 100, approverInitialsSize = 92;
     static TitleBlockData TitleData => new(companyText.ToString(), creatorText.ToString(), creatorInitials.ToString(), drawDate.ToString(), approverText.ToString(), approverInitials.ToString(), approvalDate.ToString(), 4, selectedLogo, InitialsFont.Names[initialsChoice], InitialsFont.Names[approverStyleChoice], string.IsNullOrWhiteSpace(drawingTitle.ToString()) ? titleCraft ?? "" : drawingTitle.ToString(), drawingSubtitle.ToString(), drawingRevision.ToString(), calculateScale ? "" : string.IsNullOrWhiteSpace(drawingScale.ToString()) ? "NOT TO SCALE" : drawingScale.ToString(), creatorInitialsSize, approverInitialsSize);
 
@@ -43,8 +45,8 @@ public sealed partial class BlueprintMod
         titlePreferences = new(storage);
         drawDate.SetValue(CompanyTitleBlock.LocalDate().AsSpan());
         approvalDate.SetValue(CompanyTitleBlock.LocalDate().AsSpan());
-        approverText.SetValue(TitlePreferenceStore.DefaultApprover.AsSpan());
-        approverInitials.SetValue(TitlePreferenceStore.DefaultApproverInitials.AsSpan());
+        approverText.SetValue(TitleBlockData.DefaultApprover.AsSpan());
+        approverInitials.SetValue(TitleBlockData.DefaultApproverInitials.AsSpan());
         drawingSubtitle.SetValue("GENERAL ARRANGEMENT".AsSpan());
         drawingRevision.SetValue("0".AsSpan());
         drawingScale.SetValue("NOT TO SCALE".AsSpan());
@@ -56,49 +58,36 @@ public sealed partial class BlueprintMod
             if (migrationWarnings.Count > 0)
                 logoMessage = migrationWarnings[0];
             RefreshLogos();
-            var pref = titlePreferences.Load();
-            if (pref == null)
-                return;
-            livePreviewUpdates = pref.LivePreviewUpdates;
-            var d = pref.Data;
-            companyText.SetValue(d.Company.AsSpan());
-            creatorText.SetValue(d.Creator.AsSpan());
-            creatorInitials.SetValue(d.CreatorInitials.AsSpan());
-            approverText.SetValue(d.Approver.AsSpan());
-            approverInitials.SetValue(d.ApproverInitials.AsSpan());
-            initialsChoice = Array.IndexOf(InitialsFont.Names, InitialsFont.Normalize(d.InitialsStyle));
-            approverStyleChoice = Array.IndexOf(InitialsFont.Names, InitialsFont.Normalize(d.ApproverInitialsStyle, InitialsFont.ApproverFace));
-            creatorInitialsSize = Math.Clamp(d.CreatorInitialsSize, 60, 120);
-            approverInitialsSize = Math.Clamp(d.ApproverInitialsSize, 60, 120);
-            drawingSubtitle.SetValue((d.Subtitle ?? "GENERAL ARRANGEMENT").AsSpan());
-            calculateScale = string.IsNullOrWhiteSpace(d.Scale);
-            if (!calculateScale)
-                drawingScale.SetValue(d.Scale.AsSpan());
-            // A new session starts with today's date; these aren't stored approval events.
-            logoName = pref.LogoFile;
-            if (logoFiles.Contains(logoName))
-                LoadLogo(Path.Combine(logoFolder, logoName), false);
+            profileDefaults = titlePreferences.Load() ?? new(new(), "", InitialsSizeVersion: 1);
+            ApplySavedEditorPreferences();
         }
         catch (Exception e) { logoMessage = "Logo settings: " + e.Message; }
     }
 
-    static void SaveTitlePreferences()
+    static void ApplySavedEditorPreferences()
     {
-        titleSaveDue = null;
-        try { titlePreferences?.Save(TitleData, logoName, livePreviewUpdates); }
-        catch (Exception e) { logoMessage = "Could not save title defaults: " + e.Message; }
+        livePreviewUpdates = profileDefaults.LivePreviewUpdates;
+        detailedExport = profileDefaults.DetailedExport;
+        snapPanels = profileDefaults.SnapPanels;
+        defaultLine = (int)profileDefaults.Leader;
+        defaultTip = (int)profileDefaults.Endpoint;
+        livePreviewGate.Reset();
     }
 
-    static void PollTitlePreferences()
+    static bool SaveProfileSettings(TitlePreferences settings)
     {
-        if (titleSaveDue is { } due && Environment.TickCount64 >= due)
-            SaveTitlePreferences();
-    }
-
-    static void FlushTitlePreferences()
-    {
-        if (titleSaveDue != null)
-            SaveTitlePreferences();
+        try
+        {
+            var saved = TitlePreferenceStore.Normalize(settings);
+            (titlePreferences ?? throw new InvalidOperationException("The PawPrints profile is unavailable.")).Save(saved);
+            profileDefaults = saved;
+            return true;
+        }
+        catch (Exception error)
+        {
+            profileMessage = "Could not save defaults: " + error.Message;
+            return false;
+        }
     }
 
     static void RefreshLogos()
@@ -110,8 +99,10 @@ public sealed partial class BlueprintMod
         catch (Exception e) { logoMessage = "Cannot read logo folder: " + e.Message; }
     }
 
-    static void LoadLogo(string path, bool import)
+    static void LoadLogo(string path, bool import, NewDrawingDraft? draft = null)
     {
+        logoDraftOwner = draft;
+        logoDocumentOwner = document;
         logoMessage = "Loading logo...";
         logoTask = Task.Run<(string? Path, LogoImage? Image)>(() => import ? CompanyLogo.Import(path, logoFolder) : (path, CompanyLogo.Load(path)));
     }
@@ -122,23 +113,40 @@ public sealed partial class BlueprintMod
             return;
         var task = logoTask;
         logoTask = null;
+        var draft = logoDraftOwner;
+        bool current = draft != null ? ReferenceEquals(draft, newDrawing) : ReferenceEquals(logoDocumentOwner, document);
+        logoDraftOwner = null;
+        logoDocumentOwner = null;
         try
         {
             var result = task.GetAwaiter().GetResult();
+            if (!current)
+            {
+                RefreshLogos();
+                return;
+            }
             if (result.Path == null)
             {
                 logoMessage = "";
                 return;
             }
-            selectedLogo = result.Image;
-            logoName = Path.GetFileName(result.Path);
-            if (selectedLogo != null)
-                knownLogoNames.AddOrUpdate(selectedLogo, logoName);
+            var name = Path.GetFileName(result.Path);
+            if (result.Image != null) knownLogoNames.AddOrUpdate(result.Image, name);
+            if (draft != null) draft.SetLogo(result.Image, name);
+            else
+            {
+                selectedLogo = result.Image;
+                logoName = name;
+            }
             RefreshLogos();
-            SaveTitlePreferences();
             logoMessage = "Logo ready.";
         }
-        catch (Exception e) { logoMessage = "Logo not loaded: " + e.Message; }
+        catch (Exception error)
+        {
+            if (!current) return;
+            if (draft is { Logo: null }) draft.SetLogo(null, "");
+            logoMessage = "Logo not loaded: " + error.Message;
+        }
     }
 
     static bool ValidTitleDates()
@@ -156,8 +164,7 @@ public sealed partial class BlueprintMod
     {
         ImGui.Text(label);
         ImGui.SetNextItemWidth(-1);
-        if (ImGui.InputText("##Title " + label, value))
-            titleSaveDue = Environment.TickCount64 + 600;
+        ImGui.InputText("##Title " + label, value);
         if (ImGui.IsItemActivated())
             PrintDiagnostics.Record("title.field.focus " + label);
         bool finishedEdit = ImGui.IsItemDeactivatedAfterEdit();
@@ -165,7 +172,6 @@ public sealed partial class BlueprintMod
         if (finishedEdit)
         {
             PrintDiagnostics.Record("title.field.edited " + label);
-            FlushTitlePreferences();
         }
     }
 
@@ -247,17 +253,17 @@ public sealed partial class BlueprintMod
             PrintUiStyle.Help("Printed in the selected handwriting font.");
             ImGui.Text("Handwriting");
             ImGui.SetNextItemWidth(-1);
-            if (ImGui.Combo("##Handwriting"u8, ref handwriting, InitialsFont.Names, InitialsFont.Names.Length))
-                SaveTitlePreferences();
+            ImGui.Combo("##Handwriting"u8, ref handwriting, InitialsFont.Names, InitialsFont.Names.Length);
             ImGui.Text("Initials size");
             ImGui.SetNextItemWidth(-1);
-            if (ImGui.SliderInt("##Initials size"u8, ref size, 60, 120, "%d%%"u8))
-                SaveTitlePreferences();
+            ImGui.SliderInt("##Initials size"u8, ref size, InitialsFont.MinPercent, InitialsFont.MaxPercent, "%d%%"u8);
             Field("Date", date);
             PrintUiStyle.Help("Use YYYY-MM-DD. The drawing export date is added automatically.");
         }
         finally { ImGui.PopID(); }
     }
+
+    static readonly ImInputString logoImportPath = new(4096);
 
     static void DrawCompanyControls()
     {
@@ -269,39 +275,55 @@ public sealed partial class BlueprintMod
         int suggestedWidth = (int)Math.Round(logoWidth * logoFactor / 8) * 8, suggestedHeight = (int)Math.Round(logoHeight * logoFactor / 8) * 8;
         ImGui.Text($"Suggested: {suggestedWidth} x {suggestedHeight} px");
         PrintUiStyle.Help("Use transparent PNG. Square logos also work; proportions are preserved. Single black or white ink follows the theme text color. Two or more visible RGB colors retain their original colors.");
-        var entries = new[] { "None" }.Concat(logoFiles).ToArray();
-        int selected = Array.IndexOf(logoFiles, logoName) + 1;
-        ImGui.SetNextItemWidth(-1);
-        if (ImGui.Combo("##Company logo"u8, ref selected, entries, entries.Length))
-        {
-            if (selected == 0)
-            {
-                selectedLogo = null;
-                logoName = "";
-                logoMessage = "";
-                SaveTitlePreferences();
-            }
-            else
-                LoadLogo(Path.Combine(logoFolder, logoFiles[selected - 1]), false);
-        }
-        if (ImGui.Button("Choose PNG..."u8))
-        {
-            var picker = LogoPicker.Choose(Process.GetCurrentProcess().MainWindowHandle, logoFolder);
-            logoMessage = "Choose a logo file...";
-            logoTask = Task.Run<(string? Path, LogoImage? Image)>(async () => { var path = await picker; return path == null ? (null, null) : CompanyLogo.Import(path, logoFolder); });
-        }
+        DrawLogoSelection();
         if (ImGui.Button("Scan logo folder for new files"))
             RefreshLogos();
-        if (ImGui.IsItemHovered())
-            PrintUiText.Tooltip("Use this after adding PNG files to the logo folder.");
         if (ImGui.Button("Open logo folder"u8))
         {
             try
             {
                 Directory.CreateDirectory(logoFolder);
-                Process.Start(new ProcessStartInfo(logoFolder) { UseShellExecute = true });
+                OpenDesktopPath(logoFolder);
             }
             catch (Exception e) { logoMessage = e.Message; }
+        }
+    }
+
+    static void DrawLogoSelection(NewDrawingDraft? draft = null)
+    {
+        var entries = new[] { "None" }.Concat(logoFiles).ToArray();
+        int selected = Array.FindIndex(logoFiles, name => name.Equals(draft?.LogoName ?? logoName, StringComparison.OrdinalIgnoreCase)) + 1;
+        if (ImGui.Combo("Company logo"u8, ref selected, entries, entries.Length))
+        {
+            if (selected == 0)
+            {
+                if (draft != null) draft.SetLogo(null, "");
+                else
+                {
+                    selectedLogo = null;
+                    logoName = "";
+                }
+                logoMessage = "";
+            }
+            else
+                LoadLogo(Path.Combine(logoFolder, logoFiles[selected - 1]), false, draft);
+        }
+        if (OperatingSystem.IsLinux())
+        {
+            ImGui.InputText("PNG path"u8, logoImportPath);
+            var path = logoImportPath.ToString();
+            ImGui.BeginDisabled(!Path.IsPathFullyQualified(path));
+            if (ImGui.Button("Import PNG"u8))
+                LoadLogo(path, true, draft);
+            ImGui.EndDisabled();
+        }
+        else if (ImGui.Button("Choose PNG..."u8))
+        {
+            var picker = LogoPicker.Choose(Process.GetCurrentProcess().MainWindowHandle, logoFolder);
+            logoDraftOwner = draft;
+            logoDocumentOwner = document;
+            logoMessage = "Choose a logo file...";
+            logoTask = Task.Run<(string? Path, LogoImage? Image)>(async () => { var path = await picker; return path == null ? (null, null) : CompanyLogo.Import(path, logoFolder); });
         }
         if (logoMessage.Length > 0)
             PrintUiText.Wrapped(logoMessage);

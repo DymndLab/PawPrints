@@ -1,8 +1,11 @@
 using System.Numerics;
 namespace Blueprint.Rendering;
 
-record Capture(Mesh[] Meshes);
-record Mesh(string Name, double[][] Vertices, int[] Indices, double[][] SourceVertices, double[][] SourceNormals, double[][] UV, string Surface, TextureInfo? NormalTexture, TextureInfo? DiffuseTexture);
+record Capture(Mesh[] Meshes)
+{
+    internal bool Detailed { get; init; }
+    internal bool NormalLineworkPrepared { get; init; }
+}
 record TextureInfo(string Path, int Width, int Height);
 record Texture(TextureInfo Info, byte[] Pixels)
 {
@@ -23,14 +26,18 @@ record Texture(TextureInfo Info, byte[] Pixels)
         return Vector3.Lerp(Vector3.Lerp(P(ix, iy), P(ix + 1, iy), fx), Vector3.Lerp(P(ix, iy + 1), P(ix + 1, iy + 1), fx), fy);
     }
 }
-record Triangle(int Mesh, Vector3 Face);
+readonly record struct Triangle(int Mesh, Vector3 Face, int Source);
 record HatchEdgeVariant(string Label, float ShadowShift = 0, float Feather = 0, bool CrossOnly = false, int Clearance = 6, int EdgeFade = 0, int EndTaper = 0, int SmoothRadius = 0, float TaperPower = 1, bool TaperCrossOnly = false, bool TaperBoundaryOnly = false);
 sealed partial class BlueprintRenderer
 {
+    CurvatureLines? curvature;
+    readonly Dictionary<int, Vector4> solarBounds = new();
+    float[]? solarInk;
     readonly int W, H;
     readonly int sampleRate;
     readonly Vector2 inkOrigin, referenceSize;
     readonly Capture capture;
+    readonly bool hasFeatureInk;
     readonly string title;
     readonly CancellationToken cancellation;
     readonly float[] depth, tone, luma;
@@ -44,7 +51,7 @@ sealed partial class BlueprintRenderer
     readonly Vector3 right, up, toward;
     readonly Dictionary<string, Texture> textures = new();
     readonly List<(Vector3[] Pos, Vector3[] Norm, Vector2[] UV)> geometry = new();
-    public readonly List<Triangle> Triangles = new();
+    public readonly List<Triangle> Triangles;
     public float MaxFitError;
     float scale, offsetX, offsetY, creaseDegrees = 10;
     bool protectPanelCorners = true;
@@ -64,9 +71,11 @@ sealed partial class BlueprintRenderer
     static Vector3 Unit(Vector3 a) => a.LengthSquared() > 1e-15f ? Vector3.Normalize(a) : Vector3.UnitZ;
 
 
-    public BlueprintRenderer(Capture c, IReadOnlyDictionary<string, Texture> maps, string craftTitle, int view, CancellationToken token, ProjectionFrame? frame = null, int sampleRate = 1, Vector2 inkOrigin = default, Vector2? referenceSize = null)
+    public BlueprintRenderer(Capture c, IReadOnlyDictionary<string, Texture> maps, string craftTitle, int view, CancellationToken token, ProjectionFrame? frame = null, int sampleRate = 1, Vector2 inkOrigin = default, Vector2? referenceSize = null, CurvatureLines? sharedCurvature = null)
     {
-        capture = c;
+        capture = c = NormalLinework.Prepare(c, token);
+        hasFeatureInk = c.Meshes.Any(mesh => mesh.FeatureInk);
+        curvature = sharedCurvature;
         title = craftTitle;
         cancellation = token;
         W = frame?.Width ?? 2400;
@@ -74,18 +83,32 @@ sealed partial class BlueprintRenderer
         this.sampleRate = sampleRate;
         this.inkOrigin = inkOrigin;
         this.referenceSize = referenceSize ?? new(W / (float)sampleRate, H / (float)sampleRate);
-        depth = new float[W * H];
-        tone = new float[W * H];
-        luma = new float[W * H];
-        face = new int[W * H];
-        surfaceNormal = new Vector3[W * H];
-        normalDeviation = new Vector3[W * H];
-        structuralLines = new float[W * H];
-        edgeDistance = new int[W * H];
-        contourCoordinate = new float[W * H];
-        hatchShade = new float[W * H];
-        hatchClearance = new int[W * H];
         token.ThrowIfCancellationRequested();
+        int pixels = RenderMemory.RasterPixels(W, H);
+        long triangles = c.Meshes.Sum(m => m.Indices.LongLength / 3);
+        if (triangles >= NormalLinework.LargeScopeTriangles)
+        {
+            // Complete classification before allocating the raster and projected
+            // geometry, so only its retained result overlaps those buffers.
+            long raster = RenderMemory.LargeRasterGeometry(c, triangles);
+            RenderMemory.RequireGeometry(raster, pixels);
+            curvature ??= CurvatureLines.Build(c, token);
+            RenderMemory.RequireGeometry(checked(raster + curvature.EstimatedRetainedBytes), pixels);
+            Triangles = new(checked((int)triangles));
+        }
+        else
+            Triangles = new();
+        depth = new float[pixels];
+        tone = new float[pixels];
+        luma = new float[pixels];
+        face = new int[pixels];
+        surfaceNormal = new Vector3[pixels];
+        normalDeviation = new Vector3[pixels];
+        structuralLines = new float[pixels];
+        edgeDistance = new int[pixels];
+        contourCoordinate = new float[pixels];
+        hatchShade = new float[pixels];
+        hatchClearance = new int[pixels];
         if (c.Meshes.Length == 0)
             throw new InvalidDataException("No craft geometry.");
         toward = Vector3.Normalize(view switch
@@ -108,46 +131,66 @@ sealed partial class BlueprintRenderer
         foreach (var m in c.Meshes)
         {
             token.ThrowIfCancellationRequested();
-            var src = m.SourceVertices.Select(V).ToArray();
-            var dst = m.Vertices.Select(V).ToArray();
-            // Recover the already-captured affine pose from exact matching vertex order.
-            int a = 0, b = 0, d = 0;
-            float area = 0;
-            for (int j = 0; j < m.Indices.Length; j += 3)
+            Vector3[] pos, norms;
+            Vector2[] uv;
+            if (m.Instance is { } instance)
             {
-                int i0 = m.Indices[j], i1 = m.Indices[j + 1], i2 = m.Indices[j + 2];
-                float test = Vector3.Cross(src[i1] - src[i0], src[i2] - src[i0]).LengthSquared();
-                if (test > area)
+                var normalMatrix = instance.NormalMatrix();
+                pos = new Vector3[m.VertexCount];
+                norms = new Vector3[m.VertexCount];
+                uv = instance.Source.UV;
+                for (int i = 0; i < pos.Length; i++)
                 {
-                    area = test;
-                    a = i0;
-                    b = i1;
-                    d = i2;
+                    if ((i & 4095) == 0) token.ThrowIfCancellationRequested();
+                    pos[i] = instance.PointAt(i).World;
+                    norms[i] = Unit(Vector3.TransformNormal(instance.Source.Normals[i], normalMatrix));
                 }
             }
-            if (area < 1e-15)
-                throw new InvalidDataException("Degenerate source mesh");
-            static Matrix4x4 Basis(Vector3 x, Vector3 y, Vector3 z) => new(x.X, x.Y, x.Z, 0, y.X, y.Y, y.Z, 0, z.X, z.Y, z.Z, 0, 0, 0, 0, 1);
-            var e1 = src[b] - src[a];
-            var e2 = src[d] - src[a];
-            var f1 = dst[b] - dst[a];
-            var f2 = dst[d] - dst[a];
-            Matrix4x4.Invert(Basis(e1, e2, Unit(Vector3.Cross(e1, e2))), out var inv);
-            float k = MathF.Sqrt(f1.Length() * f2.Length() / (e1.Length() * e2.Length()));
-            var transform = inv * Basis(f1, f2, Unit(Vector3.Cross(f1, f2)) * k);
-            var reflected = inv * Basis(f1, f2, -Unit(Vector3.Cross(f1, f2)) * k);
-            float Error(Matrix4x4 t) => src.Select((v, i) => Vector3.Distance(Vector3.TransformNormal(v - src[a], t) + dst[a], dst[i])).Max();
-            if (Error(reflected) < Error(transform))
-                transform = reflected;
-            float error = Error(transform);
-            MaxFitError = Math.Max(MaxFitError, error);
-            if (error > .001f)
-                throw new InvalidDataException($"Source pose mismatch {m.Name}: {error}");
-            Matrix4x4.Invert(transform, out var normInv);
-            var normalMatrix = Matrix4x4.Transpose(normInv);
-            var norms = m.SourceNormals.Select(v => World(Unit(Vector3.TransformNormal(V(v), normalMatrix)))).ToArray();
-            var pos = dst.Select(World).ToArray();
-            var uv = m.UV.Select(v => new Vector2((float)v[0], (float)v[1])).ToArray();
+            else
+            {
+                var src = m.SourceVertices.Select(V).ToArray();
+                var dst = m.Vertices.Select(V).ToArray();
+                // Recover the already-captured affine pose from exact matching vertex order.
+                int a = 0, b = 0, d = 0;
+                float area = 0;
+                for (int j = 0; j < m.Indices.Length; j += 3)
+                {
+                    if ((j / 3 & 16383) == 0)
+                        token.ThrowIfCancellationRequested();
+                    int i0 = m.Indices[j], i1 = m.Indices[j + 1], i2 = m.Indices[j + 2];
+                    float test = Vector3.Cross(src[i1] - src[i0], src[i2] - src[i0]).LengthSquared();
+                    if (test > area)
+                    {
+                        area = test;
+                        a = i0;
+                        b = i1;
+                        d = i2;
+                    }
+                }
+                if (area < 1e-15)
+                    throw new InvalidDataException("Degenerate source mesh");
+                static Matrix4x4 Basis(Vector3 x, Vector3 y, Vector3 z) => new(x.X, x.Y, x.Z, 0, y.X, y.Y, y.Z, 0, z.X, z.Y, z.Z, 0, 0, 0, 0, 1);
+                var e1 = src[b] - src[a];
+                var e2 = src[d] - src[a];
+                var f1 = dst[b] - dst[a];
+                var f2 = dst[d] - dst[a];
+                Matrix4x4.Invert(Basis(e1, e2, Unit(Vector3.Cross(e1, e2))), out var inv);
+                float k = MathF.Sqrt(f1.Length() * f2.Length() / (e1.Length() * e2.Length()));
+                var transform = inv * Basis(f1, f2, Unit(Vector3.Cross(f1, f2)) * k);
+                var reflected = inv * Basis(f1, f2, -Unit(Vector3.Cross(f1, f2)) * k);
+                float Error(Matrix4x4 t) => src.Select((v, i) => Vector3.Distance(Vector3.TransformNormal(v - src[a], t) + dst[a], dst[i])).Max();
+                if (Error(reflected) < Error(transform))
+                    transform = reflected;
+                float error = Error(transform);
+                MaxFitError = Math.Max(MaxFitError, error);
+                if (error > .001f)
+                    throw new InvalidDataException($"Source pose mismatch {m.Name}: {error}");
+                Matrix4x4.Invert(transform, out var normInv);
+                var normalMatrix = Matrix4x4.Transpose(normInv);
+                norms = m.SourceNormals.Select(v => World(Unit(Vector3.TransformNormal(V(v), normalMatrix)))).ToArray();
+                pos = dst.Select(World).ToArray();
+                uv = m.UV.Select(v => new Vector2((float)v[0], (float)v[1])).ToArray();
+            }
             geometry.Add((pos, norms, uv));
             foreach (var p in pos)
             {
@@ -187,6 +230,7 @@ sealed partial class BlueprintRenderer
             cancellation.ThrowIfCancellationRequested();
             var m = capture.Meshes[mi];
             var g = geometry[mi];
+            var solarAxis = m.Surface == "solar" ? m.SolarDirection ?? SolarSketch.SingleSidedAxis(m) : null;
             var pp = g.Pos.Select(Project).ToArray();
             for (int ti = 0; ti < m.Indices.Length; ti += 3)
             {
@@ -201,8 +245,21 @@ sealed partial class BlueprintRenderer
                 if (Math.Abs(det) < .00001)
                     continue;
                 var fn = Unit(Vector3.Cross(g.Pos[b] - g.Pos[a], g.Pos[c] - g.Pos[a]));
+                bool cellFace = false;
+                if (m.Surface == "solar")
+                {
+                    // Keep the geometric plane for crisp rim rejection even with smoothed vertex normals.
+                    var ab = m.LocalPosition(b) - m.LocalPosition(a);
+                    var ac = m.LocalPosition(c) - m.LocalPosition(a);
+                    var plane = Vector3.Cross(ab, ac);
+                    var outward = m.LocalNormal(a) + m.LocalNormal(b) + m.LocalNormal(c);
+                    if (Vector3.Dot(plane, outward) < 0)
+                        plane = -plane;
+                    cellFace = solarAxis is { } axis && Vector3.Dot(plane, axis) > .85f * plane.Length()
+                        && Vector3.Dot(g.Norm[a] + g.Norm[b] + g.Norm[c], toward) > 0;
+                }
                 int id = Triangles.Count;
-                Triangles.Add(new(mi, fn));
+                Triangles.Add(new(mi, fn, ti / 3));
                 var dpdx = ((g.Pos[b] - g.Pos[a]) * e2.Y - (g.Pos[c] - g.Pos[a]) * e1.Y) / det;
                 var dpdy = (-(g.Pos[b] - g.Pos[a]) * e2.X + (g.Pos[c] - g.Pos[a]) * e1.X) / det;
                 var duvdx = ((g.UV[b] - g.UV[a]) * e2.Y - (g.UV[c] - g.UV[a]) * e1.Y) / det;
@@ -224,6 +281,20 @@ sealed partial class BlueprintRenderer
                         face[q] = id;
                         var n = Unit(g.Norm[a] * u + g.Norm[b] * v + g.Norm[c] * w);
                         var uv = g.UV[a] * u + g.UV[b] * v + g.UV[c] * w;
+                        if (cellFace)
+                        {
+                            solarInk ??= new float[W * H];
+                            if (!solarBounds.TryGetValue(mi, out var bounds))
+                            {
+                                bounds = new(g.UV.Min(p => p.X), g.UV.Min(p => p.Y),
+                                    g.UV.Max(p => p.X), g.UV.Max(p => p.Y));
+                                solarBounds.Add(mi, bounds);
+                            }
+                            var size = new Vector2(Math.Max(.00001f, bounds.Z - bounds.X), Math.Max(.00001f, bounds.W - bounds.Y));
+                            solarInk[q] = SolarSketch.Ink((uv - new Vector2(bounds.X, bounds.Y)) / size, duvdx / size, duvdy / size);
+                        }
+                        else if (solarInk != null)
+                            solarInk[q] = 0;
                         surfaceNormal[q] = n;
                         normalDeviation[q] = default;
                         tone[q] = 0;
@@ -263,9 +334,11 @@ sealed partial class BlueprintRenderer
     {
         // Restore the original High study's 10-degree geometry threshold on ALL
         // materials. Material detail is additive and never substitutes for edges.
+        curvature ??= CurvatureLines.Build(capture, cancellation);
         creaseDegrees = degrees;
         Array.Clear(structuralLines);
         float cos = MathF.Cos(degrees * MathF.PI / 180);
+        ReadOnlySpan<int> neighbors = stackalloc[] { -1, 1, -W, W };
         for (int y = 1; y < H - 1; y++)
             for (int x = 1; x < W - 1; x++)
             {
@@ -276,16 +349,37 @@ sealed partial class BlueprintRenderer
                     continue;
                 var t = Triangles[id];
                 float line = 0;
-                foreach (int j in new[] { q - 1, q + 1, q - W, q + W })
+                foreach (int offset in neighbors)
                 {
+                    int j = q + offset;
                     if (face[j] < 0)
                     {
                         line = 1;
                         continue;
                     }
                     var other = Triangles[face[j]];
-                    if (t.Mesh != other.Mesh || Vector3.Dot(t.Face, other.Face) < cos)
+                    if (hasFeatureInk && (capture.Meshes[t.Mesh].FeatureInk || capture.Meshes[other.Mesh].FeatureInk))
+                    {
+                        var a = capture.Meshes[t.Mesh];
+                        var b = capture.Meshes[other.Mesh];
+                        bool separate = t.Mesh != other.Mesh && (!a.LineworkNode.HasValue || a.LineworkNode != b.LineworkNode);
+                        if (separate || Math.Abs(depth[q] - depth[j]) * scale / sampleRate > 2 ||
+                            (t.Mesh == other.Mesh && Vector3.Dot(t.Face, other.Face) < .70710678f))
+                            line = Math.Max(line, .8f);
+                    }
+                    else if (t.Mesh != other.Mesh)
                         line = Math.Max(line, .8f);
+                    else
+                    {
+                        float cosine = Vector3.Dot(t.Face, other.Face);
+                        if (cosine < cos && !curvature.Smooth(t.Mesh, t.Source, other.Source, cos))
+                        {
+                            // Finer folds use lighter ink than the structural 22-degree creases.
+                            const float normalCrease = .92718385f;
+                            float weight = capture.Detailed && cosine >= normalCrease ? .32f : .8f;
+                            line = Math.Max(line, weight);
+                        }
+                    }
                 }
                 structuralLines[q] = line;
             }
@@ -318,6 +412,7 @@ sealed partial class BlueprintRenderer
         // below the general detail threshold. Preserve long runs independently.
         var candidate = new bool[W * H];
         float cos = MathF.Cos(7 * MathF.PI / 180);
+        ReadOnlySpan<int> neighbors = stackalloc[] { -1, 1, -W, W };
         for (int y = 1; y < H - 1; y++)
             for (int x = 1; x < W - 1; x++)
             {
@@ -327,8 +422,9 @@ sealed partial class BlueprintRenderer
                 if (!Foil(q))
                     continue;
                 var a = Triangles[face[q]];
-                foreach (int j in new[] { q - 1, q + 1, q - W, q + W })
+                foreach (int offset in neighbors)
                 {
+                    int j = q + offset;
                     if (!SameCloth(q, j))
                         continue;
                     var b = Triangles[face[j]];

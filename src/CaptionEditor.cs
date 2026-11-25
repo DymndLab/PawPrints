@@ -15,14 +15,11 @@ public sealed partial class BlueprintMod
         var captions = scene.Captions.Select(c => c.ViewId == id ? ViewCaption.Resize(c, scene.Views.Single(v => v.Id == c.ViewId), size) : c).ToArray();
         var labels = document!.Labels.Select(l => l with { ManualPlacement = true }).ToArray();
         var tables = document.Tables;
-        cancellation?.Dispose();
-        cancellation = new();
-        var token = cancellation.Token;
         renderKeepsDocument = true;
         renderAdoptsHistory = false;
         composingLabels = true;
         progress = "Updating view caption";
-        renderTask = Task.Run(() => AnnotationPainting.Compose(current with { Scene = scene.WithCaptions(captions) }, labels, token, tables) with { Notice = "View caption updated. Ctrl+Z undoes the size change." }, token);
+        StartRender(token => AnnotationPainting.Compose(current with { Scene = scene.WithCaptions(captions) }, labels, token, tables) with { Notice = "View caption updated. Ctrl+Z undoes the size change." });
     }
 
 
@@ -30,7 +27,7 @@ public sealed partial class BlueprintMod
     {
         if (editable && hovered && !ControlsLocked && ImGui.IsMouseClicked(ImGuiMouseButton.Right))
         {
-            var mark = sheet!.Scene!.Captions.FirstOrDefault(c => c.Bounds.Contains(point) && !sheet.Scene.Details.Any(d => d.Definition.Bounds.Contains(point)));
+            var mark = sheet!.Scene!.Captions.FirstOrDefault(c => c.Bounds.Contains(point) && canvasTarget?.Kind == DrawingObjectKind.View && canvasTarget?.Id == c.ViewId);
             if (mark != null)
             {
                 captionViewId = mark.ViewId;

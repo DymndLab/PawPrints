@@ -58,11 +58,6 @@ public sealed partial class BlueprintMod
     static unsafe FreeTextBox DrawEditableText(FreeTextBox draft, float height)
     {
         float width = Math.Max(160, ImGui.GetContentRegionAvail().X);
-        if (warningNotice != null)
-        {
-            ImGui.Dummy(new float2(width, height));
-            return draft;
-        }
         var origin = ImGui.GetCursorScreenPos();
         var size = new float2(width, height);
         float scale = Math.Min(1, width / draft.Bounds.Width);
@@ -125,8 +120,10 @@ public sealed partial class BlueprintMod
             }
             catch (Exception e) { textError = "Text rendering unavailable: " + e.Message; }
         }
-        // Overlay the native child so its caret cannot leak through the formatted surface.
-        var draw = ImGui.GetForegroundDrawList();
+        // Keep the formatted surface in its dialog's layer so tooltips and other
+        // popups render above it. The native input child below has transparent
+        // text, selection, frame and scrollbar paint, including its native caret.
+        var draw = ImGui.GetWindowDrawList();
         draw.PushClipRect(origin, origin + size, true);
         try
         {

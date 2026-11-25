@@ -1,4 +1,4 @@
-using Blueprint.Rendering;
+﻿using Blueprint.Rendering;
 using System.Numerics;
 using System.Text.Json;
 
@@ -125,6 +125,30 @@ static class ExplodedChecks
 
     public static void Run(Action<bool, string> check, string output)
     {
+        var guidePixels = new ViewPixels(160, 40, new byte[160 * 40], Enumerable.Repeat(-1, 160 * 40).ToArray());
+        for (int y = 0; y < 40; y++)
+            for (int x = 70; x < 80; x++)
+            {
+                guidePixels.MeshOwners[y * 160 + x] = 0;
+                guidePixels.Ink[y * 160 + x] = 200;
+            }
+        var guidePaths = new[] { (new Vector2(10, 20), new Vector2(150, 20)) };
+        var guideStyles = Enum.GetValues<LeaderLine>().Select(line => AssemblyGuidePainting.Paint(guidePixels, guidePaths, line, default)).ToArray();
+        check(!guideStyles[0].Ink.SequenceEqual(guideStyles[1].Ink) && !guideStyles[1].Ink.SequenceEqual(guideStyles[2].Ink),
+            "Assembly guide dots, dashes and solid lines produce distinct patterns");
+        check(guideStyles.All(p => Enumerable.Range(0, p.Ink.Length).Where(i => p.MeshOwners[i] >= 0).All(i => p.Ink[i] == guidePixels.Ink[i]))
+            && guideStyles.All(p => ReferenceEquals(p.MeshOwners, guidePixels.MeshOwners)),
+            "Every guide pattern preserves geometry ink and picking ownership");
+        check(Enumerable.Range(10, 140).Where(x => x < 70 || x >= 80).All(x => guideStyles[2].Ink[20 * 160 + x] > 0)
+            && guidePixels.Ink.Where((v, i) => guidePixels.MeshOwners[i] < 0).All(v => v == 0),
+            "Solid guides fill the unobscured path without mutating captured pixels");
+        using (var canceledGuide = new CancellationTokenSource())
+        {
+            canceledGuide.Cancel();
+            try { AssemblyGuidePainting.Paint(guidePixels, guidePaths, LeaderLine.Solid, canceledGuide.Token); check(false, "Canceled guide update must stop"); }
+            catch (OperationCanceledException) { check(true, "Guide painting observes render cancellation"); }
+        }
+
         var capture = new Capture(new[] { Cube("Root", 0, 0, 0), Cube("Bay", 0, 2, 0), Cube("Payload", 0, 3, 0), Cube("Panel", 0, -2, 0), Cube("Internal", 0, 2, 1) });
         AssemblyNode[] nodes = [new(1, null, "Root", "root", false), new(2, 1, "Bay", "bay", false), new(3, 2, "Payload", "payload", true), new(4, 1, "Panel", "panel", false), new(5, 2, "Internal", "inner", true)];
         var assembly = new AssemblyCapture(capture, nodes, [1, 2, 3, 4, 5], [false, false, false, false, true]);
@@ -166,6 +190,47 @@ static class ExplodedChecks
         var parentShift = separated.MovedCenters[parentIndex] - separated.OriginalCenters[parentIndex];
         var childShift = separated.MovedCenters[childIndex] - separated.OriginalCenters[childIndex];
         check(AssemblyGraph.Depth(attached, detail, 2) == 1 && AssemblyGraph.Depth(attached, detail, 3) == 2 && Vector3.Distance(childShift, parentShift) > 1, "Successive actual parts receive distinct axis distances instead of translating together while still joined");
+        var mounts = new Dictionary<uint, ExplodedMount>
+        {
+            [3] = new(2, new(1, 2, 0), Vector3.UnitX, Vector3.UnitY, false),
+            [4] = new(2, new(-1, 2, 0), -Vector3.UnitX, Vector3.UnitY, false)
+        };
+        var radial = attached with
+        {
+            Topology = new(new(Guid.NewGuid(), 1), nodes.Select(n => new SourcePart(n.Id, n.TemplateId, null, false)), [])
+            {
+                Mounts = mounts,
+                RadialSymmetry = new Dictionary<uint, uint[]> { [3] = [3, 4] }
+            }
+        };
+        var mounted = ExplodedGeometry.Build(radial, detail with { Groups = [new(3, new(.5f, .35f, 20))] });
+        var guide = mounted.MountGuides[3];
+        check(guide.Start == mounts[3].Point + parentShift && guide.End.X > guide.Start.X &&
+            Math.Abs(guide.End.Y - guide.Start.Y - .35f) < .0001f && guide.End.Z == guide.Start.Z,
+            "Mounted guide starts on the displaced host and separates along its normal plus the tangent offset");
+        var tile = new RenderedDetail(detail, new(1, 1, 1, Vector3.Zero, Vector3.UnitX, Vector3.UnitY, Vector3.UnitZ),
+            [], [1, 3, 4], new(1, 1, [0], [-1])) { Anchor = 1, Mounts = mounts };
+        check(ExplodedGeometry.DragAxes(tile, radial, 3, false, false).OrderBy(a => a.Key).Select(a => a.Value)
+            .SequenceEqual(new[] { Vector3.UnitX, -Vector3.UnitX }), "Symmetry members drag along their own outward normals");
+        check(ExplodedGeometry.DragAxes(tile, radial, 3, false, true).Values.All(a => a == Vector3.UnitY) &&
+            ExplodedGeometry.DragAxes(tile, radial, 3, true, true).Keys.SequenceEqual(new[] { 3u }),
+            "Alt uses the host tangent and Shift isolates the grabbed member");
+        check(ExplodedGeometry.DragAxes(tile with { Groups = [1, 3] }, radial, 3, false, false).Keys.SequenceEqual(new[] { 3u }),
+            "Omitted symmetry members do not receive drag offsets");
+        var outwardAxes = ExplodedGeometry.DragAxes(tile, radial, 3, false, false);
+        var slideAxes = ExplodedGeometry.DragAxes(tile, radial, 3, false, true);
+        var fromPress = new Vector2(5, -4);
+        var outward = outwardAxes[3] * ExplodedGeometry.DragDistance(outwardAxes, 3, tile.Frame, fromPress);
+        var slide = slideAxes[3] * ExplodedGeometry.DragDistance(slideAxes, 3, tile.Frame, fromPress);
+        check(outward == new Vector3(5, 0, 0) && slide == new Vector3(0, 4, 0),
+            "Alt reprojects the same click-to-pointer delta onto slide without retaining the outward preview");
+        var soloSlide = ExplodedGeometry.DragAxes(tile, radial, 3, true, true);
+        check(soloSlide.Count == 1 && soloSlide[3] * ExplodedGeometry.DragDistance(soloSlide, 3, tile.Frame, fromPress) == slide,
+            "Shift during a slide keeps the original click anchor and excludes the other symmetry members");
+        var interiorMounts = mounts.ToDictionary(p => p.Key, p => p.Value with { Interior = true });
+        check(ExplodedGeometry.DragAxes(tile with { Mounts = interiorMounts }, radial, 3, false, true).Count == 2,
+            "Perpendicular cargo-bay mounts can also slide along the bay tangent");
+        CheckRootedScope(check);
         check(AssemblyGraph.PartAncestors(assembly, 3).SequenceEqual(new uint[] { 2, 1 }), "Scope picker walks actual craft parts, omitting authored model components");
         check(AssemblyGraph.Ancestors(assembly, 3).SequenceEqual(new uint[] { 3, 2, 1 }), "Detail scope walks authored subpart and attached ancestor chain to root");
         check(AssemblyGraph.Subtree(assembly, 2).SetEquals(new uint[] { 2, 3, 5 }), "Assembly scope excludes siblings while retaining nested contents");
@@ -253,6 +318,34 @@ static class ExplodedChecks
         };
         original.Scene!.MeshNodes = assembly.MeshNodes;
         var initial = ExplodedPainting.Compose(original, original, [detail], [], default, true);
+        // A distinctive background pixel in the unused frame margin must survive.
+        int marginPixel = ((int)detail.Bounds.Y + 2) * original.PixelWidth + (int)detail.Bounds.X + 2;
+        int rgbIndex = marginPixel * 3;
+        byte priorPixel = original.Scene!.BaseRgb[rgbIndex];
+        original.Scene.BaseRgb[rgbIndex] = 123;
+        var cropped = ExplodedPainting.Compose(original, initial, [detail], [], default);
+        check(cropped.Scene!.BaseRgb[rgbIndex] == 123, "Unused detail frame margin preserves underlying drawing pixels");
+        original.Scene.BaseRgb[rgbIndex] = priorPixel;
+        var transparentTile = initial.Scene!.Details.Single().Pixels;
+        int blank = Enumerable.Range(0, transparentTile.Ink.Length).First(q =>
+            q / transparentTile.Width > transparentTile.Height / 3
+            && q / transparentTile.Width < transparentTile.Height * 2 / 3
+            && q % transparentTile.Width > transparentTile.Width / 3
+            && q % transparentTile.Width < transparentTile.Width * 2 / 3
+            && transparentTile.Ink[q] == 0 && transparentTile.MeshOwners[q] < 0);
+        int hole = (((int)detail.Bounds.Y + 12 + blank / transparentTile.Width) * original.PixelWidth
+            + (int)detail.Bounds.X + 12 + blank % transparentTile.Width) * 3;
+        byte priorHole = original.Scene.BaseRgb[hole];
+        original.Scene.BaseRgb[hole] = 123;
+        var transparent = ExplodedPainting.Compose(original, initial, [detail], [], default);
+        check(transparent.Scene!.BaseRgb[hole] == 123, "Empty pixels inside exploded geometry preserve lower drawing layers");
+        original.Scene.BaseRgb[hole] = priorHole;
+
+        var renamed = ExplodedPainting.Compose(original, initial, [detail with { Caption = "A longer assembly caption" }], [], default);
+        var captionTile = renamed.Scene!.Details.Single();
+        check(ReferenceEquals(captionTile.Pixels, initial.Scene!.Details.Single().Pixels), "Caption length does not resize or rerender exploded geometry");
+        check(captionTile.CaptionBounds.Height == 2 * captionTile.CaptionFont + 27,
+            "Exploded caption reserves separate heading, centered name and scale lines");
         var freeNote = FreeTextPainting.Fit(new(42, "Assembly handling note", new(1700, 150, 500, 100), 32, true, true, true, 2), options);
         var noteSpace = TextBoxPlacement.Space(initial.Scene!, [], []);
         freeNote = freeNote with
@@ -265,6 +358,40 @@ static class ExplodedChecks
         {
             Scene = initial.Scene!.WithFreeText([freeNote])
         }, [], default);
+        var styledRequest = PrintStyles.Apply(notedDetail, LeaderLine.Solid, LeaderTip.None);
+        var styledDetail = PreviewUpdates.Render(styledRequest, original, styledRequest.Options, default);
+        check(styledDetail.Details.Single().GuideLine == LeaderLine.Solid
+            && !styledDetail.Scene!.Details[0].Pixels.Ink.SequenceEqual(notedDetail.Scene!.Details[0].Pixels.Ink),
+            "Line-only live update redraws existing exploded guide pixels instead of reusing dotted tiles");
+        check(styledDetail.Scene!.Details[0].Frame == notedDetail.Scene!.Details[0].Frame
+            && styledDetail.Scene.Details[0].Pixels.MeshOwners.SequenceEqual(notedDetail.Scene.Details[0].Pixels.MeshOwners)
+            && styledDetail.Scene.FreeText.Single() == freeNote,
+            "Guide style update preserves geometry, camera, picking and independent text");
+        var regeneratedStyle = CompositionRegeneration.Rebuild(original, styledRequest, default);
+        check(regeneratedStyle.Rgb.SequenceEqual(styledDetail.Rgb), "Manual regeneration and live guide style update produce identical pixels");
+        var styleHistory = new AnnotationDocument(notedDetail.Scene!, notedDetail.Labels);
+        styleHistory.Rebind(notedDetail.Scene!, notedDetail.Labels, notedDetail.Details, false);
+        styleHistory.Rebind(styledDetail.Scene!, styledDetail.Labels, styledDetail.Details);
+        styleHistory.Undo();
+        var undoneStyle = PreviewUpdates.Render(styledDetail with
+        {
+            Scene = styleHistory.Scene, Details = styleHistory.Details, Labels = styleHistory.Labels
+        }, original, styleHistory.Scene.Options, default);
+        check(styleHistory.Details.Single().GuideLine == LeaderLine.Dotted && undoneStyle.Rgb.SequenceEqual(notedDetail.Rgb),
+            "Undo recomposes the original guide pattern and exact pixels");
+        styleHistory.Rebind(undoneStyle.Scene!, undoneStyle.Labels, undoneStyle.Details, false);
+        styleHistory.Redo();
+        var redoneStyle = PreviewUpdates.Render(undoneStyle with
+        {
+            Scene = styleHistory.Scene, Details = styleHistory.Details, Labels = styleHistory.Labels
+        }, original, styleHistory.Scene.Options, default);
+        check(styleHistory.Details.Single().GuideLine == LeaderLine.Solid && redoneStyle.Rgb.SequenceEqual(styledDetail.Rgb),
+            "Redo recomposes solid assembly guides and exact pixels");
+        check(notedDetail.Details.Single().GuideLine == LeaderLine.Dotted, "Pending global styles leave the accepted detail definition untouched");
+        var hiddenGuides = detail with { Guides = false };
+        var hiddenDots = ExplodedGeometry.Render(source, hiddenGuides, default, options);
+        var hiddenSolid = ExplodedGeometry.Render(source, hiddenGuides with { GuideLine = LeaderLine.Solid }, default, options);
+        check(hiddenDots.Pixels.Ink.SequenceEqual(hiddenSolid.Pixels.Ink), "Disabled assembly guides remain hidden for every line preference");
         var appearance = original.Options with
         {
             Theme = 1,
@@ -400,7 +527,11 @@ static class ExplodedChecks
         var relocatedTables = AnnotationPainting.Compose(initial, [], default, tableLayout);
         var tablesRetained = ExplodedPainting.Compose(original, relocatedTables, [detail with { Bounds = detail.Bounds with { Y = detail.Bounds.Y + 40 } }], [], default, true);
         check(tablesRetained.Scene!.Tables == tableLayout, "Detail recomposition preserves independently moved tables");
-        var noDetails = ExplodedPainting.Compose(original, tablesRetained, [], [], default);
+        var linkedReference = KittenReferences.FromView(tablesRetained.Scene!, 1, detail.ViewId, kind: ScaleReferenceKind.Banana);
+        var withReference = tablesRetained with { Scene = tablesRetained.Scene!.WithKittens([linkedReference]) };
+        var noDetails = ExplodedPainting.Compose(original, withReference, [], [], default);
+        check(noDetails.Scene!.Kittens.Length == 0,
+            "Deleting an exploded view removes its linked scale reference within the same edit");
         check(noDetails.Scene!.Tables == tableLayout, "Removing the last detail preserves table positions");
         var distant = detail with
         {
@@ -528,17 +659,70 @@ static class ExplodedChecks
         document.Rebind(restored.Scene!, restored.Labels, restored.Details);
         check(document.Labels.Length == 1 && document.Details.Length == 1, "Undo deletion restores frame and annotations after geometry regeneration");
         var size = ExplodedPainting.Compose(original, restored, [movedDetail with { Bounds = movedDetail.Bounds with { Width = 1000, Height = 900 } }], document.Labels, default, true);
-        check(size.Scene!.Details[0].Pixels.Width == 976 && size.Scene.Details[0].Pixels.Height == 800, "Resizing detail rerenders its actual viewport resolution with space for a lower caption");
+        check(size.Scene!.Details[0].Pixels.Width == 976 && size.Scene.Details[0].Pixels.Height == 900 - ExplodedPainting.CaptionSpace, "Resizing detail rerenders its actual viewport resolution with space for a lower caption");
         var allShapes = Enumerable.Range(0, 3).SelectMany(o => Enumerable.Range(0, 6).Select(a => options with { Orientation = o, Aspect = a }));
         check(allShapes.All(o => { var b = ExplodedPainting.ClampFrame(new(-999, -999, 9999, 9999), o); var a = FrameLayout.Area(o); return b.X >= a.X && b.Y >= a.Y && b.Right <= a.Right && b.Bottom <= a.Bottom; }), "Movable frame stays in drawable paper for every orientation and ratio");
-        try
-        {
-            ExplodedPainting.Compose(original, initial, [detail, detail with { Id = 2 }], [], default);
-            throw new Exception("Overlapping detail accepted");
-        }
-        catch (InvalidOperationException) { check(true, "Overlapping detail frames are rejected without publishing a partial result"); }
+        var stacked = ExplodedPainting.Compose(original, initial, [detail, detail with { Id = 2 }], [], default);
+        check(stacked.Details.Length == 2, "Transparent exploded details may occupy the same frame");
         string folder = Path.Combine(output, "exploded-fixture");
         Directory.CreateDirectory(folder);
         PrintFiles.Save(size, folder);
+        Png.Write(Path.Combine(folder, "guides-dotted.png"), notedDetail.PixelWidth, notedDetail.PixelHeight, notedDetail.Rgb);
+        Png.Write(Path.Combine(folder, "guides-solid.png"), styledDetail.PixelWidth, styledDetail.PixelHeight, styledDetail.Rgb);
+    }
+    static void CheckRootedScope(Action<bool, string> check)
+    {
+        static JointKey Joint(uint a, uint b) => JointKey.Between(new(a, "end"), new(b, "end"));
+        var nodes = new AssemblyNode[] { new(1, null, "Tank", "tank", false),
+            new(2, 1, "Cargo bay", "bay", false), new(3, 2, "Capsule", "capsule", false),
+            new(4, 2, "Payload", "payload", true), new(5, 1, "Engine", "engine", false) };
+        var links = new SourceLink[] { new(SourceLinkKind.Structural, Joint(2, 1)),
+            new(SourceLinkKind.Structural, Joint(3, 2)), new(SourceLinkKind.Ownership, Joint(2, 4)),
+            new(SourceLinkKind.Structural, Joint(1, 5)), new(SourceLinkKind.Fuel, Joint(3, 5)) };
+        var binding = new SourceBinding(Guid.NewGuid(), 1);
+        var parts = nodes.Select(n => new SourcePart(n.Id, n.TemplateId, n.Subpart ? n.Parent : null, n.Subpart));
+        var assembly = new AssemblyCapture(new([]), nodes, [], []) { Topology = new(binding, parts, links) };
+        var detail = new ExplodedDetail(1, 2, default, "Cargo") { Selection = new(2, [Joint(1, 2), Joint(2, 3)], []) };
+        check(AssemblyGraph.Included(assembly, detail).SetEquals(new uint[] { 2, 4 }), "Both cargo ends can be cut across opposite hierarchy directions while retaining payload");
+        var open = detail with { Selection = detail.Selection! with { Cuts = [] } };
+        check(AssemblyGraph.Included(assembly, open with { Selection = open.Selection! with { Removed = [1] } }).Contains(5),
+            "Removing the tank alone keeps its engine");
+        var branch = open with { Selection = open.Selection! with { RemovedBranches = [1] } };
+        check(!AssemblyGraph.Included(assembly, branch).Contains(5), "Removing a branch blocks traversal through the removed part, ignoring fuel links");
+        var loop = assembly with { Topology = new(binding, parts, [.. links, new(SourceLinkKind.Structural, Joint(3, 5))]) };
+        check(AssemblyGraph.Included(loop, branch).Contains(5), "A separate structural path keeps a downstream part included");
+        var toggled = AssemblyGraph.ToggleBranch(assembly, open, 1);
+        check(AssemblyGraph.Included(assembly, toggled).SetEquals(new uint[] { 2, 3, 4 }),
+            "Clicking a part excludes its branch relative to the cargo root");
+        check(AssemblyGraph.Included(assembly, AssemblyGraph.ToggleBranch(assembly, toggled, 5)).SetEquals(nodes.Select(n => n.Id)),
+            "Clicking a dimmed descendant restores its excluded branch");
+        check(AssemblyGraph.ToggleBranch(assembly, open, 2) == open, "The root stays included when clicked");
+        var whole = new ExplodedDetail(1, 1, new(5, 10, 300, 200), "Tank", Seed: 1, Expanded: [1],
+            Groups: [new(1, Vector3.One)], Sizing: new(1)) { Selection = new(1, [], [4]) };
+        var rerooted = AssemblyGraph.RootSubassembly(loop, whole, 4);
+        check(rerooted.Scope == 2 && rerooted.Seed == 2 && rerooted.Caption == "Cargo bay" &&
+            rerooted.Selection?.Root == 2 && rerooted.Id == whole.Id && rerooted.Bounds == whole.Bounds,
+            "Rerooting from an owned mesh uses the whole part and retains the draft frame");
+        check(AssemblyGraph.Included(loop, rerooted).SetEquals(new uint[] { 2, 3, 4 }) &&
+            rerooted.Selection!.Cuts.Length == 2 && rerooted.Expanded == null && rerooted.Groups == null && rerooted.Sizing == null,
+            "Rerooting includes the new subtree, cutting alternate structural paths and clearing old root-dependent edits");
+        check(ExplodedGeometry.AnchorGroup(loop, rerooted) == 2 && whole.Scope == 1 && whole.Selection!.Removed.Contains(4),
+            "The new root anchors the explosion and the previous draft stays available for undo");
+        check(AssemblyGraph.RootSubassembly(loop, rerooted, 4) == rerooted,
+            "Selecting the current whole-part root leaves its scope unchanged");
+        var upper = AssemblyGraph.ToggleBranch(assembly, detail, 5);
+        check(AssemblyGraph.Included(assembly, upper).SetEquals(new uint[] { 1, 2, 4, 5 }) &&
+            upper.Selection!.Cuts.SequenceEqual(new[] { Joint(2, 3) }) && upper.Scope == 2,
+            "Clicking a dimmed part past the former root restores just that side of the new root");
+        var lower = AssemblyGraph.ToggleBranch(assembly, detail, 3);
+        check(AssemblyGraph.Included(assembly, lower).SetEquals(new uint[] { 2, 3, 4 }) &&
+            lower.Selection!.Cuts.SequenceEqual(new[] { Joint(1, 2) }),
+            "Branches behind a cut can also be restored on the other side of the new root");
+        check(AssemblyGraph.Included(loop, AssemblyGraph.ToggleBranch(loop, rerooted, 5)).SetEquals(nodes.Select(n => n.Id)),
+            "Restoring a dimmed component reconnects each of its joints to the shown assembly");
+        check(AssemblyGraph.Included(assembly, AssemblyGraph.ToggleBranch(assembly, upper, 1)).SetEquals(new uint[] { 2, 4 }),
+            "A restored branch can be excluded again without reopening the other cut");
+        check(AssemblyGraph.GroupFor(assembly, open, 1) == 1 && AssemblyGraph.GroupFor(assembly, open, 4) == 2,
+            "Scoped geometry groups upstream parts and keeps owned meshes with their parent");
     }
 }

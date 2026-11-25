@@ -8,6 +8,10 @@ public sealed class Acceptance
     static string? instance;
     Harmony? harmony;
 
+    internal static bool LoadPending(KSA.VehicleEditor editor) =>
+        typeof(KSA.VehicleEditor).GetField("_historyCommitPending",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(editor) is true;
+
     [StarMapBeforeMain]
     public void Load()
     {

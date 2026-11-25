@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Blueprint.Storage;
 using System.Security.Cryptography;
 using Blueprint.Rendering;
@@ -14,7 +15,8 @@ namespace Blueprint;
 public sealed partial class BlueprintMod
 {
     const string Owner = "blueprint.exporter.5801";
-    public const string SupportedHash = "170C28AA34845026195C89A23C0F3C241DB00EA4A8B86EF60EC097C32A7F8A39";
+    public const string SupportedHash = "FA741419E287FB7F673FBA3212BE622B5FC27DB91FA4A6632828FB9DA7B15C7E";
+    const string SupportedBuild = "2026.11.25.5949";
     static readonly string[] Views = ["Three-quarter", "Front", "Side", "Top", "Isometric"];
     static readonly string[] Themes = ["Blue", "White", "Cream", "Charcoal"];
     static readonly string[] GridWeights = ["Uniform", "Every 5 squares", "Every 5 and 10 squares"];
@@ -30,7 +32,8 @@ public sealed partial class BlueprintMod
     static bool captions = true, partsTable, flagTable;
     static FixedViewLayout boxLayout = new();
     static bool zones = true;
-    static int customWidth = 2560, customHeight = 1440, desktopPreset = 1, customWidthEdit = 2560, customHeightEdit = 1440;
+    static int customWidth = ImagePresets.Default.Width, customHeight = ImagePresets.Default.Height;
+    static int desktopPreset = 1, customWidthEdit = customWidth, customHeightEdit = customHeight;
     static AnnotationDocument? document;
     internal static bool MenuHookRan
     {
@@ -39,19 +42,22 @@ public sealed partial class BlueprintMod
 
 
     static bool HasEditorVehicle => KSA.Program.Editor?.EditingSpace.Parts is { } tree && tree.Parts.Length > 0;
+    static bool CanOpenWorkspace => HasEditorVehicle || sheet != null && KSA.Program.Editor is { } editor &&
+        ReferenceEquals(editor, sourceEditor) && sourceCraft == editor.EditingSpace.Id;
     static bool NativeDialogOpen => GameSettings.Show || GameSaves.IsOpen || VehicleSaves.IsOpen;
 
     internal static void OpenExport()
     {
-        if (!enabled || !HasEditorVehicle)
+        if (!enabled || !CanOpenWorkspace)
             return;
+        if (!open)
+            fallbackReopen++;
         open = true;
         workspaceFocus.Request();
     }
     static VehicleEditor? sourceEditor;
     static string? sourceCraft;
     static Task<Sheet>? renderTask;
-    static Task<string>? saveTask;
     static CancellationTokenSource? cancellation;
     static Sheet? sheet;
     static PreviewTexture? preview;
@@ -62,7 +68,7 @@ public sealed partial class BlueprintMod
     static string progress = "";
     static string? exportFolder;
     static bool busy => renderTask != null || saveTask != null || logoTask != null || exportFolderTask != null;
-    static PrintOptions Options => new(view, theme, grid, archivalWear > 0, emphasis switch { 1 => 5, 2 => 10, _ => 0 }, layout, visibleViews, captions, partsTable, flagTable, drawingSize, pageOrientation, pageAspect, brand, TitleData, arrangement, boxLayout, drawingPlacement, zones, customWidth, customHeight, archivalWear);
+    static PrintOptions Options => new(view, theme, grid, archivalWear > 0, emphasis switch { 1 => 5, 2 => 10, _ => 0 }, layout, visibleViews, captions, partsTable, flagTable, drawingSize, pageOrientation, pageAspect, brand, TitleData, arrangement, boxLayout, drawingPlacement, zones, customWidth, customHeight, archivalWear, outputTarget == 0 ? DrawingOutput.DesktopBackground : DrawingOutput.Image, FreeLayout: true, TitleBlockVisible: titleBlockVisible, WearSeed: sheet?.Options.WearSeed ?? 0, ProjectionAngle: CurrentProjectionAngle);
 
 
 
@@ -73,17 +79,26 @@ public sealed partial class BlueprintMod
         {
             var hash = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(typeof(VehicleEditor).Assembly.Location)));
             if (hash != SupportedHash)
-                throw new NotSupportedException("Paw Prints requires inspected KSA build 5901; no patches applied.");
+                throw new NotSupportedException(
+                    $"PawPrints requires the inspected KSA build {SupportedBuild}. Installed KSA.dll SHA-256: {hash}. No patches applied.");
             // StarMap resolves both -InstancePath and its environment override here.
             // Reading the environment first would bypass its precedence rules.
             PrintDiagnostics.Start(Path.Combine(KSA.Constants.DocumentsFolderPath, "logs"), PrintIdentity.Version);
+#if PAWPRINTS_PORTABLE_RENDERING
+            if (OperatingSystem.IsLinux())
+                PortableRendering.Initialize(Path.Combine(Path.GetDirectoryName(typeof(VehicleEditor).Assembly.Location)!,
+                    "Content", "Core", "JetBrainsMono-Regular.ttf"));
+#else
+            if (OperatingSystem.IsLinux())
+                throw new PlatformNotSupportedException("This PawPrints build uses the Windows drawing backend.");
+#endif
             InitializeExportFolder();
             InitializeTitleBlock();
             harmony = new Harmony(Owner);
             harmony.PatchAll(typeof(BlueprintMod).Assembly);
             enabled = true;
             PrintDiagnostics.Record("mod.loaded");
-            Console.WriteLine("[Paw Prints] V" + PrintIdentity.Version + " loaded for KSA 5901. PNG destination: " + exportFolder);
+            Console.WriteLine($"[Paw Prints] V{PrintIdentity.Version} loaded for KSA {SupportedBuild}. PNG destination: {exportFolder}");
         }
         catch (Exception e) { PrintDiagnostics.Error("mod.load", e); Console.WriteLine("[PawPrints] Disabled: " + e); harmony?.UnpatchAll(Owner); }
     }
@@ -92,13 +107,17 @@ public sealed partial class BlueprintMod
     [StarMapUnload]
     public void Unload()
     {
-        FlushTitlePreferences();
+        DiscardDrawingDraft();
+        ReleaseSetupPaper();
         enabled = false;
         open = false;
-        cancellation?.Cancel();
+        InvalidateRendering();
         CancelTextPreview();
         CancelGhost();
         DisposeGhosts();
+        DisposeWearTextures();
+        ClearSetupGesture();
+        ReleaseSetupSketch();
         // Worker owns only managed snapshots. Its task is observed even if the UI never draws again.
         if (renderTask != null)
             _ = renderTask.ContinueWith(t => { _ = t.Exception; }, TaskContinuationOptions.OnlyOnFaulted);
@@ -110,8 +129,12 @@ public sealed partial class BlueprintMod
         basePrint = null;
         sourceEditor = null;
         document = null;
+        acceptedDocument = null;
+        acceptedDefinition = null;
+        ResetCraftRefresh();
         CancelPlacement();
         ResetDetailEditor();
+        ReleasePrecisionCursor();
         harmony?.UnpatchAll(Owner);
         PrintDiagnostics.Stop();
     }
@@ -126,11 +149,13 @@ public sealed partial class BlueprintMod
         static void Prefix()
         {
             // Release Vulkan resources while the device and ImGui backend still exist.
-            FlushTitlePreferences();
+            DiscardDrawingDraft();
+            ReleaseSetupPaper();
             PrintDiagnostics.Record("game.shutdown");
+            ReleasePrecisionCursor();
             enabled = false;
             open = false;
-            cancellation?.Cancel();
+            InvalidateRendering();
             CancelTextPreview();
             CancelGhost();
             DisposeGhosts();
@@ -140,6 +165,9 @@ public sealed partial class BlueprintMod
             basePrint = null;
             sourceEditor = null;
             document = null;
+            acceptedDocument = null;
+            acceptedDefinition = null;
+            ResetCraftRefresh();
             CancelPlacement();
             ResetDetailEditor();
         }
@@ -156,29 +184,34 @@ public sealed partial class BlueprintMod
         {
             if (!ReferenceEquals(sourceEditor, __instance))
                 return;
-            cancellation?.Cancel();
+            InvalidateRendering();
             preview?.Dispose();
             preview = null;
             sheet = null;
             basePrint = null;
             sourceEditor = null;
             document = null;
+            acceptedDocument = null;
+            acceptedDefinition = null;
+            ResetCraftRefresh();
             CancelPlacement();
             ResetDetailEditor();
             drawingPlacement = new(100, []);
-            workspaceAttempt = null;
             status = "Editor closed. Generate a fresh preview after loading a craft.";
         }
     }
 
 
 
-    internal static void Generate(VehicleEditor editor)
+    internal static void Generate(VehicleEditor editor, bool startFresh = false,
+        LayoutTemplate? starter = null, bool fitStarter = false) =>
+        GenerateDrawing(editor, startFresh, starter, fitStarter, null);
+
+    static void GenerateDrawing(VehicleEditor editor, bool startFresh, LayoutTemplate? starter, bool fitStarter, PrintOptions? setupOptions)
     {
-        EnsureDrawingTitle(editor);
-        if (busy || !ValidTitleDates())
+        if (setupOptions == null) EnsureDrawingTitle(editor);
+        if (busy || (setupOptions == null && !ValidTitleDates()))
             return;
-        SaveTitlePreferences();
         try
         {
             PrintDiagnostics.Record("generate.capture.begin");
@@ -186,11 +219,16 @@ public sealed partial class BlueprintMod
             composingLabels = false;
             renderKeepsDocument = false;
             renderAdoptsHistory = false;
-            var capture = CraftCapture.Take(editor);
+            var revision = ObserveCraft(editor);
+            bool refresh = !startFresh && sheet?.PoseSource != null && ReferenceEquals(sourceEditor, editor) &&
+                sourceCraft == editor.EditingSpace.Id && acceptedCraft != revision;
+            var options = setupOptions ?? Options;
+            var capture = CraftCapture.TakeForDrawing(editor, options.Page, sheet, basePrint);
+            if (revision != ObserveCraft(editor))
+                throw new InvalidOperationException("The vehicle changed during capture. Generate PawPrint to try again.");
             PrintDiagnostics.Record("generate.capture.complete");
-            var options = Options;
             var parts = CraftCapture.LabelParts(capture);
-            var previous = ReferenceEquals(sourceEditor, editor) && sourceCraft == capture.Name && sheet != null && document != null
+            var previous = !startFresh && ReferenceEquals(sourceEditor, editor) && sourceCraft == capture.Name && sheet != null && document != null
                 ? sheet with
                 {
                     Scene = document.Scene,
@@ -199,61 +237,42 @@ public sealed partial class BlueprintMod
                 } : null;
             if (previous != null)
                 previous = PendingStyle(previous);
+            if (setupOptions == null && (previous == null || startFresh))
+                options = options with { WearSeed = WearPlacement.NewSeed() };
             renderAppliesSettings = true;
-            if (previous?.Scene?.Drawing != null && options.Drawing != null && previous.Options.Page != options.Page)
-                options = options with
-                {
-                    Drawing = DrawingPlacements.Repage(previous.Scene, options)
-                };
-            renderKeepsDocument = previous != null;
+            renderKeepsDocument = !startFresh && previous != null;
             sourceEditor = editor;
             sourceCraft = capture.Name;
-            cancellation?.Dispose();
-            cancellation = new();
-            var token = cancellation.Token;
+            observedCraft = capturedCraft = revision;
+            if (refresh) PrintDiagnostics.Record("craft.refresh.begin");
             progress = "Reading materials";
-            renderTask = Task.Run(() =>
+            StartRender(token =>
             {
                 PrintDiagnostics.Record("generate.render.begin");
+                long started = Stopwatch.GetTimestamp();
+                long allocated = GC.GetAllocatedBytesForCurrentThread();
                 var maps = new Dictionary<string, Texture>();
                 foreach (var pair in capture.Textures)
                 {
                     token.ThrowIfCancellationRequested();
                     maps.Add(pair.Key, pair.Value.Decode(token));
                 }
-                var poses = previous?.Scene?.Poses ?? [];
-                var poseSource = new PoseSource(capture.Assembly!, capture.Poses, capture.Geometry.Meshes.Length, parts, maps, capture.Performance);
-                PartPoses.Validate(poseSource, poses, SheetLayout.Plan(capture.Geometry, options).Select(v => v.Id).Concat(previous?.Details.Select(d => d.ViewId) ?? []));
-                if (previous != null && previous.Options.Page != options.Page && options.Drawing is { } repaged)
-                {
-                    var envelope = poses.Length == 0 ? capture.Geometry : new Capture(repaged.Views.SelectMany(v =>
-                        PartPoses.Exterior(poseSource, PartPoses.Apply(poseSource, poses, v.Id)).Meshes).ToArray());
-                    options = options with
-                    {
-                        Drawing = DrawingPlacements.FitToPage(envelope, options, repaged, CompositionRegeneration.RepageObstacles(previous.Scene!, options))
-                    };
-                }
-                var result = PosePainting.RenderMain(poseSource, capture.Name, options, capture.Warnings, poses, token, composeAnnotations: previous == null);
-                if (options.Drawing == null)
-                    result = PosePainting.RenderMain(poseSource, capture.Name, options with
-                    {
-                        Drawing = DrawingPlacements.FromScene(result.Scene!)
-                    }, capture.Warnings, poses, token, composeAnnotations: previous == null);
-                if (previous != null)
-                {
-                    Volatile.Write(ref progress, "Restoring notes and detail frames");
-                    return CompositionRegeneration.Rebuild(result, previous, token);
-                }
+                long decoded = Stopwatch.GetTimestamp();
+                var poseSource = new PoseSource(capture.Assembly!, capture.Poses, capture.Geometry.Meshes.Length, parts, maps, capture.Performance) { DetachedGeometryBytes = capture.DetachedGeometryBytes };
+                var result = starter != null
+                    ? StarterDrawings.Render(poseSource, capture.Geometry, capture.Name, options, capture.Warnings, starter, fitStarter, token)
+                    : PrintGeneration.Render(poseSource, capture.Geometry, capture.Name, options, capture.Warnings, previous, startFresh, token, refresh);
+                PrintDiagnostics.Record($"generate.render.complete materials={maps.Count} material_ms={(long)Stopwatch.GetElapsedTime(started, decoded).TotalMilliseconds} drawing_ms={(long)Stopwatch.GetElapsedTime(decoded).TotalMilliseconds} worker_allocated_bytes={GC.GetAllocatedBytesForCurrentThread() - allocated}");
                 return result;
-            }, token);
+            });
         }
-        catch (Exception e) { renderAppliesSettings = false; PrintDiagnostics.Error("generate.capture", e); ReportFailure("Export unavailable: " + e.Message); Console.WriteLine("[PawPrints] " + e); }
+        catch (Exception e) { capturedCraft = null; renderAppliesSettings = false; PrintDiagnostics.Error("generate.capture", e); ReportFailure("Export unavailable: " + e.Message); Console.WriteLine("[PawPrints] " + e); }
     }
 
 
     internal static void Poll()
     {
-        PollTitlePreferences();
+        PollProfileTransfer();
         PollExportFolder();
         PollLogo();
         PollGhost();
@@ -262,41 +281,42 @@ public sealed partial class BlueprintMod
         if (renderTask?.IsCompleted == true)
         {
             var completed = renderTask;
+            var job = renderJobs.Current;
             renderTask = null;
+            PreviewTexture? replacement = null;
             try
             {
-                var result = completed.GetAwaiter().GetResult();
-                if (cancellation?.IsCancellationRequested == true)
+                if (job == null || !ReferenceEquals(job.Task, completed) || !renderJobs.Matches(job, CurrentRenderRevision))
                 {
-                    status = "Preview cancelled.";
+                    _ = completed.Exception;
+                    PrintDiagnostics.Record("preview.discarded.stale");
+                    drawingNotices.Add(new("preview.stale", "Discarded an outdated render result."));
                     return;
                 }
-                var regenerated = result.RegeneratedBase;
-                result = result with
+                var result = completed.GetAwaiter().GetResult();
+                if (!renderJobs.CanAccept(job, CurrentRenderRevision))
                 {
-                    RegeneratedBase = null
-                };
-                if (result.Scene != null && result.Scene.Drawing == null)
-                {
-                    var adopted = DrawingPlacements.FromScene(result.Scene);
-                    var adoptedOptions = result.Options with
-                    {
-                        Drawing = adopted
-                    };
-                    result = result with
-                    {
-                        Options = adoptedOptions,
-                        Scene = result.Scene.WithOptions(adoptedOptions).WithDrawing(adopted)
-                    };
-                    if (regenerated != null)
-                        regenerated = regenerated with
-                        {
-                            Options = adoptedOptions,
-                            Scene = regenerated.Scene!.WithOptions(adoptedOptions).WithDrawing(adopted)
-                        };
+                    KeepAcceptedPrintEditable();
+                    AddActivity("render.cancelled", "Preview cancelled. Your drawing is still available.", notify: true);
+                    return;
                 }
-                if (renderAdoptsHistory)
+                var policy = renderPolicy ?? throw new InvalidOperationException("Render request has no commit policy.");
+                renderKeepsDocument = policy.KeepDocument;
+                renderAdoptsHistory = policy.AdoptHistory;
+                renderAppliesSettings = policy.ApplySettings;
+                long publishStarted = Stopwatch.GetTimestamp();
+                var prepared = DrawingAcceptance.Prepare(result, document, renderKeepsDocument, renderAdoptsHistory);
+                double prepareMs = Stopwatch.GetElapsedTime(publishStarted).TotalMilliseconds;
+                result = prepared.Sheet;
+                var regenerated = prepared.RegeneratedBase;
+                // Allocate/upload before changing accepted state or disposing its preview.
+                long uploadStarted = Stopwatch.GetTimestamp();
+                replacement = new PreviewTexture(result);
+                double uploadMs = Stopwatch.GetElapsedTime(uploadStarted).TotalMilliseconds;
+                if (renderAdoptsHistory || (creatingBlank && newDrawing != null))
                 {
+                    if (pendingProjectLogo is { } file && result.Options.TitleBlock?.Logo is { } image)
+                        knownLogoNames.AddOrUpdate(image, file);
                     AdoptPrintSettings(result.Options);
                     printStyleDirty = false;
                     var firstLabel = result.Labels.FirstOrDefault();
@@ -306,7 +326,9 @@ public sealed partial class BlueprintMod
                         defaultLine = (int)(firstLabel?.Line ?? firstSpec!.Line);
                         defaultTip = (int)(firstLabel?.Tip ?? firstSpec!.Tip);
                     }
-                    SaveTitlePreferences();
+                    else if (result.Details.FirstOrDefault() is { } firstDetail)
+                        defaultLine = (int)firstDetail.GuideLine;
+                    if (creatingBlank && newDrawing != null) ApplySavedEditorPreferences();
                 }
                 if (renderAppliesSettings)
                 {
@@ -317,20 +339,32 @@ public sealed partial class BlueprintMod
                 draftRatio = drawingPlacement?.Ratio ?? 100;
                 partsTable = result.Options.PartsTable;
                 flagTable = result.Options.FlagTable;
-                var replacement = new PreviewTexture(result);
+                long retireStarted = Stopwatch.GetTimestamp();
                 preview?.Dispose();
+                double retireMs = Stopwatch.GetElapsedTime(retireStarted).TotalMilliseconds;
                 preview = replacement;
-                sheet = result;
+                replacement = null;
+                var previous = sheet;
+                ReportCanvasClipping(previous, result);
+                sheet = result with { Refresh = null };
+                if (capturedCraft is { } revision)
+                {
+                    acceptedCraft = revision;
+                    AcceptCraftRefresh(previous, result.Refresh);
+                }
                 if (result.PoseMain != null && result.Options.Boxes != null)
                     boxLayout = result.Options.Boxes;
                 if (!renderKeepsDocument)
                 {
+                    missingRoots.Clear();
+                    replacementDetail = missingDetailDelete = -1;
                     basePrint = result;
                     if (result.Options.Boxes != null)
                         boxLayout = result.Options.Boxes;
                     ResetDetailEditor();
                     templatesOpen = false;
                     beforeTemplates = null;
+                    beforeDrawing = null;
                 }
                 if (regenerated != null)
                 {
@@ -339,34 +373,66 @@ public sealed partial class BlueprintMod
                         boxLayout = result.Options.Boxes;
                     templatesOpen = false;
                     beforeTemplates = null;
+                    beforeDrawing = null;
                 }
-                if (regenerated != null && document != null && result.Scene != null)
-                    document.Regenerate(result.Scene, result.Labels, result.Details);
-                else if (renderKeepsDocument && document != null && result.Scene != null)
-                    document.Rebind(result.Scene, result.Labels, result.Details, !renderAdoptsHistory);
-                else if (result.Scene != null && !ReferenceEquals(document?.Scene, result.Scene))
+                document = prepared.Document;
+                acceptedDocument = document.Fork();
+                acceptedDefinition = prepared.Definition;
+                if (pendingProjectOpen is { } openedProject)
                 {
-                    document = new(result.Scene, result.Labels);
+                    MarkProjectSaved(openedProject);
+                    DiscardDrawingDraft();
+                    setupStage = SetupStage.Editing;
+                    AddActivity("project.opened", "Editable drawing opened.", notify: true);
+                }
+                if (!renderKeepsDocument)
+                {
                     selectedLabel = -1;
                     CancelPlacement();
                 }
-                else if (document != null && !document.Labels.SequenceEqual(result.Labels) && !document.Apply(result.Labels, out var reason))
-                    throw new InvalidOperationException(reason);
                 if (renderKeepsDocument)
                 {
                     int label = selectedLabel;
                     var group = selectedGroup;
                     SelectDetail(selectedDetail);
-                    selectedLabel = label;
+                    selectedLabel = document.Labels.Any(l => l.Id == label) ? label : -1;
                     selectedGroup = group;
+                }
+                if (result.Refresh != null)
+                {
+                    if (listedObject is { Kind: DrawingObjectKind.Label } selected && !document.Labels.Any(l => l.Id == selected.Id))
+                        listedObject = null;
+                    canvasTarget = null;
                 }
                 detailCommitQueued = false;
                 renderAdoptsHistory = false;
                 status = result.Notice ?? $"Preview ready - {result.Options.OutputPage.Width} x {result.Options.OutputPage.Height} PNG. Hover over a part and drag out a label.";
+                if (creatingBlank)
+                {
+                    DiscardDrawingDraft();
+                    setupStage = SetupStage.Editing;
+                }
+                if (captureForView)
+                {
+                    captureForView = false;
+                    BeginViewDraft(null, captureViewCamera);
+                }
+                if (captureForDetail)
+                {
+                    captureForDetail = false;
+                    BeginExplodedPlacement();
+                }
+                double publishMs = Stopwatch.GetElapsedTime(publishStarted).TotalMilliseconds;
+                if (publishMs >= 16)
+                    PrintDiagnostics.Record($"preview.publish page_pixels={(long)result.PixelWidth * result.PixelHeight} prepare_ms={(long)prepareMs} upload_ms={(long)uploadMs} retire_ms={(long)retireMs} total_ms={(long)publishMs}");
                 PrintDiagnostics.Record("preview.ready");
                 Console.WriteLine("[PawPrints] Preview ready: " + sheet.Title);
             }
-            catch (OperationCanceledException) { status = "Preview cancelled."; }
+            catch (OperationCanceledException)
+            {
+                KeepAcceptedPrintEditable();
+                AddActivity("render.cancelled", "Preview cancelled. Your drawing is still available.", notify: true);
+            }
             catch (Exception e)
             {
                 if (detailCommitQueued)
@@ -382,39 +448,59 @@ public sealed partial class BlueprintMod
             }
             finally
             {
+                creatingBlank = false;
+                captureForView = captureForDetail = false;
+                replacement?.Dispose();
+                if (job != null)
+                    renderJobs.Finish(job);
+                cancellation = null;
+                renderPolicy = null;
+                capturedCraft = null;
+                pendingProjectOpen = pendingProjectLogo = null;
                 renderAppliesSettings = false;
                 renderAdoptsHistory = false;
             }
         }
-        if (saveTask?.IsCompleted == true)
-        {
-            var completed = saveTask;
-            saveTask = null;
-            try
-            {
-                status = "Saved: " + completed.GetAwaiter().GetResult();
-                PrintDiagnostics.Record("save.complete");
-                Console.WriteLine("[PawPrints] " + status);
-            }
-            catch (Exception e) { PrintDiagnostics.Error("save", e); ReportFailure("Save failed: " + e.Message); Console.WriteLine("[PawPrints] " + e); }
-        }
+        PollFinalExport();
     }
 
 
+    static void DrawRenderProgress()
+    {
+        if (renderTask == null || activeProgress == null) return;
+        double elapsed = Stopwatch.GetElapsedTime(renderStarted).TotalSeconds;
+        if (elapsed < .3) return;
+
+        var size = ImGui.GetWindowSize();
+        float width = Math.Min(300, size.X - 32);
+        if (width < 80 || size.Y < 60) return;
+        var origin = ImGui.GetWindowPos() + new float2((size.X - width) / 2, size.Y - 52);
+        var draw = ImGui.GetWindowDrawList();
+        var state = activeProgress.Latest;
+        draw.AddRectFilled(origin, origin + new float2(width, 34), 0xF0292521);
+        draw.AddText(origin + new float2(8, 3), 0xFFF3F0E8, state.Label);
+        float track = width - 16;
+        var start = origin + new float2(8, 26);
+        draw.AddRectFilled(start, start + new float2(track, 3), 0xFF595550);
+        float left = 0, right = track * state.Fraction.GetValueOrDefault();
+        if (state.Fraction == null)
+        {
+            left = (float)(.5 - .5 * Math.Cos(elapsed * 4)) * track * .75f;
+            right = left + track * .25f;
+        }
+        draw.AddRectFilled(start + new float2(left, 0), start + new float2(right, 3), 0xFF6DCAFA);
+    }
+
     internal static void Save()
     {
-        if (busy || sheet == null || !PrintIsCurrent)
+        if (busy || sheet == null || !PrintIsCurrent || ExportRefreshBlock != null)
             return;
         if (exportFolder == null)
         {
             exportSetupOpen = true;
             return;
         }
-        var result = sheet;
-        var folder = exportFolder;
-        PrintDiagnostics.Record("save.begin");
-        status = "Saving PNG";
-        saveTask = Task.Run(() => PrintFiles.Save(result, folder, requireExistingFolder: true));
+        BeginFinalExport(review: false);
     }
 
 
@@ -424,24 +510,28 @@ public sealed partial class BlueprintMod
             return;
         PrintDiagnostics.State("editor", open ? "open" : "closed");
         EnsureDrawingTitle(editor);
-        Poll();
         if (sourceEditor != null && (!ReferenceEquals(sourceEditor, editor) || sourceCraft != editor.EditingSpace.Id))
         {
-            cancellation?.Cancel();
+            InvalidateRendering();
             sheet = null;
             preview?.Dispose();
             preview = null;
             sourceEditor = null;
             document = null;
+            acceptedDocument = null;
+            acceptedDefinition = null;
+            ResetCraftRefresh();
             basePrint = null;
             CancelPlacement();
             ResetDetailEditor();
             drawingPlacement = new(100, []);
-            workspaceAttempt = null;
             livePreviewGate.Reset();
             printStyleDirty = false;
             status = "Craft changed. Generate a fresh preview.";
         }
+        ObserveCraftChanges(editor);
+        Poll();
+        if (!open || setupStage != SetupStage.SelectViews) ReleaseSetupPaper();
         if (!open)
         {
             viewSizeDialog = false;
@@ -453,12 +543,6 @@ public sealed partial class BlueprintMod
             panning = false;
             return;
         }
-        if (!exportPrompted)
-        {
-            exportPrompted = true;
-            exportSetupOpen = exportFolder == null;
-        }
-        EnsureWorkspace(editor);
         if (!workspaceFocus.Prepare(new float2(viewport.Size.X, viewport.Size.Y), NativeDialogOpen))
         {
             annotationKeysActive = false;
@@ -483,6 +567,17 @@ public sealed partial class BlueprintMod
             {
                 if (shown)
                 {
+                    if (sheet == null && setupStage == SetupStage.Editing)
+                        setupStage = SetupStage.Choose;
+                    if (setupStage != SetupStage.Editing)
+                    {
+                        DrawDrawingSetup(editor);
+                        return;
+                    }
+                    if (!ImGui.IsWindowFocused(ImGuiFocusedFlags.RootAndChildWindows) &&
+                        (choosingProjectionSource || ghostPress != null || groupDrag != null || dragView != null || dragText != null || dragSpec != null || dragKitten != null || dragHeight != null || dragLabel != null || dragDetail != null || dragTable >= 0))
+                        CancelPlacement();
+                    TryAutoRefresh(editor);
                     DrawWorkspaceHeader(editor);
                     ImGui.Separator();
                     annotationKeysActive = !ShowingTemplates && ImGui.IsWindowFocused(ImGuiFocusedFlags.RootAndChildWindows) && !ImGui.GetIO().WantTextInput;
@@ -495,7 +590,7 @@ public sealed partial class BlueprintMod
                     ImGui.BeginChild("Print controls"u8, new float2(controlsWidth, 0), ImGuiChildFlags.None, ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse);
                     try
                     {
-                        DrawControls(editor);
+                        DrawControls();
                     }
                     finally { ImGui.EndChild(); }
                     ImGui.SameLine();
@@ -514,18 +609,25 @@ public sealed partial class BlueprintMod
                                 DrawTemplateGallery(editor);
                             else
                                 DrawPreview();
+                            DrawRenderProgress();
                         }
                         finally { ImGui.EndChild(); }
                     }
                     finally { ImGui.EndGroup(); }
                     DrawFlagnoteDialog();
-                    DrawDetailScopeDialog();
+                    DrawExplodedScopePopup();
+                    DrawScopeDeleteConfirmation();
+                    DrawMissingDetailConfirmation();
                     DrawPoseDialog();
+                    DrawPrimaryDeletion();
                     DrawViewSizeDialog();
                     DrawSpecDialog();
                     DrawTextDialog();
-                    DrawWarningDialog();
+                    DrawNewDrawingDialog(editor);
+                    DrawOpenDrawing(editor);
                     DrawExportFolderDialog();
+                    DrawFinalExport();
+                    DrawActivityToast();
                     PollLivePreview();
                 }
                 else
@@ -555,7 +657,7 @@ public sealed partial class BlueprintMod
             if (key == GlfwKey.P && action == GlfwKeyAction.Press && ((int)mods & 2) != 0)
                 Console.WriteLine($"[Paw Prints] Shortcut input: {key} {action} mods={(int)mods}; enabled={enabled} editor={KSA.Program.Editor != null} console={KSA.Program.ConsoleWindow.IsOpen} settings={GameSettings.Show} popup={Popup.AnyOpen}");
             if (!enabled || !ExportShortcut.Matches(key == GlfwKey.P, action == GlfwKeyAction.Press, (int)mods,
-                (open || HasEditorVehicle), KSA.Program.ConsoleWindow.IsOpen || NativeDialogOpen || Popup.AnyOpen))
+                (open || CanOpenWorkspace), KSA.Program.ConsoleWindow.IsOpen || NativeDialogOpen || Popup.AnyOpen))
                 return true;
             if (open)
                 CloseExport();
@@ -593,9 +695,9 @@ public sealed partial class BlueprintMod
                 ImGui.PushStyleColor(ImGuiCol.Text, ConsoleStyle.Pending);
                 try
                 {
-                    if (ImGui.MenuItem("Open PawPrint Editor"u8, "Ctrl+Alt+P"u8, false, HasEditorVehicle))
+                    if (ImGui.MenuItem("Open PawPrint Editor"u8, "Ctrl+Alt+P"u8, false, CanOpenWorkspace))
                         OpenExport();
-                    if (!HasEditorVehicle)
+                    if (!CanOpenWorkspace)
                         PrintUiStyle.Help("No vehicle loaded");
                 }
                 finally { ImGui.PopStyleColor(); }
@@ -624,6 +726,33 @@ public sealed partial class BlueprintMod
     {
         static bool Prefix() => !enabled || !open;
     }
+
+    [HarmonyPatch(typeof(VehicleEditor), nameof(VehicleEditor.OnDrawUi))]
+    static class EditorToolPromptPatch
+    {
+        static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
+        {
+            // Build 5949 paints the no-selection transform prompt into the foreground
+            // draw list from OnDrawUi. Replace only that draw, keeping the gizmo state.
+            var code = instructions.ToList();
+            var addText = AccessTools.Method(typeof(ImDrawListExtensions), nameof(ImDrawListExtensions.AddText),
+                [typeof(ImDrawListPtr), typeof(float2).MakeByRefType(), typeof(ImColor8), typeof(ImString)]);
+            if (addText == null || !code.Any(i => i.operand is string text && text == "Select a part to "))
+                return code;
+
+            var draws = code.Where(i => i.Calls(addText)).ToArray();
+            if (draws.Length == 1)
+                draws[0].operand = AccessTools.Method(typeof(EditorToolPromptPatch), nameof(DrawPrompt));
+            return code;
+        }
+
+        static void DrawPrompt(ImDrawListPtr draw, in float2 position, ImColor8 color, ImString text)
+        {
+            if (!enabled || !open)
+                draw.AddText(in position, color, text);
+        }
+    }
+
 
     [HarmonyPatch(typeof(VehicleEditor), nameof(VehicleEditor.OnDrawUi))]
     static class EditorPatch

@@ -94,14 +94,19 @@ static class LeaderRouting
             var box = AnnotationText.Bounds(label);
             var view = scene.Views.FirstOrDefault(v => v.Id == label.ViewId);
             var allowed = label.ManualPlacement ? new Box(0, 0, scene.Width, scene.Height) : PageLayout.Placement(scene.Options);
-            if (view == null || box.X < allowed.X || box.Y < allowed.Y || box.Right > allowed.Right || box.Bottom > allowed.Bottom)
+            if (view == null || !CanvasBounds.Safe(box) || !scene.Options.FreeLayout && (box.X < allowed.X || box.Y < allowed.Y || box.Right > allowed.Right || box.Bottom > allowed.Bottom))
             {
                 result = [];
                 reason = "Keep the whole label inside the drawing area.";
                 return false;
             }
-            if (label.ManualPlacement)
+            if (label.ManualPlacement || scene.Options.FreeLayout)
             {
+                // A projection can turn a labeled surface out of sight. Keep
+                // the label in the document so it returns with the surface.
+                if (scene.Options.FreeLayout && !scene.Visible.ContainsKey((label.ViewId, label.PartId)) &&
+                    scene.Parts.Any(p => p.Id == label.PartId))
+                    continue;
                 if (!ManualRoute(scene, label, box, out var manual))
                 {
                     result = [];
@@ -257,6 +262,19 @@ static class LeaderRouting
             return null;
         float best = radius * radius;
         LeaderPoint? result = null;
+        if (scene.Options.FreeLayout && scene.Visible.TryGetValue((label.ViewId, label.PartId), out var visual))
+        {
+            // Clicking anywhere on the visible part selects its nearest raster
+            // silhouette edge, even when the part interior is wider than the snap radius.
+            if (scene.PickSurface(label.ViewId, point)?.Part == label.PartId)
+                best = float.PositiveInfinity;
+            foreach (var edge in visual.ContactEdges.Length == 0 ? visual.Edges : visual.ContactEdges)
+            {
+                float distance = Vector2.DistanceSquared(point, edge);
+                if (distance <= best) { best = distance; result = new(edge.X, edge.Y); }
+            }
+            return result;
+        }
         for (int y = (int)Math.Max(view.Bounds.Y, point.Y - radius); y <= Math.Min(view.Bounds.Bottom - 1, point.Y + radius); y++)
             for (int x = (int)Math.Max(view.Bounds.X, point.X - radius); x <= Math.Min(view.Bounds.Right - 1, point.X + radius); x++)
             {
@@ -366,6 +384,8 @@ static class LeaderRouting
 
 sealed class AnnotationDocument
 {
+    public Guid Id { get; private set; } = Guid.NewGuid();
+    public long Revision { get; private set; }
     public RenderScene Scene
     {
         get; private set;
@@ -380,11 +400,40 @@ sealed class AnnotationDocument
     public const int Limit = 120;
 
 
-    sealed record State(PartLabel[] Labels, ExplodedDetail[] Details, TableLayout Tables, ViewCaptionMark[] Captions, HeightDimension[] Dimensions, KittenReference[] Kittens, PartPose[] Poses, SpecBlock[] Specs, FreeTextBox[] FreeText, DrawingPlacement? Drawing, PrintOptions Options);
-    readonly List<State> undo = [], redo = [];
+    readonly List<DrawingContent> undo = [], redo = [];
 
 
-    State Snapshot() => new(Labels, Details, Tables, Scene.Captions, Scene.Dimensions, Scene.Kittens, Scene.Poses, Scene.Specs, Scene.FreeText, Scene.Drawing, Scene.Options);
+    public DrawingContent Snapshot() => new DrawingContent(Labels, Details, Tables, Scene.Captions, Scene.Dimensions, Scene.Kittens, Scene.Poses, Scene.Specs, Scene.FreeText, Scene.Drawing, Scene.Options) { WearMarks = Scene.WearMarks }.Copy();
+
+    public AnnotationDocument Fork() => new(this);
+
+    AnnotationDocument(AnnotationDocument source)
+    {
+        Id = source.Id;
+        Revision = source.Revision;
+        Scene = source.Scene;
+        Labels = source.Labels;
+        Details = source.Details;
+        Tables = source.Tables;
+        Routes = source.Routes;
+        nextId = source.nextId;
+        undo = [.. source.undo];
+        redo = [.. source.redo];
+    }
+
+    public void Restore(AnnotationDocument accepted)
+    {
+        if (Id != accepted.Id) throw new InvalidOperationException("Cannot restore a different drawing.");
+        Scene = accepted.Scene;
+        Labels = accepted.Labels;
+        Details = accepted.Details;
+        Tables = accepted.Tables;
+        Routes = accepted.Routes;
+        nextId = Math.Max(nextId, accepted.nextId);
+        undo.Clear(); undo.AddRange(accepted.undo);
+        redo.Clear(); redo.AddRange(accepted.redo);
+        Revision = checked(Revision + 1);
+    }
 
 
     void Remember()
@@ -399,23 +448,24 @@ sealed class AnnotationDocument
     public void Rebind(RenderScene scene, PartLabel[] labels, ExplodedDetail[] details, bool remember = true)
     {
         labels = FlagnoteNumbers.Normalize(labels, scene.Options.FlagTable);
-        if (remember && (!Details.SequenceEqual(details) || !Labels.SequenceEqual(labels) || Tables != scene.Tables || !Scene.Captions.SequenceEqual(scene.Captions) || !Scene.Dimensions.SequenceEqual(scene.Dimensions) || !Scene.Kittens.SequenceEqual(scene.Kittens) || !Scene.Poses.SequenceEqual(scene.Poses) || !Scene.Specs.SequenceEqual(scene.Specs) || !Scene.FreeText.SequenceEqual(scene.FreeText) || Scene.Drawing != scene.Drawing || Scene.Options != scene.Options))
+        if (remember && (!Details.SequenceEqual(details) || !Labels.SequenceEqual(labels) || Tables != scene.Tables || !Scene.Captions.SequenceEqual(scene.Captions) || !Scene.Dimensions.SequenceEqual(scene.Dimensions) || !Scene.Kittens.SequenceEqual(scene.Kittens) || !Scene.Poses.SequenceEqual(scene.Poses) || !Scene.Specs.SequenceEqual(scene.Specs) || !Scene.FreeText.SequenceEqual(scene.FreeText) || !Scene.WearMarks.SequenceEqual(scene.WearMarks) || Scene.Drawing != scene.Drawing || Scene.Options != scene.Options))
             Remember();
         Scene = scene;
         Tables = scene.Tables;
         Labels = labels;
         Details = details;
+        Revision = checked(Revision + 1);
         if (labels.Length > 0)
             nextId = Math.Max(nextId, labels.Max(l => l.Id) + 1);
         RefreshRoutes();
     }
 
 
-    public void Regenerate(RenderScene scene, PartLabel[] labels, ExplodedDetail[] details)
+    public void Regenerate(RenderScene scene, PartLabel[] labels, ExplodedDetail[] details, bool sourceChanged = false)
     {
         bool paperChange = Scene.Options.OutputPage != scene.Options.OutputPage;
         Rebind(scene, labels, details);
-        if (!paperChange)
+        if (sourceChanged || !paperChange)
         {
             undo.Clear();
             redo.Clear();
@@ -458,6 +508,7 @@ sealed class AnnotationDocument
         Remember();
         Labels = labels;
         Routes = routes;
+        Revision = checked(Revision + 1);
         if (labels.Length > 0)
             nextId = Math.Max(nextId, labels.Max(l => l.Id) + 1);
         return true;
@@ -474,7 +525,8 @@ sealed class AnnotationDocument
         Labels = state.Labels;
         Details = state.Details;
         Tables = state.Tables;
-        Scene = Scene.WithTables(Tables).WithCaptions(state.Captions, false).WithDimensions(state.Dimensions).WithKittens(state.Kittens).WithPoses(state.Poses).WithSpecs(state.Specs).WithFreeText(state.FreeText).WithDrawing(state.Drawing).WithOptions(state.Options);
+        Scene = state.ApplyTo(Scene);
+        Revision = checked(Revision + 1);
         undo.RemoveAt(undo.Count - 1);
         if (changedPaper)
             Routes = [];
@@ -493,7 +545,8 @@ sealed class AnnotationDocument
         Labels = state.Labels;
         Details = state.Details;
         Tables = state.Tables;
-        Scene = Scene.WithTables(Tables).WithCaptions(state.Captions, false).WithDimensions(state.Dimensions).WithKittens(state.Kittens).WithPoses(state.Poses).WithSpecs(state.Specs).WithFreeText(state.FreeText).WithDrawing(state.Drawing).WithOptions(state.Options);
+        Scene = state.ApplyTo(Scene);
+        Revision = checked(Revision + 1);
         redo.RemoveAt(redo.Count - 1);
         if (changedPaper)
             Routes = [];
@@ -650,10 +703,12 @@ static class AnnotationPainting
         }
         if (!LeaderRouting.TryLayout(scene, labels, out var routes, out var reason))
             throw new InvalidOperationException(reason);
-        var canvas = new Canvas((byte[])scene.BaseRgb.Clone(), scene.Width, scene.Height, SheetLayout.Colors(source.Options.Theme).Ink);
+        var canvas = new Canvas((byte[])scene.BaseRgb.Clone(), scene.Width, scene.Height, SheetLayout.Colors(source.Options.Theme).Ink)
+        { HitShapes = scene.Options.FreeLayout ? [] : null };
         foreach (var route in routes)
         {
             token.ThrowIfCancellationRequested();
+            canvas.HitTarget = new(DrawingObjectKind.Label, route.Label.Id);
             LeaderPainting.Paint(canvas, [route.Start, route.End], route.Label.Line, route.Label.Tip, route.Label.Key == null ? 10 : 0);
             if (route.Label.Key != null)
             {
@@ -668,20 +723,41 @@ static class AnnotationPainting
                 for (int i = 0; i < route.Lines.Length; i++)
                     canvas.Text(route.Lines[i], (int)route.TextBox.X, (int)route.TextBox.Y + i * AnnotationText.Leading, AnnotationText.Font, 1);
         }
+        canvas.HitTarget = null;
         PrintTables.Paint(canvas, scene, labels);
         List<(Vector2 Start, Vector2 End)>? specLeaders = scene.FreeText.Length > 0 ? [] : null;
         PerformancePainting.Paint(canvas, scene, labels, specLeaders);
+        canvas.HitTarget = null;
         HeightDimensions.Paint(canvas, scene, labels);
         KittenReferences.Paint(canvas, scene, token);
-        foreach (var caption in scene.Captions.Where(c => !scene.Details.Any(d => d.Definition.Bounds.Overlaps(c.Bounds))))
+        canvas.HitTarget = null;
+        string? titleScale = PrintScale.PrintedTitleScale(scene.Views, scene.Options);
+        foreach (var caption in scene.Captions.Where(c => scene.Options.FreeLayout || !scene.Details.Any(d => d.Definition.Bounds.Overlaps(c.Bounds))))
+        {
             canvas.Text(caption.Text, (int)caption.Bounds.X, (int)caption.Bounds.Y, caption.FontSize, .85f);
+            if (scene.Options.FreeLayout && scene.Views.FirstOrDefault(v => v.Id == caption.ViewId) is { } view)
+            {
+                string ratio = PrintScale.Ratio(view.Frame, scene.Options);
+                if (ratio != titleScale)
+                {
+                    string scale = "SCALE " + ratio;
+                    canvas.Text(scale, (int)(caption.Bounds.Center.X - scale.Length * NativeText.MonoWidth(15) / 2), (int)caption.Bounds.Bottom + 4, 15, 1);
+                }
+            }
+        }
         TextBoxPlacement.Validate(scene, labels, routes, specLeaders ?? []);
         FreeTextPainting.Paint(canvas, scene.FreeText);
         NativeText.Apply(canvas.Pixels, scene.Width, scene.Height, canvas.Runs);
         token.ThrowIfCancellationRequested();
+        Vector2[] fields = scene.BaseLettering;
+        if (source.Options.Archive && source.Options.WearLevel > 0 && (fields.Length < 4 || !source.Options.TitleBlockVisible))
+            fields = WearPlacement.Lettering(canvas.Runs, source.Options.Page).Concat(fields).Distinct().ToArray();
+        var wear = WearPlacement.Resolve(source.Options, source.Title, fields, scene.WearMarks);
+        WearPainting.Apply(canvas.Pixels, scene.Width, scene.Height, source.Options.Theme, wear, token);
         return source.WithPixels(canvas.Pixels) with
         {
-            Labels = labels
+            Labels = labels,
+            AppliedWear = wear, ObjectHits = canvas.HitShapes
         };
     }
 

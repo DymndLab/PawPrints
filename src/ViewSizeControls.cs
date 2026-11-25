@@ -12,7 +12,7 @@ public sealed partial class BlueprintMod
     static Task<ScaleFit?>? sizeFitTask;
     static ScaleFit? sizeFit;
 
-    static float? ViewSizeRatio(int view) => view < 1000 ? document?.Scene.Drawing?.Ratio :
+    static float? ViewSizeRatio(int view) => view < 1000 ? document?.Scene.Drawing is { } d ? ProjectionGroups.Ratio(d, view) : null :
         sheet?.Scene?.Details.FirstOrDefault(d => d.Definition.ViewId == view)?.Sizing?.Ratio;
 
     static void BeginViewSize(int view)
@@ -35,10 +35,20 @@ public sealed partial class BlueprintMod
             try
             {
                 if (view < 1000 && source != null)
-                    return ScaleAdjustment.ForMain(source, scene, drawing, obstacles);
+                    return ScaleAdjustment.ForMain(source, scene, drawing, obstacles, view);
                 if (detail?.Sizing is { } sizing && detailSource != null)
                 {
                     var assembly = source == null ? detailSource.Assembly : PartPoses.Apply(source, scene.Poses, view);
+                    if (scene.Options.FreeLayout)
+                        return ScaleAdjustment.FindMaximum(percent =>
+                        {
+                            try
+                            {
+                                DetailFrames.Resize(detail, percent / 100, scene.Options);
+                                return null;
+                            }
+                            catch (InvalidOperationException e) { return e.Message; }
+                        });
                     return ScaleAdjustment.Detail(ExplodedGeometry.Build(assembly, detail.Definition), sizing, detail.Definition.View, scene.Options);
                 }
             }
@@ -47,6 +57,7 @@ public sealed partial class BlueprintMod
         });
         viewSizeUpdating = false;
         viewSizeDialog = true;
+        PrintDiagnostics.Record("view.scale.open");
     }
 
     // Own the popup outside the canvas so it survives asynchronous preview work.
@@ -76,8 +87,9 @@ public sealed partial class BlueprintMod
             {
                 sizeFit = sizeFitTask.Result;
                 sizeFitTask = null;
+                PrintDiagnostics.Record("view.scale.fit.ready");
             }
-            ImGui.Text(sizeView < 1000 ? "Main views - shared scale" : "Exploded detail - part size");
+            ImGui.Text(sizeView < 1000 ? "Projection group scale" : "Exploded view scale");
             ImGui.BeginDisabled(busy || measuring);
             bool update;
             try
@@ -98,7 +110,10 @@ public sealed partial class BlueprintMod
                 ImGui.Text($"Scale 1:{Math.Clamp(sizeStartRatio * 100 / sizePercent, .01f, 1000000):0.##}");
                 if (sizeFit is { } limit)
                 {
-                    PrintUiStyle.Warning(limit.Maximum < 400 ? $"Max fit here: {limit.Maximum:0.0}%" : "Fits through 400%");
+                    PrintUiStyle.Warning(limit.Maximum < 400
+                        ? $"Render limit{(sizeView < 1000 ? " for this group" : " here")}: {limit.Maximum:0.0}%" : "Fits through 400%");
+                    if (limit.Maximum < 400 && limit.Warning.Length > 0)
+                        PrintUiStyle.Warning(limit.Warning);
                     if (limit.Maximum < 400 && ImGui.Button("Use max fit"u8))
                     {
                         sizePercent = limit.Maximum;
@@ -112,7 +127,10 @@ public sealed partial class BlueprintMod
                 }
             }
             finally { ImGui.EndDisabled(); }
-            ImGui.Text(sizeView < 1000 ? "Changes all main views. Positions stay fixed." : "Changes this detail's parts. Frame and group centres stay fixed.");
+            PrintUiText.Wrapped(sizeView < 1000
+                ? "Changes this projection group only. Independent views retain their scale."
+                : Options.FreeLayout ? "Scales this exploded view and fits its frame around the assembly."
+                : "Changes this detail's parts. Frame and group centres stay fixed.");
             bool tooLarge = sizeFit is { } max && sizePercent > max.Maximum;
             if (update && !busy && !measuring && !tooLarge)
             {
@@ -121,14 +139,11 @@ public sealed partial class BlueprintMod
                 {
                     sizeMessage = "";
                     if (sizeView < 1000)
-                        QueueDrawing(CurrentDrawing() with
-                        {
-                            Ratio = ratio
-                        });
+                        QueueDrawing(ProjectionGroups.SetRatio(CurrentDrawing(), sizeView, ratio));
                     else
                     {
                         var detail = sheet!.Scene!.Details.Single(d => d.Definition.ViewId == sizeView);
-                        QueueDetail(detail.Definition with
+                        QueueDetail(Options.FreeLayout ? DetailFrames.Resize(detail, detail.Sizing!.Ratio / ratio, Options) : detail.Definition with
                         {
                             Sizing = detail.Sizing! with
                             {
@@ -141,7 +156,7 @@ public sealed partial class BlueprintMod
             }
             ImGui.Text(measuring ? "Checking available space..." : busy ? "Updating preview..." : "Release to update. Close, then Ctrl+Z to undo.");
             if (tooLarge)
-                PrintUiStyle.Warning("Too large for this layout. The preview is unchanged.");
+                PrintUiStyle.Warning("Render resource limit exceeded. The preview is unchanged.");
             if (sizeMessage.Length > 0)
                 PrintUiStyle.Warning(sizeMessage);
             if (ImGui.Button("Done"u8))
@@ -150,6 +165,6 @@ public sealed partial class BlueprintMod
                 ImGui.CloseCurrentPopup();
             }
         }
-        finally { DrawWarningDialog(true); ImGui.EndPopup(); }
+        finally { ImGui.EndPopup(); }
     }
 }

@@ -11,8 +11,16 @@ static class HeightDimensions
 
     public static CraftHeight Measure(Capture capture)
     {
-        var z = capture.Meshes.SelectMany(m => m.Vertices).Select(v => (float)v[0]).ToArray();
-        return new(z.Min(), z.Max());
+        float min = float.PositiveInfinity, max = float.NegativeInfinity;
+        foreach (var mesh in capture.Meshes)
+            foreach (var point in mesh.WorldVertices())
+            {
+                min = Math.Min(min, point.Z);
+                max = Math.Max(max, point.Z);
+            }
+        if (float.IsPositiveInfinity(min))
+            throw new InvalidOperationException("No geometry available for craft height.");
+        return new(min, max);
     }
 
     public static bool Eligible(ViewRegion view) => view.Id < 1000 && view.Frame is { } f && Math.Abs(f.Up.Z) > .1f && Math.Abs(f.Right.Z) < .001f;
@@ -25,8 +33,7 @@ static class HeightDimensions
         var frame = view.Frame!;
         var height = scene.ViewHeights.GetValueOrDefault(view.Id) ?? scene.CraftHeight;
         var occupied = scene.Visible.Where(p => p.Key.View == view.Id).Select(p => p.Value.Bounds).ToArray();
-        if (occupied.Length == 0)
-            throw new InvalidOperationException("No visible craft for this height dimension.");
+        if (occupied.Length == 0) occupied = [view.Bounds];
         float Project(float z) => view.Bounds.Y + frame.Height * .5f - (z - frame.Center.Z) * frame.Up.Z * frame.Scale;
         float top = Math.Min(Project(height.Top), Project(height.Bottom)), bottom = Math.Max(Project(height.Top), Project(height.Bottom));
         string text = (height.Top - height.Bottom).ToString("0.##", CultureInfo.InvariantCulture) + " m";
@@ -34,7 +41,7 @@ static class HeightDimensions
         var label = new Box(x - width / 2, (top + bottom - Font) / 2, width, Font);
         var bounds = new Box(Math.Min(x - 24, label.X) - 8, top - 2, Math.Max(48, width) + 16, bottom - top + 4);
         var area = FrameLayout.Area(scene.Options);
-        if (validate && (bottom - top < Font + 32 || !PageLayout.Fits(bounds, scene.Options)))
+        if (validate && !scene.Options.FreeLayout && (bottom - top < Font + 32 || !PageLayout.Fits(bounds, scene.Options)))
             throw new InvalidOperationException("Height dimension needs more room. Try the other side, reduce its gap, or reduce View scale.");
         return new(x, top, bottom, text, label, bounds);
     }
@@ -43,8 +50,9 @@ static class HeightDimensions
     {
         var mark = Place(scene, dimension, false);
         var area = FrameLayout.Area(scene.Options);
-        x = Math.Clamp(x, area.X + mark.Bounds.Width / 2, area.Right - mark.Bounds.Width / 2);
+        if (!scene.Options.FreeLayout) x = Math.Clamp(x, area.X + mark.Bounds.Width / 2, area.Right - mark.Bounds.Width / 2);
         var occupied = scene.Visible.Where(p => p.Key.View == dimension.ViewId).Select(p => p.Value.Bounds).ToArray();
+        if (occupied.Length == 0) occupied = [scene.Views.Single(v => v.Id == dimension.ViewId).Bounds];
         float left = occupied.Min(b => b.X), right = occupied.Max(b => b.Right);
         bool onLeft = x < (left + right) / 2;
         return dimension with
@@ -64,7 +72,7 @@ static class HeightDimensions
         foreach (var dimension in scene.Dimensions)
         {
             var mark = Place(scene, dimension);
-            if (scene.Specs.Any(b => b.Bounds.Overlaps(mark.Bounds)) || scene.Details.Any(d => d.Definition.Bounds.Overlaps(mark.Bounds)) || PrintTables.Panels(scene, labels).Any(t => t.Bounds.Overlaps(mark.Bounds)))
+            if (!scene.Options.FreeLayout && (scene.Specs.Any(b => b.Bounds.Overlaps(mark.Bounds)) || scene.Details.Any(d => d.Definition.Bounds.Overlaps(mark.Bounds)) || PrintTables.Panels(scene, labels).Any(t => t.Bounds.Overlaps(mark.Bounds))))
                 throw new InvalidOperationException("Move the height dimension, table or detail so they do not overlap.");
             int x = (int)mark.X, top = (int)mark.Top, bottom = (int)mark.Bottom;
             canvas.Line(x, top, x, (int)mark.TextBounds.Y - 10, 1);

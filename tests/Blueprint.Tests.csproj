@@ -6,6 +6,7 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
   <ItemGroup>
+    <EmbeddedResource Include="../assets/wear/*.rgba.z" LogicalName="PawPrints.Wear.%(Filename)%(Extension)" />
     <EmbeddedResource Include="../part-support.json" LogicalName="PawPrints.PartSupport.json" />
     <None Include="../part-support.json" Link="part-support.json" CopyToOutputDirectory="PreserveNewest" />
     <EmbeddedResource Include="../assets/fonts/mrdafoe/MrDafoe-Regular.ttf" LogicalName="PawPrints.Fonts.mrdafoe.ttf" />
@@ -16,6 +17,15 @@
     <EmbeddedResource Include="../assets/fonts/labelleaurore/LaBelleAurore.ttf" LogicalName="PawPrints.Fonts.labelleaurore.ttf" />
 
     <Compile Include="Program.cs" />
+    <Compile Include="../src/CaptureStats.cs" />
+    <Compile Include="../src/PrintDiagnostics.cs" />
+    <Compile Include="CaptureStatsChecks.cs" />
+    <Compile Include="FoundationChecks.cs" />
+    <Compile Include="StartupChecks.cs" />
+    <Compile Include="WearReview.cs" />
+    <Compile Include="ArchivalWearChecks.cs" />
+    <Compile Include="GroupChecks.cs" />
+    <Compile Include="CurvatureChecks.cs" />
     <Compile Include="PartSupportChecks.cs" />
     <Compile Include="../src/LogoPicker.cs" />
     <Compile Include="../src/Storage/*.cs" />
@@ -36,10 +46,13 @@
     <Compile Include="PerformanceChecks.cs" />
     <Compile Include="PoseChecks.cs" />
     <Compile Include="PreviewUpdateChecks.cs" />
+    <Compile Include="GenerationRecoveryChecks.cs" />
+    <Compile Include="FuelHoseChecks.cs" />
     <Compile Include="ProfileStorageChecks.cs" />
     <Compile Include="ScaleReferenceChecks.cs" />
     <Compile Include="TemplateChecks.cs" />
     <Compile Include="TitleLayoutChecks.cs" />
     <PackageReference Include="BCnEncoder.Net" Version="2.3.0" />
   </ItemGroup>
+  <Import Project="../build/PortableRendering.props" Condition="'$(PawPrintsPortableRendering)' == 'true'" />
 </Project>

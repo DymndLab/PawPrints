@@ -11,7 +11,7 @@ static class ViewAlignment
 
     public static CaptionAnchor[] Anchors(RenderScene scene) => [
         ..scene.Captions.Where(c=>c.ViewId<1000).Select(c=>new CaptionAnchor(c.ViewId,Anchor(c.Bounds,c.FontSize))),
-        ..scene.Details.Select(d=>new CaptionAnchor(d.Definition.ViewId,Anchor(d.CaptionBounds,(int)d.CaptionBounds.Height-23)))];
+        ..scene.Details.Select(d=>new CaptionAnchor(d.Definition.ViewId,Anchor(d.CaptionBounds,d.CaptionFont)))];
 
 
     // Tolerance is supplied in paper pixels from a fixed screen-pixel distance.

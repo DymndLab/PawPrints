@@ -14,9 +14,9 @@ static class DetailSampling
     public static ViewPixels Render(Capture capture, IReadOnlyDictionary<string, Texture> maps, string title, int view, ProjectionFrame frame, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
-        var projected = capture.Meshes.SelectMany(m => m.Vertices).Select(v =>
+        var projected = capture.Meshes.SelectMany(m => m.WorldVertices()).Select(v =>
         {
-            var p = ExplodedGeometry.World(v) - frame.Center;
+            var p = v - frame.Center;
             return new Vector2(frame.Width * .5f + Vector3.Dot(p, frame.Right) * frame.Scale, frame.Height * .5f - Vector3.Dot(p, frame.Up) * frame.Scale);
         }).ToArray();
         int left = Math.Clamp((int)MathF.Floor(projected.Min(p => p.X)) - 16, 0, frame.Width - 1), top = Math.Clamp((int)MathF.Floor(projected.Min(p => p.Y)) - 16, 0, frame.Height - 1);

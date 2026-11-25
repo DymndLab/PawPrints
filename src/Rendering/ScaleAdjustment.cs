@@ -28,21 +28,22 @@ static class ScaleAdjustment
         return new(Math.Max(100, MathF.Floor(low * 10) / 10), warning);
     }
 
-    public static ScaleFit ForMain(PoseSource source, RenderScene scene, DrawingPlacement drawing, Box[] obstacles)
+    public static ScaleFit ForMain(PoseSource source, RenderScene scene, DrawingPlacement drawing, Box[] obstacles, int? groupView = null)
     {
         var options = scene.Options;
         var unposed = PartPoses.Exterior(source, source.Assembly);
         var fit = scene.Poses.Length == 0 ? unposed : new Capture(drawing.Views.SelectMany(v =>
             PartPoses.Exterior(source, PartPoses.Apply(source, scene.Poses, v.Id)).Meshes).ToArray());
-        var preliminary = DrawingPlacements.PreparePlan(unposed, options, drawing);
-        var planned = DrawingPlacements.PreparePlan(fit, options, drawing);
+        var preliminary = DrawingPlacements.PreparePlan(unposed, options, drawing, groupView);
+        var posedPlan = ReferenceEquals(fit, unposed) ? null : DrawingPlacements.PreparePlan(fit, options, drawing, groupView);
+        float initialRatio = groupView is { } id ? ProjectionGroups.Ratio(drawing, id) : drawing.Ratio;
         return FindMaximum(percent =>
         {
             try
             {
-                float ratio = drawing.Ratio * 100 / percent;
-                preliminary(ratio);
-                var views = planned(ratio);
+                float ratio = initialRatio * 100 / percent;
+                var unposedViews = preliminary(ratio);
+                var views = posedPlan?.Invoke(ratio) ?? unposedViews;
                 DrawingPlacements.Validate(views, options);
                 var changed = views.Where(v => scene.Views.FirstOrDefault(p => p.Id == v.Id)?.Bounds != v.Bounds).ToArray();
                 DrawingPlacements.Validate(changed, options, obstacles);
@@ -68,9 +69,9 @@ static class ScaleAdjustment
         for (int i = 0; i < geometry.Capture.Meshes.Length; i++)
         {
             var part = geometry.MovedCenters[i];
-            foreach (var vertex in geometry.Capture.Meshes[i].Vertices)
+            foreach (var vertex in geometry.Capture.Meshes[i].WorldVertices())
             {
-                var offset = ExplodedGeometry.World(vertex) - part;
+                var offset = vertex - part;
                 Limit(Vector3.Dot(part - center, axes.Right) * spread, Vector3.Dot(offset, axes.Right) * scale, (sizing.Width - 32) * .5f);
                 Limit(Vector3.Dot(part - center, axes.Up) * spread, Vector3.Dot(offset, axes.Up) * scale, (sizing.Height - 32) * .5f);
             }

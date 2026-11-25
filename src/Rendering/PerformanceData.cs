@@ -37,7 +37,7 @@ enum SpecField : long
 sealed record MetricStyle(string Key, int Mode, double Maximum = 0);
 sealed record SpecBlock(int Id, Box Bounds, bool Vehicle = false, uint? EnginePart = null, int ViewId = 0, bool Identical = true, bool Combined = false,
     int Stage = -1, string[]? SelectedEngines = null, int Format = 0, int Environment = 3, int BarMode = 1, SpecField Fields = SpecField.Name | SpecField.Quantity | SpecField.Thrust | SpecField.Isp | SpecField.Propellants | SpecField.Throttle | SpecField.Gimbal,
-    int FontSize = 24, bool Border = true, bool Fill = true, bool Leader = false, LeaderLine Line = LeaderLine.Dotted, LeaderTip Tip = LeaderTip.Dot, MetricStyle[]? Styles = null, bool Reference = true)
+    int FontSize = 24, bool Border = true, bool Fill = true, bool Leader = false, LeaderLine Line = LeaderLine.Dotted, LeaderTip Tip = LeaderTip.Dot, MetricStyle[]? Styles = null, bool Reference = true, string? VehicleName = null)
 {
 
     public bool Shows(SpecField field) => (Fields & field) != 0;
@@ -63,7 +63,17 @@ static class SpecMetrics
         return block.Identical && own.Length == 1 ? data.Engines.Where(e => e.Signature == own[0].Signature).ToArray() : own;
     }
 
-    public static string Title(PerformanceData data, SpecBlock block) => block.Vehicle ? "VEHICLE PERFORMANCE" + (string.IsNullOrWhiteSpace(data.CraftName) ? "" : " / " + data.CraftName.ToUpperInvariant()) : Engines(data, block)[0].Name.ToUpperInvariant();
+    // Null follows the drawing title; an explicit override belongs to this block.
+    public static string VehicleName(PerformanceData data, SpecBlock block, string? drawingTitle = null) =>
+        (block.VehicleName ?? (string.IsNullOrWhiteSpace(drawingTitle) ? data.CraftName : drawingTitle) ?? "").Trim();
+
+    public static string Title(PerformanceData data, SpecBlock block, string? drawingTitle = null)
+    {
+        if (!block.Vehicle)
+            return Engines(data, block)[0].Name.ToUpperInvariant();
+        string name = VehicleName(data, block, drawingTitle);
+        return "VEHICLE PERFORMANCE" + (name.Length == 0 ? "" : " / " + name.ToUpperInvariant());
+    }
 
     public static string Basis(PerformanceData data, SpecBlock block)
     {

@@ -14,16 +14,27 @@ public sealed partial class BlueprintMod
     {
         if (!printStyleDirty || current.Scene == null)
             return current;
-        return current with
-        {
-            Labels = current.Labels.Select(l => l with { Line = (LeaderLine)defaultLine, Tip = (LeaderTip)defaultTip, ManualPlacement = true }).ToArray(),
-            Scene = current.Scene.WithSpecs(current.Scene.Specs.Select(s => s with { Line = (LeaderLine)defaultLine, Tip = (LeaderTip)defaultTip }).ToArray())
-        };
+        return PrintStyles.Apply(current, (LeaderLine)defaultLine, (LeaderTip)defaultTip);
+    }
+
+    static void RefreshTitleBlock()
+    {
+        if (sheet == null || document == null) return;
+        var current = sheet with { Scene = document.Scene, Labels = document.Labels, Details = document.Details };
+        var main = sheet.PoseMain ?? basePrint ?? sheet;
+        var desired = sheet.Options with { TitleBlockVisible = titleBlockVisible, ProjectionAngle = CurrentProjectionAngle };
+        renderKeepsDocument = true;
+        renderAdoptsHistory = false;
+        renderAppliesSettings = true;
+        composingLabels = true;
+        StartRender(token => current.PoseSource == null
+            ? PreviewUpdates.RenderBlank(current, desired, token)
+            : PreviewUpdates.Render(current, main, desired, token));
     }
 
     static void PollLivePreview()
     {
-        if (!livePreviewUpdates || !open || sheet?.PoseSource == null || document == null || ShowingTemplates)
+        if (!livePreviewUpdates || !open || sheet == null || document == null || ShowingTemplates || setupStage != SetupStage.Editing)
             return;
         if (PrintIsCurrent)
         {
@@ -37,22 +48,26 @@ public sealed partial class BlueprintMod
         if (!livePreviewGate.Ready(request, Environment.TickCount64, livePreviewUpdates, busy,
             ControlsLocked || partMenuOpen || ImGui.IsMouseDown(ImGuiMouseButton.Left) || !datesReady))
             return;
+        if (sheet.PoseSource == null && (sheet.Options.Page != request.Options.Page || request.Options.PartsTable || request.Options.FlagTable))
+            return;
         var current = PendingStyle(sheet with { Scene = document.Scene, Labels = document.Labels, Details = document.Details });
         var main = sheet.PoseMain ?? basePrint ?? sheet;
-        cancellation?.Dispose();
-        cancellation = new();
-        var token = cancellation.Token;
         composingLabels = true;
         renderKeepsDocument = true;
         renderAdoptsHistory = false;
         renderAppliesSettings = true;
         progress = "Updating preview";
         PrintDiagnostics.Record("preview.live.begin");
-        renderTask = Task.Run(() => PreviewUpdates.Render(current, main, request.Options, token), token);
+        StartRender(token => current.PoseSource == null
+            ? PreviewUpdates.RenderBlank(current, request.Options, token)
+            : PreviewUpdates.Render(current, main, request.Options, token));
     }
 
     static void AdoptPrintSettings(PrintOptions o)
     {
+        projectionStyle = o.DrawingAngle == 1 ? 1 : 0;
+        titleBlockVisible = o.TitleBlockVisible;
+        outputTarget = o.OutputTarget == DrawingOutput.DesktopBackground ? 0 : 1;
         view = o.View; theme = o.Theme; grid = o.Grid; archivalWear = o.Archive ? o.WearLevel : 0;
         emphasis = o.Emphasis >= 10 ? 2 : o.Emphasis >= 5 ? 1 : 0;
         layout = o.Layout; visibleViews = o.VisibleViews; captions = o.Captions;
@@ -60,6 +75,12 @@ public sealed partial class BlueprintMod
         pageOrientation = o.Orientation; pageAspect = o.Aspect; brand = o.Brand; arrangement = o.Arrangement;
         boxLayout = o.Boxes ?? boxLayout; drawingPlacement = o.Drawing; zones = o.Zones;
         customWidth = customWidthEdit = o.CustomWidth; customHeight = customHeightEdit = o.CustomHeight;
+        if (o.OutputTarget == DrawingOutput.DesktopBackground && o.Orientation == 3)
+        {
+            int preset = Array.FindIndex(DesktopSizes, size => size.W == o.CustomWidth && size.H == o.CustomHeight);
+            desktopPreset = preset >= 0 ? preset : DesktopSizes.Length;
+            if (preset < 0) lastCustomDesktop = new(o.CustomWidth, o.CustomHeight);
+        }
         if (o.TitleBlock is { } t)
         {
             companyText.SetValue(t.Company.AsSpan()); creatorText.SetValue(t.Creator.AsSpan());

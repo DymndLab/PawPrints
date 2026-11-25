@@ -43,9 +43,28 @@ readonly record struct PageSize(int Width, int Height)
     }
 }
 
+static class ImagePresets
+{
+    public static readonly string[] Orientations = ["Landscape", "Portrait", "Square"];
+    static readonly PageSize[][] sizes =
+    [
+        [new(1280, 720), new(1920, 1080), new(3840, 2160)],
+        [new(720, 1280), new(1080, 1920), new(2160, 3840)],
+        [new(1080, 1080), new(2048, 2048), new(2880, 2880)]
+    ];
+    static readonly string[][] labels = sizes.Select((list, orientation) => list.Select((size, i) =>
+        $"{size.Width} x {size.Height}" + (i == 2 && orientation != 2 ? " (4K)" : "")).ToArray()).ToArray();
+
+    public static PageSize Default => Size(0, 2);
+    public static string[] Labels(int orientation) => labels[orientation];
+    public static PageSize Size(int orientation, int index) => sizes[orientation][index];
+    public static int OrientationOf(PageSize size) => size.Width == size.Height ? 2 : size.Width > size.Height ? 0 : 1;
+    public static int IndexOf(int orientation, PageSize size) => Array.IndexOf(sizes[orientation], size);
+}
+
 static class PrintIdentity
 {
-    public const string Version = "0.5.39";
+    public const string Version = "0.6.0";
 
     public static string Mark(int variant) => variant == 1 ? "Dy M N D" : "Dy M & D";
 
@@ -69,14 +88,14 @@ static class PageLayout
 
     public static int InnerWidth(PrintOptions options) => options.Page.Width - 2 * Margin;
 
-    public static int TitleTop(PrintOptions options) => options.TitleBlock == null ? Bottom(options) - 360 : CompanyTitleBlock.Top(options);
+    public static int TitleTop(PrintOptions options) => !options.TitleBlockVisible ? Bottom(options) : options.TitleBlock == null ? Bottom(options) - 360 : CompanyTitleBlock.Top(options);
 
     // Manual placement uses the printed inner frame, not automatic-layout padding.
     public static Box UpperArea(PrintOptions options) => new(Margin, Margin, InnerWidth(options), TitleTop(options) - Margin);
 
     public static Box Placement(PrintOptions options) => CompanyTitleBlock.ContentSized(options) ? new(Margin, Margin, InnerWidth(options), Bottom(options) - Margin) : UpperArea(options);
 
-    public static Box TitleBounds(PrintOptions options) => options.TitleBlock != null ? CompanyTitleBlock.Layout(options).Bounds : new(Margin, TitleTop(options), InnerWidth(options), Bottom(options) - TitleTop(options));
+    public static Box TitleBounds(PrintOptions options) => !options.TitleBlockVisible ? default : options.TitleBlock != null ? CompanyTitleBlock.Layout(options).Bounds : new(Margin, TitleTop(options), InnerWidth(options), Bottom(options) - TitleTop(options));
 
     public static bool Fits(Box box, PrintOptions options)
     {
@@ -114,6 +133,7 @@ static class PageLayout
         canvas.Line(Margin, Margin, Margin, bottom, .6f);
         canvas.Line(right, Margin, right, bottom, .6f);
         SheetZones.Paint(canvas, options);
+        if (!options.TitleBlockVisible) return;
         if (options.TitleBlock != null)
         {
             CompactPrintTitle.Draw(canvas, title, options, calculatedScale: calculatedScale);
@@ -121,6 +141,7 @@ static class PageLayout
         }
         canvas.Line(Margin, top, right, top, .6f);
         canvas.Line(split, top, split, bottom - 110, .6f);
+        CompanyTitleBlock.Conventions(canvas, options.DrawingAngle, Margin + 30, top + 7, 380);
         string display = AnnotationText.Clean(title, 100);
         canvas.Text(display, Margin + 40, bottom - 250, Math.Clamp((split - Margin - 100) / Math.Max(display.Length, 1), 18, 72), 1);
         canvas.Text("GENERAL ARRANGEMENT / EDITOR SNAPSHOT", Margin + 40, bottom - 155, Math.Min(27, (split - Margin - 80) / 23), .8f);

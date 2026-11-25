@@ -2,6 +2,7 @@
 .local/
 .tools/
 release-private/
+/docs/ignore/
 tmp/
 tests/fixtures/
 proof/
@@ -12,6 +13,7 @@ StarMapConfig.json
 **/title-settings.json
 **/export-settings.json
 **/Logos/
+**/PawPrints/Templates/
 **/Vehicles/
 **/Saves/
 

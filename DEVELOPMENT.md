@@ -1,6 +1,6 @@
 # Development
 
-PawPrints is a Windows x64 game mod. Source builds need the .NET 10 SDK, Python 3.11 or newer, KSA 2026.11.16.5901 and StarMap 0.5.4. Node.js 22 or newer is needed only for the HTML checklist tests. Players need only the packaged mod, the game and its loader.
+PawPrints is a Windows x64 game mod. The current refactor source targets KSA 2026.11.25.5949 and StarMap 0.5.4. Source builds use the .NET 10 SDK and Python 3.11 or newer. Node.js 22 or newer is needed only for the HTML checklist tests. Players need only the packaged mod, the game and its loader.
 
 ## Configure native prerequisites
 
@@ -16,7 +16,7 @@ This writes ignored `.local/development.json` and `.local/Development.props`. Al
 python tools/build.py --stage
 ```
 
-The build checks the inspected KSA and toolkit hashes, restores locked dependencies, builds Release and writes `dist/PawPrints-0.5.39-preview.zip`. Its only install root is `PawPrints/`. No game is launched or updated by `--stage`. Build outputs and packages stay ignored. The main KSA and toolkit assembly fingerprints are intentional compatibility gates, not automatic update detectors to bypass.
+The build checks the inspected KSA and toolkit hashes, restores locked dependencies, builds Release and writes `dist/PawPrints-<version>-preview.zip`. Its only install root is `PawPrints/`. No game is launched or updated by `--stage`. Build outputs and packages stay ignored. The main KSA and toolkit assembly fingerprints are intentional compatibility gates, not automatic update detectors to bypass.
 
 ## Portable checks
 
@@ -38,9 +38,9 @@ After the workflow is committed and has completed once on GitHub, protect `main`
 
 The browser checklist and its Node test dependencies are contained in `tests/manual/`. Open [checklist.html](tests/manual/checklist.html) directly to record manual results across sessions; Node is needed only to test the checklist itself.
 
-The test project is a console runner, not xUnit; `dotnet test` is not the entry point. The default runs all portable suites. Run a focused suite by appending `-- --free-text`, `-- --drawing-placement`, `-- --exploded`, `-- --performance`, `-- --poses`, `-- --panels`, `-- --border-layout`, `-- --live-preview`, `-- --logos`, `-- --scale-references`, `-- --input`, `-- --templates`, `-- --part-support` or `-- --profile-storage`. Outputs are in ignored `tests/output/`.
+The test project is a console runner, not xUnit; `dotnet test` is not the entry point. The default runs all portable suites. Run a focused suite by appending `-- --foundation`, `-- --groups`, `-- --free-text`, `-- --drawing-placement`, `-- --exploded`, `-- --performance`, `-- --poses`, `-- --panels`, `-- --border-layout`, `-- --live-preview`, `-- --logos`, `-- --scale-references`, `-- --input`, `-- --templates`, `-- --part-support` or `-- --profile-storage`. Outputs are in ignored `tests/output/`. The foundation suite covers stale/cancelled jobs, accepted-state recovery, source bindings and internal draft schemas.
 
-For the 5901 migration, follow [the testing handoff](docs/ksa-5901-testing.md). The optional `tests/host-probe/HostProbe.csproj` checks the actual game metadata and runs the production menu transpiler over real host IL without installing patches or starting the game. It requires explicit game, loader and built mod paths; it is separate from portable CI. Its success does not establish native editor or GPU behavior.
+The optional `tests/host-probe/HostProbe.csproj` checks the actual game metadata and runs the production menu transpiler over real host IL without installing patches or starting the game. It requires explicit game, loader and built mod paths; it is separate from portable CI. Its success does not establish native editor or GPU behavior.
 
 With native prerequisites configured, run `python tools/check_ui_text.py`. This headless ImGui probe checks literal percent text, native call guards and bounded private diagnostics without opening KSA. Its optional `--reproduce-unsafe` deliberately crashes a separate child probe to reproduce the unsafe native call; it is not a release check.
 
@@ -58,7 +58,7 @@ dotnet tests/bin/Release/net10.0/Blueprint.Tests.dll --fixtures tests/fixtures/c
 
 Missing fixtures fail explicitly. This suite checks accepted linework, PNG round trips, annotations, title layouts and real assembly hierarchy. It is additional to the portable suite, not a prerequisite for a clean source build.
 
-The optional `tools/capture/CaptureProbe.csproj` is a separate development mod. Build it with the configured game/loader paths. `python tools/capture/prepare_stock_capture.py` prepares an isolated stock-craft profile; add `--launch` only while KSA is closed. `tools/capture/enrich_materials.py` reconstructs authored UV/normal/texture data from the matching installed game. Install its optional dependencies with `python -m pip install -r tools/capture/requirements.txt`. Capture output stays under `tests/fixtures/captures/`. Supply a matching Lander capture and reviewed reference image before running visual comparisons.
+The optional `tools/capture/CaptureProbe.csproj` is a separate development mod whose runtime guard still requires KSA 5901. Use matching 5901 game and loader paths for this historical capture workflow. `python tools/capture/prepare_stock_capture.py` prepares an isolated stock-craft profile; add `--launch` only while KSA is closed. `tools/capture/enrich_materials.py` reconstructs authored UV/normal/texture data from the matching installed game. Install its optional dependencies with `python -m pip install -r tools/capture/requirements.txt`. Capture output stays under `tests/fixtures/captures/`. Supply a matching Lander capture and reviewed reference image before running visual comparisons.
 
 ## Test the actual release package
 
@@ -75,7 +75,7 @@ Company logos use the built-in Windows PNG decoder through WIC. Image resizing a
 
 `python tools/acceptance.py` prepares a disposable StarMap profile and explicitly launches one game with a separate QA driver. The default drawing scenario can be replaced by `--performance` or `--poses`; `--hold` leaves the game open after completion. `--package <release.zip>` installs and tests an exact copy of the supplied archive after preparing the test profile. The test-only driver is never included in the release. The native suite additionally needs a local `.local/vehicles/Lander_1/vehicle.xml`; stock Gemini7 and Rocket are copied from the installed game. First-use folder selection, focus/keyboard behavior and general UI acceptance still require manual checks in [the manual checklist](tests/manual/checklist.html).
 
-Close KSA before running native acceptance. The launcher refuses to start a second instance. Record failed runs alongside successful ones, and keep the pointer outside the drawing canvas during automated projection checks: hovering the canvas changes the active projection direction.
+Close KSA before running native acceptance. The launcher refuses to start a second instance. Record failed runs alongside successful ones. The drawing fixture supplies its own projection coordinates and ignores physical pointer hover during placement.
 
 ## Publication checks
 
@@ -107,3 +107,9 @@ Each rule selects exactly one of `templateId` (exact), `templatePrefix` or `temp
 ```
 
 Append that object to `rules` for the actual template ID being supported. The shipped rules preserve existing stock behavior. Missing files use the embedded bundled rules; invalid files reject generation through the normal warning popup while retaining the previous print. Parsing has byte, depth, rule-count and string-length limits; unknown fields, duplicate selectors and unsupported versions are rejected. This config describes naming and surface treatment, not arbitrary game APIs or custom renderers. Real third-party part packs still require native compatibility testing.
+
+## Large-craft capture measurements
+
+Capture diagnostics in the profile log report observed exterior and interior vertices, triangles, mesh primitives and distinct part IDs, duration, the ten most vertex-heavy template IDs, and any geometry or material budget failure. Counts on failure include the primitive that crossed a limit, not geometry that was never visited; internal counts may be partial if detail was omitted. Template IDs can identify installed part packs: review the log before sharing it.
+
+Capture shares detached source vertices, normals, UVs and triangle indices across mesh instances. The 0.6 renderer checks geometry phases against 512 MiB and includes retained drawings in a combined 2 GiB managed admission estimate. Source, raster and material limits also apply. These estimates cover mod work. Process measurements include KSA, its assets and other allocations. Native capture still runs synchronously on the editor thread.

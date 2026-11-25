@@ -127,24 +127,31 @@ PrintDiagnostics.State("settings.tab", "Title Block");
 try { throw new InvalidOperationException("PRIVATE-TEXT-DO-NOT-LOG"); }
 catch (Exception error) { PrintDiagnostics.Error("probe", error); }
 string live;
-using (var reader = new StreamReader(new FileStream(Path.Combine(logs, "PawPrints.log"), FileMode.Open, FileAccess.Read, FileShare.ReadWrite)))
+using (var reader = new StreamReader(new FileStream(Path.Combine(logs, PrintDiagnostics.LogFileName), FileMode.Open, FileAccess.Read, FileShare.ReadWrite)))
     live = reader.ReadToEnd();
 if (live.Contains("PRIVATE-TEXT") || !live.Contains("InvalidOperationException")
     || live.Split("settings.tab=Title Block").Length != 2)
     throw new Exception("Diagnostic privacy, flushing or deduplication failed.");
-for (int i = 0; i < 600; i++)
+for (int i = 0; i < 900; i++)
     PrintDiagnostics.Record("probe " + new string('x', 4000));
 PrintDiagnostics.Stop();
-for (int i = 0; i < 5; i++)
+var files = new DirectoryInfo(logs).GetFiles();
+string LogName(int age) => age == 0 ? PrintDiagnostics.LogFileName : $"{PrintDiagnostics.LogFileName}.{age}";
+var retained = Enumerable.Range(0, 6).Select(LogName).ToHashSet();
+if (!retained.SetEquals(files.Select(f => f.Name)) || files.Any(f => f.Length > 530000))
+    throw new Exception("Size rotation must retain the current log and five bounded history files.");
+
+for (int i = 0; i < 7; i++)
 {
-    PrintDiagnostics.Start(logs, "restart");
+    PrintDiagnostics.Start(logs, $"restart-{i}");
     PrintDiagnostics.Stop();
 }
-var files = new DirectoryInfo(logs).GetFiles();
-if (files.Length != 4 || files.Any(f => f.Length > 530000))
-    throw new Exception("Diagnostic rotation bound failed.");
+if (!retained.SetEquals(new DirectoryInfo(logs).EnumerateFiles().Select(f => f.Name)) ||
+    Enumerable.Range(0, 6).Any(age =>
+        !File.ReadLines(Path.Combine(logs, LogName(age))).First().Contains($"version=restart-{6 - age} ", StringComparison.Ordinal)))
+    throw new Exception("Session rotation must retain the five most recent prior logs in order.");
 // An unwritable destination must neither throw nor disrupt other UI work.
-PrintDiagnostics.Start(Path.Combine(logs, "PawPrints.log", "invalid"), "test");
+PrintDiagnostics.Start(Path.Combine(logs, PrintDiagnostics.LogFileName, "invalid"), "test");
 PrintDiagnostics.Record("ignored-unwritable");
 PrintDiagnostics.Stop();
 Console.WriteLine("PASS local diagnostic flushing, privacy, deduplication, rotation and unwritable-path handling.");

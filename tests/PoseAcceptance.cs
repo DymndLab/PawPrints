@@ -58,11 +58,14 @@ static class PoseAcceptance
             }
             else if (phase == 1 && ++frame > 90)
             {
+                if (Acceptance.LoadPending(KSA.Program.Editor!))
+                    return;
                 Set("drawingPlacement", null!);
                 Set("partsTable", false);
                 Set("flagTable", false);
                 Call("OpenExport");
-                Call("Generate", KSA.Program.Editor!);
+                Call("Generate", KSA.Program.Editor!, true, null!, false);
+                Set("creatingBlank", true);
                 phase = 2;
             }
             else if (phase == 2 && Field("renderTask") == null)
@@ -91,11 +94,19 @@ static class PoseAcceptance
                         var actual = (Array)Get(Get(applied, "Geometry"), "Meshes");
                         for (int i = 0; i < actual.Length; i++)
                         {
-                            var av = (double[][])Get(actual.GetValue(i)!, "Vertices");
-                            var ev = (double[][])Get(expected!.GetValue(i)!, "Vertices");
-                            for (int j = 0; j < av.Length; j += Math.Max(1, av.Length / 40))
-                                for (int k = 0; k < 3; k++)
-                                    maxError = Math.Max(maxError, Math.Abs(av[j][k] - ev[j][k]));
+                            var actualMesh = actual.GetValue(i)!;
+                            var expectedMesh = expected!.GetValue(i)!;
+                            int count = (int)Get(actualMesh, "VertexCount");
+                            if (count != (int)Get(expectedMesh, "VertexCount"))
+                                throw new Exception("Detached/native mesh vertex counts differ");
+                            var pointAt = actualMesh.GetType().GetMethod("PointAt")!;
+                            for (int j = 0; j < count; j += Math.Max(1, count / 40))
+                            {
+                                var av = pointAt.Invoke(actualMesh, [j])!;
+                                var ev = pointAt.Invoke(expectedMesh, [j])!;
+                                foreach (var axis in new[] { "X", "Y", "Z" })
+                                    maxError = Math.Max(maxError, Math.Abs((double)Get(av, axis) - (double)Get(ev, axis)));
+                            }
                         }
                     }
                 }
@@ -163,7 +174,7 @@ static class PoseAcceptance
                 {
                     if (current.Length != 2)
                         throw new Exception("Pose redo failed: " + Field("status"));
-                    Call("Generate", KSA.Program.Editor!);
+                    Call("Generate", KSA.Program.Editor!, false, null!, false);
                     phase = 7;
                 }
                 else if (phase == 7)

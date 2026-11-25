@@ -64,14 +64,11 @@ public sealed partial class BlueprintMod
             Labels = document.Labels,
             Details = document.Details
         };
-        cancellation?.Dispose();
-        cancellation = new();
-        var token = cancellation.Token;
         renderKeepsDocument = true;
         renderAdoptsHistory = false;
         composingLabels = true;
         progress = "Drawing part pose";
-        renderTask = Task.Run(() => PosePainting.Rebuild(current, poses, token), token);
+        StartRender(token => PosePainting.Rebuild(current, poses, token));
     }
 
 
@@ -169,6 +166,6 @@ public sealed partial class BlueprintMod
                 ImGui.CloseCurrentPopup();
             }
         }
-        finally { DrawWarningDialog(true); ImGui.EndPopup(); }
+        finally { ImGui.EndPopup(); }
     }
 }

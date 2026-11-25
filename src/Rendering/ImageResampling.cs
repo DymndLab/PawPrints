@@ -39,7 +39,7 @@ static class ImageResampling
 
     // Separable Mitchell-Netravali filter (B=C=1/3). Widen the kernel when
     // reducing an image so thin drawing lines are averaged rather than skipped.
-    public static byte[] ResizeRgb(byte[] source, int width, int height, int targetWidth, int targetHeight)
+    public static byte[] ResizeRgb(byte[] source, int width, int height, int targetWidth, int targetHeight, CancellationToken token = default)
     {
         Validate(source, width, height, targetWidth, targetHeight, 3);
         if (width == targetWidth && height == targetHeight)
@@ -53,6 +53,7 @@ static class ImageResampling
         var activeRows = new float[vertical.Max(k => k.Weights.Length)][];
         for (int y = 0; y < targetHeight; y++)
         {
+            token.ThrowIfCancellationRequested();
             var kernel = vertical[y];
             foreach (int old in rows.Keys.Where(row => row < kernel.Start).ToArray())
             {

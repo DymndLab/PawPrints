@@ -10,8 +10,9 @@ namespace Blueprint;
 /// </summary>
 static class PrintDiagnostics
 {
+    public const string LogFileName = "PawPrints.log";
     const long FileLimit = 512 * 1024;
-    const int HistoryCount = 3;
+    const int HistoryCount = 5;
     static readonly object Gate = new();
     static readonly Dictionary<string, string> States = new();
     static readonly HashSet<string> Seen = new();
@@ -28,7 +29,7 @@ static class PrintDiagnostics
             try
             {
                 Directory.CreateDirectory(directory);
-                file = Path.Combine(directory, "PawPrints.log");
+                file = Path.Combine(directory, LogFileName);
                 Rotate();
                 Open();
                 States.Clear();

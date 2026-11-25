@@ -77,8 +77,8 @@ static class PrintTables
                 continue;
             var current = scene.WithTables(tables);
             var box = Bounds(current, labels, id);
-            bool FitsHere(Box candidate) => PageLayout.Fits(candidate, scene.Options)
-                && Font(scene, labels, id, candidate) > 0 && occupied.All(b => !b.Overlaps(candidate));
+            bool FitsHere(Box candidate) => (scene.Options.FreeLayout ? CanvasBounds.Safe(candidate) : PageLayout.Fits(candidate, scene.Options) && occupied.All(b => !b.Overlaps(candidate)))
+                && Font(scene, labels, id, candidate) > 0;
             if (!FitsHere(box))
             {
                 Box? fitted = null;
@@ -90,7 +90,7 @@ static class PrintTables
                         Width = width,
                         Height = Math.Max(box.Height, MathF.Ceiling(Height(scene, labels, id, width, font)))
                     }, scene.Options);
-                    fitted = FrameLayout.Clear(wanted, occupied, area, false, 200, 100, FrameLayout.Gap,
+                    fitted = scene.Options.FreeLayout && Font(scene, labels, id, wanted) > 0 ? wanted : FrameLayout.Clear(wanted, occupied, area, false, 200, 100, FrameLayout.Gap,
                         b => Font(scene, labels, id, b) > 0, boundary: PageLayout.TitleBounds(scene.Options));
                     if (fitted != null)
                         break;
@@ -107,12 +107,12 @@ static class PrintTables
     {
         var area = FrameLayout.Area(scene.Options);
         var panels = Panels(scene, labels).ToArray();
-        if (panels.Any(p => panels.Any(q => q.Id != p.Id && p.Bounds.Overlaps(q.Bounds)) || scene.Details.Any(d => p.Bounds.Overlaps(d.Definition.Bounds)) || scene.Specs.Any(b => p.Bounds.Overlaps(b.Bounds))))
+        if (!scene.Options.FreeLayout && panels.Any(p => panels.Any(q => q.Id != p.Id && p.Bounds.Overlaps(q.Bounds)) || scene.Details.Any(d => p.Bounds.Overlaps(d.Definition.Bounds)) || scene.Specs.Any(b => p.Bounds.Overlaps(b.Bounds))))
         {
             reason = "Keep tables and detail frames clear of one another.";
             return false;
         }
-        bool fits = panels.All(p => PageLayout.Fits(p.Bounds, scene.Options) && Font(scene, labels, p.Id, p.Bounds) > 0);
+        bool fits = panels.All(p => (scene.Options.FreeLayout ? CanvasBounds.Safe(p.Bounds) : PageLayout.Fits(p.Bounds, scene.Options)) && Font(scene, labels, p.Id, p.Bounds) > 0);
         reason = fits ? "" : "Enlarge the table to fit its rows, or hide a note.";
         return fits;
     }
@@ -124,19 +124,20 @@ static class PrintTables
         if (!scene.Options.PartsTable && !scene.Options.FlagTable)
             return;
         var colors = SheetLayout.Colors(scene.Options.Theme);
-        var paper = new Canvas(scene.Width, scene.Height, colors.Paper, colors.Ink, scene.Options);
+        var paper = scene.Options.FreeLayout ? null : new Canvas(scene.Width, scene.Height, colors.Paper, colors.Ink, scene.Options);
         foreach (var panel in Panels(scene, labels))
         {
+            canvas.HitTarget = new(panel.Id == 0 ? DrawingObjectKind.PartsTable : DrawingObjectKind.FlagTable, panel.Id);
             var box = panel.Bounds;
             int id = panel.Id, font = Font(scene, labels, id, box);
             // Clear only inside the printed frame. Tables may touch its rules,
             // but plain grid paper must not erase those rules or zone ticks.
             var title = PageLayout.TitleBounds(scene.Options);
-            PageLayout.ClearPanel(canvas, paper, box, scene.Options);
+            if (!scene.Options.FreeLayout) PageLayout.ClearPanel(canvas, paper!, box, scene.Options);
             int left = (int)box.X, right = (int)box.Right, textX = left + font * 3, qtyX = right - font * 3;
             void Rule(int y, float opacity)
             {
-                int end = y >= title.Y && y <= title.Bottom ? Math.Min(right, (int)title.X - 1) : right;
+                int end = !scene.Options.FreeLayout && y >= title.Y && y <= title.Bottom ? Math.Min(right, (int)title.X - 1) : right;
                 if (end >= left)
                     canvas.Line(left, y, end, y, opacity);
             }

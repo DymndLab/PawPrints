@@ -5,12 +5,13 @@ sealed record PlacementPreview(int Width, int Height, byte[] Rgba, Box Bounds, V
 static class PlacementPreviews
 {
 
-    public static PlacementPreview View(PoseSource source, DrawingView view, float ratio, PrintOptions options, PartPose[] poses, CancellationToken token)
+    public static PlacementPreview View(PoseSource source, DrawingView view, float ratio, PrintOptions options, PartPose[] poses, CancellationToken token, CurvatureLines? unposedCurvature = null)
     {
         var capture = PartPoses.Exterior(source, PartPoses.Apply(source, poses, view.Id));
         var region = DrawingPlacements.Plan(capture, options, new(ratio, [view with { Parent = null }]))[0];
         var frame = region.Frame!;
-        var tile = new BlueprintRenderer(capture, source.Maps, "Placement", view.Camera, token, frame).RenderView(_ => { });
+        var tile = new BlueprintRenderer(capture, source.Maps, "Placement", view.Camera, token, frame,
+            sharedCurvature: poses.Length == 0 ? unposedCurvature : null).RenderView(_ => { });
         int h = tile.Height + (options.Captions ? ViewCaption.Band : 0), w = tile.Width;
         var canvas = new Canvas(new byte[w * h * 3], w, h, new(255));
         for (int y = 0; y < tile.Height; y++)
@@ -40,7 +41,7 @@ static class PlacementPreviews
             }
         }
         NativeText.Apply(canvas.Pixels, w, h, canvas.Runs);
-        var ink = SheetLayout.Colors(options.Theme).Ink;
+        var ink = new Vector3(255, 221, 68);
         var rgba = new byte[w * h * 4];
         for (int i = 0; i < w * h; i++)
         {

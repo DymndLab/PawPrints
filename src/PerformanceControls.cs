@@ -20,6 +20,7 @@ public sealed partial class BlueprintMod
         QueueSpecs(document.Scene.Specs.Where(s => s.Id != id).ToArray());
     }
     static string specError = "";
+    static readonly ImInputString specVehicleName = new(512);
     internal static bool SpecPopupDrawn
     {
         get; private set;
@@ -40,14 +41,11 @@ public sealed partial class BlueprintMod
             Scene = document.Scene.WithSpecs(specs)
         };
         var labels = document.Labels.Select(l => l with { ManualPlacement = true }).ToArray();
-        cancellation?.Dispose();
-        cancellation = new();
-        var token = cancellation.Token;
         renderKeepsDocument = true;
         renderAdoptsHistory = false;
         composingLabels = true;
         progress = "Drawing performance blocks";
-        renderTask = Task.Run(() => AnnotationPainting.Compose(current, labels, token) with { Notice = "Performance updated. Drag a heading to move, corner to resize; right-click for options." }, token);
+        StartRender(token => AnnotationPainting.Compose(current, labels, token) with { Notice = "Performance updated. Drag a heading to move, corner to resize; right-click for options." });
     }
 
 
@@ -61,11 +59,11 @@ public sealed partial class BlueprintMod
         var area = FrameLayout.Area(scene.Options);
         bool existing = scene.Specs.Any(b => b.Id == block.Id);
         if (existing && block.Bounds.X >= area.X && block.Bounds.Y >= area.Y && block.Bounds.Right <= area.Right && block.Bounds.Bottom <= area.Bottom
-            && SpecObstacles(block.Id).All(o => !o.Overlaps(block.Bounds)) && PerformancePainting.Font(data, block) > 0)
+            && SpecObstacles(block.Id).All(o => !o.Overlaps(block.Bounds)) && PerformancePainting.Font(data, block, scene.Options.TitleBlock?.Title) > 0)
             return block;
         var wanted = block.Bounds with
         {
-            Height = Math.Max(block.Bounds.Height, PerformancePainting.Height(data, block, block.FontSize))
+            Height = Math.Max(block.Bounds.Height, PerformancePainting.Height(data, block, block.FontSize, scene.Options.TitleBlock?.Title))
         };
         // Prefer the requested size. When a long block cannot fit, try wider
         // columns before reducing type to the existing table minimum.
@@ -80,10 +78,10 @@ public sealed partial class BlueprintMod
             };
             var box = FrameLayout.Clamp(candidate.Bounds with
             {
-                Height = Math.Min(area.Height, Math.Max(150, PerformancePainting.Height(data, candidate, candidate.FontSize)))
+                Height = Math.Min(area.Height, Math.Max(150, PerformancePainting.Height(data, candidate, candidate.FontSize, scene.Options.TitleBlock?.Title)))
             }, scene.Options, 300, 150);
-            var clear = (existing ? null : FrameLayout.Clear(box, SpecObstacles(block.Id).Concat(scene.Visible.Values.Select(v => v.Bounds)).Concat(scene.Captions.Select(c => c.Bounds)), area, false, 300, 150, FrameLayout.Gap, b => PerformancePainting.Font(data, candidate with { Bounds = b }) > 0, boundary: PageLayout.TitleBounds(Options)))
-                ?? FrameLayout.Clear(box, SpecObstacles(block.Id), area, false, 300, 150, snapPanels ? FrameLayout.Gap : 0, b => PerformancePainting.Font(data, candidate with { Bounds = b }) > 0, boundary: PageLayout.TitleBounds(Options));
+            var clear = (existing ? null : ClearPanelPlacement(box, SpecObstacles(block.Id).Concat(scene.Visible.Values.Select(v => v.Bounds)).Concat(scene.Captions.Select(c => c.Bounds)), area, false, 300, 150, FrameLayout.Gap, b => PerformancePainting.Font(data, candidate with { Bounds = b }, scene.Options.TitleBlock?.Title) > 0, boundary: PageLayout.TitleBounds(Options)))
+                ?? ClearPanelPlacement(box, SpecObstacles(block.Id), area, false, 300, 150, snapPanels ? FrameLayout.Gap : 0, b => PerformancePainting.Font(data, candidate with { Bounds = b }, scene.Options.TitleBlock?.Title) > 0, boundary: PageLayout.TitleBounds(Options));
             if (clear is { } found)
                 return block with
                 {
@@ -130,6 +128,7 @@ public sealed partial class BlueprintMod
         void Outline(Box b, uint color) => ImGui.GetWindowDrawList().AddRect(origin + new float2(b.X * factor, b.Y * factor), origin + new float2(b.Right * factor, b.Bottom * factor), color, 0, ImDrawFlags.None, 2);
         if (dragSpec is { } dragging)
         {
+            ImGui.SetMouseCursor(specResize ? ImGuiMouseCursor.ResizeNWSE : ImGuiMouseCursor.ResizeAll);
             if (ImGui.IsMouseClicked(ImGuiMouseButton.Right))
             {
                 dragSpec = null;
@@ -147,7 +146,9 @@ public sealed partial class BlueprintMod
             };
             box = SnapPanel(box, -1000 - dragging.Id, specResize, factor);
             box = specResize ? FrameLayout.Resize(box, Options, 300, 150) : FrameLayout.Clamp(box, Options, 300, 150);
-            box = FrameLayout.Clear(box, SpecObstacles(dragging.Id), FrameLayout.Area(Options), specResize, 300, 150, snapPanels ? FrameLayout.Gap : 0, b => PerformancePainting.Font(document.Scene.Performance, dragging with { Bounds = b }) > 0, boundary: PageLayout.TitleBounds(Options)) ?? dragging.Bounds;
+            box = ClearPanelPlacement(box, SpecObstacles(dragging.Id), FrameLayout.Area(Options), specResize, 300, 150, snapPanels ? FrameLayout.Gap : 0, b => PerformancePainting.Font(document.Scene.Performance, dragging with { Bounds = b }, document.Scene.Options.TitleBlock?.Title) > 0, boundary: PageLayout.TitleBounds(Options)) ?? dragging.Bounds;
+            if (!specResize)
+                box = CanvasMotion.KeepOnPage(box, Options);
             Outline(box, 0xFF8EDD8E);
             PanelGrip(box, factor, origin);
             if (!ImGui.IsMouseDown(ImGuiMouseButton.Left))
@@ -168,7 +169,7 @@ public sealed partial class BlueprintMod
                 Outline(b.Bounds, 0xFF88D8FF);
                 PanelGrip(b.Bounds, factor, origin);
             }
-            if (!hovered || !over && !corner)
+            if (!hovered || canvasTarget?.Id != b.Id || !over && !corner)
                 continue;
             if (ImGui.IsMouseClicked(ImGuiMouseButton.Right))
             {
@@ -177,9 +178,9 @@ public sealed partial class BlueprintMod
                 SpecPopupDrawn = false;
             }
             hoveredSpec = b.Id;
-            if (corner || point.Y < b.Bounds.Y + Math.Max(64, 22 / factor))
+            if (corner || over)
             {
-                ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+                ImGui.SetMouseCursor(corner ? ImGuiMouseCursor.ResizeNWSE : ImGuiMouseCursor.ResizeAll);
                 if (ImGui.IsMouseClicked(ImGuiMouseButton.Left))
                 {
                     dragSpec = b;
@@ -204,17 +205,47 @@ public sealed partial class BlueprintMod
             return;
         try
         {
-            SpecPopupDrawn = true;
             partMenuOpen = true;
             if (specDraft is not { } b || document?.Scene.Performance is not { } data)
             {
                 ImGui.CloseCurrentPopup();
                 return;
             }
+            string? drawingName = document.Scene.Options.TitleBlock?.Title;
+            if (!SpecPopupDrawn)
+                specVehicleName.SetValue(SpecMetrics.VehicleName(data, b, drawingName).AsSpan());
+            SpecPopupDrawn = true;
             ImGui.BeginChild("Performance options"u8, new float2(610, Math.Min(560, ImGui.GetIO().DisplaySize.Y - 160)));
             try
             {
-                ImGui.Text(SpecMetrics.Title(data, b));
+                PrintUiText.Wrapped(SpecMetrics.Title(data, b, drawingName));
+                if (b.Vehicle)
+                {
+                    bool followsTitle = b.VehicleName == null;
+                    if (ImGui.Checkbox("Use title-block title", ref followsTitle))
+                    {
+                        b = b with
+                        {
+                            VehicleName = followsTitle ? null : specVehicleName.ToString()
+                        };
+                        specVehicleName.SetValue(SpecMetrics.VehicleName(data, b, drawingName).AsSpan());
+                    }
+                    if (followsTitle)
+                        specVehicleName.SetValue(SpecMetrics.VehicleName(data, b, drawingName).AsSpan());
+                    ImGui.BeginDisabled(followsTitle);
+                    ImGui.SetNextItemWidth(420);
+                    bool renamed = ImGui.InputText("Vehicle name", specVehicleName);
+                    specVehicleName.EvaluateLength();
+                    if (renamed)
+                        b = b with
+                        {
+                            VehicleName = specVehicleName.ToString()
+                        };
+                    ImGui.EndDisabled();
+                    PrintUiText.Wrapped(followsTitle
+                        ? "Follows the drawing title; uses the captured craft name when the title is blank."
+                        : "This name applies only to this performance block.");
+                }
                 int format = b.Format;
                 if (ImGui.Combo("Format"u8, ref format, SpecFormats, 2))
                     b = b with
@@ -342,7 +373,7 @@ public sealed partial class BlueprintMod
                     {
                         Border = border
                     };
-                if (ImGui.Checkbox("Paper background", ref fill))
+                if (!Options.FreeLayout && ImGui.Checkbox("Paper background", ref fill))
                     b = b with
                     {
                         Fill = fill
@@ -409,6 +440,6 @@ public sealed partial class BlueprintMod
                 ImGui.CloseCurrentPopup();
             }
         }
-        finally { DrawWarningDialog(true); ImGui.EndPopup(); }
+        finally { ImGui.EndPopup(); }
     }
 }

@@ -5,7 +5,10 @@ sealed record PoseTrack(uint Node, int Depth, uint[] Descendants, Matrix4x4[] De
 sealed record PoseControl(uint Part, string Key, string Name, bool DeployRetract, int CapturedPercent, PoseTrack[] Tracks, uint[]? SymmetryParts = null);
 // View -1 is shared by all main views and details; a view ID overrides it.
 sealed record PartPose(uint Part, string Key, int View, int Percent);
-sealed record PoseSource(AssemblyCapture Assembly, PoseControl[] Controls, int ExteriorCount, LabelPart[] Parts, IReadOnlyDictionary<string, Texture> Maps, PerformanceData? Performance = null);
+sealed record PoseSource(AssemblyCapture Assembly, PoseControl[] Controls, int ExteriorCount, LabelPart[] Parts, IReadOnlyDictionary<string, Texture> Maps, PerformanceData? Performance = null)
+{
+    public long DetachedGeometryBytes { get; init; }
+}
 
 static class PartPoses
 {
@@ -50,14 +53,17 @@ static class PartPoses
         if (transforms.Count == 0)
             return source.Assembly;
         var a = source.Assembly;
+        foreach (var mesh in a.Geometry.Meshes.Where(m => m.ConnectedParts.Length > 1))
+        {
+            var movements = mesh.ConnectedParts.Select(id => transforms.GetValueOrDefault(id, Matrix4x4.Identity)).ToArray();
+            if (movements.Skip(1).Any(m => m != movements[0]))
+                throw new InvalidOperationException("A fuel hose connects parts with different print poses. Reset those poses, or pose the craft in the editor and generate again. The previous print is unchanged.");
+        }
         var meshes = a.Geometry.Meshes.Select((m, i) =>
         {
             if (!transforms.TryGetValue(a.MeshNodes[i], out var matrix))
                 return m;
-            return m with
-            {
-                Vertices = m.Vertices.Select(v => { var p = Vector3.Transform(ExplodedGeometry.World(v), matrix); return new double[] { p.Z, p.X, p.Y }; }).ToArray()
-            };
+            return m.ApplyPose(matrix);
         }).ToArray();
         var nodes = a.Nodes.Select(n =>
         {
@@ -72,7 +78,18 @@ static class PartPoses
         return a with
         {
             Geometry = new(meshes),
-            Nodes = nodes
+            Nodes = nodes,
+            PosedMounts = a.Mounts?.ToDictionary(p => p.Key, p =>
+            {
+                var mount = p.Value;
+                if (!transforms.TryGetValue(mount.Host, out var matrix)) return mount;
+                return mount with
+                {
+                    Point = Vector3.Transform(mount.Point, matrix),
+                    Normal = Vector3.Normalize(Vector3.TransformNormal(mount.Normal, matrix)),
+                    Slide = mount.Slide == Vector3.Zero ? Vector3.Zero : Vector3.Normalize(Vector3.TransformNormal(mount.Slide, matrix))
+                };
+            })
         };
     }
 
@@ -82,15 +99,24 @@ static class PartPoses
 static class PosePainting
 {
 
-    public static Sheet RenderMain(PoseSource source, string title, PrintOptions options, string[] warnings, PartPose[] poses, CancellationToken token, bool composeAnnotations = true)
+    public static Sheet RenderMain(PoseSource source, string title, PrintOptions options, string[] warnings, PartPose[] poses, CancellationToken token, bool composeAnnotations = true, Sheet? previous = null)
     {
         var unposed = PartPoses.Exterior(source, source.Assembly);
-        var planned = SheetLayout.Plan(unposed, options);
-        var captures = planned.ToDictionary(v => v.Id, v => PartPoses.Exterior(source, PartPoses.Apply(source, poses, v.Id)));
-        // One common scale must fit every selected pose; use the full projected
-        // envelope for fitting but render only the assigned pose in each box.
-        var fit = poses.Length == 0 || captures.Count == 0 ? unposed : new Capture(captures.Values.SelectMany(c => c.Meshes).ToArray());
-        var result = SheetLayout.Render(unposed, source.Maps, title, source.Parts, options, warnings, token, _ => { }, captures, fit, composeAnnotations);
+        Dictionary<int, Capture>? captures = null;
+        Capture fit = unposed;
+        if (poses.Length != 0)
+        {
+            var ids = options.Drawing?.Views.Select(v => v.Id) ?? SheetLayout.Plan(unposed, options).Select(v => v.Id);
+            captures = ids.ToDictionary(id => id, id => PartPoses.Exterior(source, PartPoses.Apply(source, poses, id)));
+            // Fit to all selected poses; render only the assigned pose in each view.
+            if (captures.Count != 0)
+                fit = new(captures.Values.SelectMany(c => c.Meshes).ToArray());
+        }
+        // Scope reuse to the accepted snapshot. New captures and pose changes
+        // go through the ordinary render path.
+        var reusable = options.FreeLayout && previous is { Options.FreeLayout: true, Scene: { } old } &&
+            ReferenceEquals(previous.PoseSource, source) && old.Poses.SequenceEqual(poses) ? previous : null;
+        var result = SheetLayout.Render(unposed, source.Maps, title, source.Parts, options, warnings, token, _ => { }, captures, fit, composeAnnotations, reusable);
         result.Scene!.MeshNodes = source.Assembly.MeshNodes;
         return result with
         {

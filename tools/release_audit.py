@@ -19,6 +19,14 @@ from acceptance import validate_release_archive
 ROOT = Path(__file__).resolve().parents[1]
 # Reviewed public artwork only; other generated/exported images stay private.
 APPROVED_ARTWORK = {
+    "assets/wear/coffee.rgba.z": "9e7a123e19f1d5ef742021f9ba2a420774fbb3bfe2cb1ffe6ffed52bbd82f7c3",
+    "assets/wear/hook.rgba.z": "0c2cf19a32385243a08ac6bdd58b790dea2cee3e78988f03aa7e3fb4e1e8b988",
+    "assets/wear/jog.rgba.z": "361666e58d0048ccc720e89dfd58fdaf91a6beaaf4efe319f7a0bbd10a54d4fd",
+    "assets/wear/nick.rgba.z": "c844b20de96e004b4fe7eb866a16d512fc3a7bbc7a015a6a73429819cd2e8190",
+    "assets/wear/rub.rgba.z": "772b21edba4e78fecca7a8093526af664ea1082614ee8a334b8e7d422722816e",
+    "assets/wear/soft.rgba.z": "2e68cdff7a0c559e901b8a38e4326da185b194c8d4d096fb23cdbaae7ac2682c",
+    "assets/wear/split.rgba.z": "acbd6a6266cc5fd24e4470777f52af5316016162fba3088737d6e53110b736d3",
+    "assets/wear/wide.rgba.z": "0e8604ae4445fc2d58f0d4cb7624f8cc2ee664a243afa980c4a8ccc7c3e340af",
     "images/listing/icon.jpg":
         "6d7b1fda2270c5ba065855e224063ce6f25071df5dcab4de5c1301c4fda6db1a",
 }

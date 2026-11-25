@@ -16,18 +16,21 @@ static class PerformanceCapture
             var owner = engine.Parent.StructuralPart;
             var nozzles = new List<NozzleGimbal>();
             var propellants = new List<string>();
-            // 5901 assigns cores and their nozzles through each Rocket. Use the
-            // rocket's virtual conditions API, as the native aggregate does.
+            // KSA calculates conditions for all cores of a rocket together.
+            // The result slots follow rocket.Cores, as in the native aggregate.
+            var conditions = new RocketCoreConditions[Rocket.FindCoreCountMax(engine.Rockets.AsSpan())];
             foreach (var rocket in engine.Rockets)
             {
-                foreach (var core in rocket.Cores)
+                rocket.ComputeCoreConditions(1f, conditions);
+                var cores = rocket.Cores;
+                for (int coreIndex = 0; coreIndex < cores.Length; coreIndex++)
                 {
+                    var core = cores[coreIndex];
                     propellants.AddRange(core.Reaction.ReactantPhases.Select(p => p.Name));
-                    var conditions = rocket.ComputeCoreConditions(core, 1);
                     foreach (var nozzle in core.Nozzles)
                     {
                         var gimbal = nozzle.Parent.GimbalAsmb;
-                        nozzles.Add(new(nozzle.ComputePerformance(in conditions, 0).GetTotalThrust(),
+                        nozzles.Add(new(nozzle.ComputePerformance(in conditions[coreIndex], 0).GetTotalThrust(),
                             gimbal == null ? 0 : (double)gimbal.AxisY.MaxAngle * 180 / Math.PI,
                             gimbal == null ? 0 : (double)gimbal.AxisZ.MaxAngle * 180 / Math.PI));
                     }
@@ -52,8 +55,15 @@ static class PerformanceCapture
             if (mass > 0)
                 loading[name] = loading.GetValueOrDefault(name) + mass;
         }
-        var points = assembly.Geometry.Meshes.Where((_, i) => !assembly.Internal[i]).SelectMany(m => m.Vertices).Select(ExplodedGeometry.World).ToArray();
-        V size = points.Aggregate(new V(float.NegativeInfinity), V.Max) - points.Aggregate(new V(float.PositiveInfinity), V.Min);
+        V min = new(float.PositiveInfinity), max = new(float.NegativeInfinity);
+        for (int i = 0; i < assembly.Geometry.Meshes.Length; i++)
+            if (!assembly.Internal[i])
+                foreach (var point in assembly.Geometry.Meshes[i].WorldVertices())
+                {
+                    min = V.Min(min, point);
+                    max = V.Max(max, point);
+                }
+        V size = max - min;
         var stages = new List<StageRating>();
         string? unavailable = tree.PerformanceSequences.IsDirty ? "Unavailable: KSA stage estimate is still updating" : null;
         if (unavailable == null)

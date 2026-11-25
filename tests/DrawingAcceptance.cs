@@ -5,7 +5,7 @@ using KSA;
 static class DrawingAcceptance
 {
     static int phase, frames, index;
-    static bool finished;
+    static bool finished, startedBlank;
     static float ratio;
     static object? before;
     static string native = "";
@@ -45,6 +45,10 @@ static class DrawingAcceptance
         Call("PrepareView");
     }
 
+    // The fixture supplies its own canvas coordinates. A pointer hovering the
+    // background game window must not choose a second projection direction.
+    static void IgnorePhysicalHover(ref bool hovered) => hovered = false;
+
     static void BeginRoll(int parent, int direction)
     {
         Set("projectionStyle", 0);
@@ -77,7 +81,7 @@ static class DrawingAcceptance
     static void Count(int count)
     {
         if (Views.Length != count)
-            throw new Exception("Expected " + count + " views: " + Field("status"));
+            throw new Exception($"Expected {count} views, found {Views.Length}: {Field("status")}");
     }
 
     public static void Tick(string instance)
@@ -90,6 +94,12 @@ static class DrawingAcceptance
                 throw new Exception("Timed out in phase " + phase + ": " + Field("status"));
             if (phase == 0)
             {
+                if (index == 0)
+                {
+                    var ghost = Mod.GetMethod("DrawGhost", BindingFlags.NonPublic | BindingFlags.Static)!;
+                    var prefix = typeof(DrawingAcceptance).GetMethod(nameof(IgnorePhysicalHover), BindingFlags.NonPublic | BindingFlags.Static)!;
+                    new HarmonyLib.Harmony("blueprint.acceptance").Patch(ghost, prefix: new HarmonyLib.HarmonyMethod(prefix));
+                }
                 using var reader = File.OpenText(Path.Combine(instance, "Vehicles", crafts[index], "vehicle.xml"));
                 var data = (VehicleSaveData)VehicleSaves.VehicleSerializer.Deserialize(reader)!;
                 data.OnDataLoad(KSA.Mod.Empty);
@@ -107,22 +117,43 @@ static class DrawingAcceptance
                 Set("zones", true);
                 Set("pageOrientation", 0);
                 Set("pageAspect", 0);
-                Call("OpenExport");
+                startedBlank = false;
                 phase = 1;
                 frames = 0;
             }
             else if (phase == 1 && frames > 90 && Field("renderTask") == null)
             {
+                if (!startedBlank)
+                {
+                    // LoadVehicle schedules a native history commit. Capture the craft
+                    // only once that commit has reached the regular editor frame.
+                    if (Acceptance.LoadPending(KSA.Program.Editor!))
+                        return;
+                    Call("OpenExport");
+                    Call("ChooseLayout", null, false, Field("setupStage"), false, false);
+                    Call("StartDrawing", KSA.Program.Editor);
+                    startedBlank = true;
+                    return;
+                }
                 Count(0);
                 native = State();
-                Call("BeginView", new object?[] { null });
-                ratio = (float)Field("draftRatio")! * 3;
-                Call("CancelGhost");
-                Begin(null, 2);
+                ratio = 0;
+                Call("BeginViewDraft", null, 2);
                 phase = 2;
             }
             else if (phase == 2)
             {
+                if (Field("renderTask") != null)
+                    return;
+                if (ratio == 0)
+                {
+                    if (Field("viewDraft") == null)
+                        throw new Exception("Initial capture did not start placement: " + Field("status"));
+                    ratio = (float)Field("draftRatio")! * 3;
+                    Set("draftRatio", ratio);
+                    Call("PrepareView");
+                    return;
+                }
                 if (Commit(.28f, .48f))
                     phase = 3;
             }
@@ -174,7 +205,7 @@ static class DrawingAcceptance
                         throw new Exception("Rolled projection orientation lost");
                     var v = Views[0];
                     var moved = T("DrawingPlacements").GetMethod("Move")!.Invoke(null, [Drawing, 100, new Vector2((float)Get(v, "X") * (int)Get(Sheet, "PixelWidth") + 40, (float)Get(v, "Y") * (int)Get(Sheet, "PixelHeight") + 30), Get(Sheet, "Options"), false])!;
-                    Call("QueueDrawing", moved, false, -1);
+                    Call("QueueDrawing", moved, false, -1, null);
                     phase = 10;
                 }
                 else if (phase == 10)
@@ -196,7 +227,7 @@ static class DrawingAcceptance
                     if (Drawing.Equals(before))
                         throw new Exception("View Redo failed");
                     before = Drawing;
-                    Call("Generate", KSA.Program.Editor!);
+                    Call("Generate", KSA.Program.Editor!, false, null, false);
                     phase = 13;
                 }
                 else if (phase == 13)
@@ -245,7 +276,7 @@ static class DrawingAcceptance
                     Set("desktopPreset", 0);
                     Set("customWidth", 1920);
                     Set("customHeight", 1080);
-                    Call("Generate", KSA.Program.Editor!);
+                    Call("Generate", KSA.Program.Editor!, false, null, false);
                     phase = 18;
                 }
                 else if (phase == 18)
@@ -271,13 +302,28 @@ static class DrawingAcceptance
                         desktopPixels = "1920x1080",
                         path = status[7..]
                     });
-                    var removed = T("DrawingPlacements").GetMethod("Remove")!.Invoke(null, [Drawing, 100])!;
-                    Call("QueueDrawing", removed, false, 100);
+                    frames = 0;
+                    phase = 24;
+                }
+                else if (phase == 24)
+                {
+                    // A freshly loaded native editor can still be committing its initial
+                    // history snapshot. Begin the gesture on the accepted craft revision.
+                    if (frames < 180 || !Equals(Field("acceptedCraft"), Field("observedCraft")))
+                        return;
+                    Count(4);
+                    Call("DeleteDrawingView", 100);
+                    if (!Equals(Field("pendingPrimaryDelete"), 100))
+                        throw new Exception("Deleting the primary did not offer a choice for its projections");
+                    Set("pendingPrimaryDelete", -1);
+                    Call("CommitViewDeletion", 100, false);
                     phase = 20;
                 }
                 else if (phase == 20)
                 {
                     Count(3);
+                    if (Views.Any(v => v.GetType().GetProperty("Parent")!.GetValue(v) != null))
+                        throw new Exception("Kept projections did not become independent primaries");
                     Call("UndoAnnotations", false);
                     phase = 21;
                 }
@@ -296,10 +342,29 @@ static class DrawingAcceptance
                 else if (phase == 23)
                 {
                     Count(4);
+                    Call("DeleteDrawingView", 100);
+                    if (!Equals(Field("pendingPrimaryDelete"), 100))
+                        throw new Exception("Restored primary lost its projections");
+                    Set("pendingPrimaryDelete", -1);
+                    Call("CommitViewDeletion", 100, true);
+                    phase = 25;
+                }
+                else if (phase == 25)
+                {
+                    Count(1);
+                    if ((int)Get(Views[0], "Id") != 103)
+                        throw new Exception("Cascade deletion removed the independent view");
+                    Call("UndoAnnotations", false);
+                    phase = 26;
+                }
+                else if (phase == 26)
+                {
+                    Count(4);
                     evidence.Add(new
                     {
                         craft = crafts[index],
-                        deleteViewUndoRedo = true
+                        deleteViewUndoRedo = true,
+                        keepAndCascadeProjectedViews = true
                     });
                     index++;
                     phase = 0;

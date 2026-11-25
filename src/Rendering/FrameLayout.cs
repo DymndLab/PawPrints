@@ -17,6 +17,11 @@ static class FrameLayout
     public static Box Clamp(Box box, PrintOptions options, float minWidth = 200, float minHeight = 100)
     {
         var area = Area(options);
+        if (options.FreeLayout)
+        {
+            CanvasBounds.Require(box);
+            return new(MathF.Round(box.X), MathF.Round(box.Y), Math.Clamp(box.Width, minWidth, 8192), Math.Clamp(box.Height, minHeight, 8192));
+        }
         float w = Math.Clamp(box.Width, Math.Min(minWidth, area.Width), area.Width), h = Math.Clamp(box.Height, Math.Min(minHeight, area.Height), area.Height);
         return new(MathF.Round(Math.Clamp(box.X, area.X, area.Right - w)), MathF.Round(Math.Clamp(box.Y, area.Y, area.Bottom - h)), MathF.Round(w), MathF.Round(h));
     }
@@ -93,6 +98,8 @@ static class FrameLayout
     public static Box Resize(Box box, PrintOptions options, float minWidth, float minHeight)
     {
         var area = Area(options);
+        if (options.FreeLayout)
+            return Clamp(box, options, minWidth, minHeight);
         return box with
         {
             Width = MathF.Round(Math.Clamp(box.Width, Math.Min(minWidth, area.Right - box.X), area.Right - box.X)),

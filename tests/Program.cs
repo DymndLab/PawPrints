@@ -11,10 +11,18 @@ string output = Path.GetFullPath("tests/output");
 Directory.CreateDirectory(output);
 var suites = new Dictionary<string, Action>
 {
+    ["groups"] = () => GroupChecks.Run(Check),
+    ["archival-wear"] = () => ArchivalWearChecks.Run(Check),
+    ["foundation"] = () => FoundationChecks.Run(Check),
+    ["startup"] = () => StartupChecks.Run(Check, output),
+    ["capture-stats"] = () => CaptureStatsChecks.Run(Check),
+    ["curvature"] = () => CurvatureChecks.Run(Check),
     ["part-support"] = () => PartSupportChecks.Run(Check, output),
     ["templates"] = () => TemplateChecks.Run(Check),
     ["input"] = () => InputChecks.Run(Check),
     ["live-preview"] = () => PreviewUpdateChecks.Run(Check),
+    ["generation-recovery"] = () => GenerationRecoveryChecks.Run(Check),
+    ["fuel-hoses"] = () => FuelHoseChecks.Run(Check, output),
     ["panels"] = () => PanelChecks.Run(Check, output),
     ["border-layout"] = () => BorderLayoutChecks.Run(Check, output),
     ["free-text"] = () => FreeTextChecks.Run(Check),
@@ -36,6 +44,19 @@ if (args.Length == 0)
 }
 else if (args.Length == 1 && suites.TryGetValue(args[0].TrimStart('-'), out var run))
     run();
+#if PAWPRINTS_PORTABLE_RENDERING
+else if (args.Length == 2 && args[0] == "--portable-rendering")
+{
+    Blueprint.Rendering.PortableRendering.Initialize(args[1]);
+    ImageDecodingChecks.Run(Check, Blueprint.Rendering.PortableRendering.DecodePng);
+    CompanyLogoChecks.Run(Check, output, portable: true);
+    StartupChecks.Run(Check, output);
+    GroupChecks.Run(Check);
+    ProfileStorageChecks.Run();
+}
+#endif
+else if (args.Length == 1 && args[0] == "--wear-review")
+    WearReview.Write(output);
 else if (args.Length == 2 && args[0] == "--fixtures")
 {
     string root = Path.GetFullPath(args[1]);

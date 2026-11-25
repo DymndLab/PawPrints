@@ -5,12 +5,17 @@ sealed record TextSpan(string Text, bool Outline = false, float Scale = 1, int S
 sealed record TextRun(string Text, int X, int Y, int Height, Vector3 Color, bool Bold = false, bool Italic = false, bool Outline = false, string? Face = null, TextSpan[]? Spans = null, bool Underline = false);
 
 sealed record PrintOptions(int View = 0, int Theme = 0, bool Grid = true, bool Archive = false, int Emphasis = 10, int Layout = 0, int VisibleViews = 15, bool Captions = true,
-    bool PartsTable = false, bool FlagTable = false, int DrawingSize = 0, int Orientation = 0, int Aspect = 0, int Brand = 0, TitleBlockData? TitleBlock = null, int Arrangement = 0, FixedViewLayout? Boxes = null, DrawingPlacement? Drawing = null, bool Zones = true, int CustomWidth = 2560, int CustomHeight = 1440, int WearLevel = 3)
+    bool PartsTable = false, bool FlagTable = false, int DrawingSize = 0, int Orientation = 0, int Aspect = 0, int Brand = 0, TitleBlockData? TitleBlock = null, int Arrangement = 0, FixedViewLayout? Boxes = null, DrawingPlacement? Drawing = null, bool Zones = true, int CustomWidth = 2560, int CustomHeight = 1440, int WearLevel = 3, DrawingOutput OutputTarget = DrawingOutput.Image, bool FreeLayout = false, bool TitleBlockVisible = true, uint WearSeed = 0, int? ProjectionAngle = null)
 {
+    // Earlier editable drawings recorded the convention only on projected children.
+    internal int DrawingAngle => ProjectionAngle ?? Drawing?.Views.FirstOrDefault(v => v.Parent != null && (v.RollDirection >= 0 || v.Alignment != 0))?.ProjectionAngle ?? 3;
+
+    // Set only on the detached final render. Editable projects store Normal options.
+    internal bool Detailed { get; init; }
     public PageSize Page => Orientation == 3 ? PageSize.Workspace(CustomWidth, CustomHeight) : PageSize.From(Orientation, Aspect);
     public PageSize OutputPage => Orientation == 3 ? PageSize.Custom(CustomWidth, CustomHeight) : Page;
 }
-sealed record ViewInk(Box Bounds, int Width, int Height, byte[] Pixels);
+sealed record ViewInk(Box Bounds, int Width, int Height, byte[] Pixels, int ViewId = -1, int[]? MeshOwners = null, int[]? MeshParts = null);
 sealed record Sheet(string Title, PrintOptions Options, byte[] Rgb, byte[] PreviewRgba, string[] Warnings)
 {
     public const int Width = 2400, Height = 3000, PreviewWidth = Width, PreviewHeight = Height;
@@ -20,10 +25,13 @@ sealed record Sheet(string Title, PrintOptions Options, byte[] Rgb, byte[] Previ
     {
         get; init;
     }
+    public IReadOnlyDictionary<DrawingObject, CanvasHitShape>? ObjectHits { get; init; }
+    public WearMark[] AppliedWear { get; init; } = [];
     public ViewInk[]? MainInk
     {
         get; init;
     }
+    public CurvatureLines? MainCurvature { get; init; }
     public PartLabel[] Labels { get; init; } = [];
     public ExplodedDetail[] Details { get; init; } = [];
     public ExplodedSource? DetailSource
@@ -34,6 +42,7 @@ sealed record Sheet(string Title, PrintOptions Options, byte[] Rgb, byte[] Previ
     {
         get; init;
     }
+    public CraftRefreshReview? Refresh { get; init; }
     public Sheet? RegeneratedBase
     {
         get; init;
@@ -70,6 +79,7 @@ sealed partial class BlueprintRenderer
 
     void DrawCraftInk(Action<int, int, float> put)
     {
+        ReadOnlySpan<int> neighbors = stackalloc[] { -1, 1, -W, W };
         for (int y = 1; y < H - 1; y++)
         {
             cancellation.ThrowIfCancellationRequested();
@@ -82,29 +92,20 @@ sealed partial class BlueprintRenderer
                     var t = Triangles[id];
                     var m = capture.Meshes[t.Mesh];
                     line = structuralLines[q];
-                    float nd = 0, ld = 0;
-                    foreach (int j in new[] { q - 1, q + 1, q - W, q + W })
+                    if (!m.FeatureInk)
                     {
-                        if (face[j] < 0)
+                        foreach (int offset in neighbors)
                         {
-                            line = 1;
-                            continue;
+                            int j = q + offset;
+                            if (face[j] < 0)
+                                line = 1;
+                            else if (t.Mesh != Triangles[face[j]].Mesh)
+                                line = Math.Max(line, .72f);
                         }
-                        var other = Triangles[face[j]];
-                        if (t.Mesh != other.Mesh)
-                        {
-                            line = Math.Max(line, .72f);
-                            continue;
-                        }
-                        if (m.Surface != "structure")
-                        {
-                            nd = Math.Max(nd, Vector3.Distance(surfaceNormal[q], surfaceNormal[j]));
-                            ld = Math.Max(ld, Math.Abs(luma[q] - luma[j]));
-                        }
+                        if (m.Surface == "solar")
+                            line = Math.Max(line, solarInk?[q] ?? 0);
+                        line = Math.Max(line, HatchInk(q, x, y, 5));
                     }
-                    if (m.Surface == "solar")
-                        line = Math.Max(line, Math.Max(tone[q], Math.Clamp((nd - .025f) * 2.8f + (ld - .025f) * 2, 0, .78f)));
-                    line = Math.Max(line, HatchInk(q, x, y, 5));
                 }
                 float neighbor = Math.Max(Math.Max(structuralLines[q - 1], structuralLines[q + 1]), Math.Max(structuralLines[q - W], structuralLines[q + W]));
                 put(x, y, Math.Max(line, neighbor * .3f));
@@ -117,7 +118,7 @@ sealed partial class BlueprintRenderer
     {
         progress("Drawing view");
         Rasterize();
-        PrepareStructure(22);
+        PrepareStructure(capture.Detailed ? 12 : 22);
         PreservePanelCorners();
         PrepareHatching();
         var ink = new byte[W * H];
@@ -128,6 +129,8 @@ sealed partial class BlueprintRenderer
         return new(W, H, ink, owners);
     }
 
+    internal Vector2[] Lettering { get; private set; } = [];
+
     internal int[] MeshOwners() => face.Select(id => id < 0 ? -1 : Triangles[id].Mesh).ToArray();
 
     public Sheet Render(PrintOptions options, string[] warnings, Action<string> progress)
@@ -136,7 +139,7 @@ sealed partial class BlueprintRenderer
         Rasterize();
         cancellation.ThrowIfCancellationRequested();
         progress("Tracing panel edges");
-        PrepareStructure(22);
+        PrepareStructure(capture.Detailed ? 12 : 22);
         PreservePanelCorners();
         cancellation.ThrowIfCancellationRequested();
         progress("Drawing crosshatching");
@@ -153,6 +156,7 @@ sealed partial class BlueprintRenderer
         var canvas = new Canvas(W, H, paper, ink, options);
         DrawCraftInk(canvas.Ink);
         PageLayout.Decorate(canvas, title, options);
+        Lettering = WearPlacement.Lettering(canvas.Runs, options.Page);
         NativeText.Apply(canvas.Pixels, W, H, canvas.Runs);
         var preview = Sheet.MakePreview(canvas.Pixels);
         cancellation.ThrowIfCancellationRequested();
@@ -166,6 +170,18 @@ sealed class Canvas
     readonly Vector3 ink;
     public readonly byte[] Pixels;
     public readonly List<TextRun> Runs = [];
+    public Dictionary<DrawingObject, CanvasHitShape>? HitShapes { get; set; }
+    public DrawingObject? HitTarget { get; set; }
+    bool tracingLine;
+    CanvasHitShape? HitShape
+    {
+        get
+        {
+            if (HitShapes == null || HitTarget is not { } target) return null;
+            if (!HitShapes.TryGetValue(target, out var shape)) HitShapes[target] = shape = new();
+            return shape;
+        }
+    }
 
     public Canvas(int width, int height, Vector3 paper, Vector3 ink, PrintOptions options)
     {
@@ -176,17 +192,17 @@ sealed class Canvas
         var zones = SheetZones.Count(options);
         var gx = SheetZones.GridAxis(width, zones.Columns);
         var gy = SheetZones.GridAxis(height, zones.Rows);
-        // Level 3 retains the original archival appearance for existing callers.
-        float wear = options.Archive ? Math.Clamp(options.WearLevel, 0, 5) / 3f : 0;
+        float wear = options.Archive ? MathF.Pow(Math.Clamp(options.WearLevel, 0, 5) / 5f, 1.7f) : 0;
+        var texture = wear > 0 ? new PaperWear(width, height, wear, paper, options.TitleBlock?.Title) : null;
         for (int y = 0; y < height; y++)
+        {
+            var wearRow = texture?.AtRow(y);
             for (int x = 0; x < width; x++)
             {
                 uint noise = unchecked((uint)(x * 374761393 + y * 668265263));
                 noise = (noise ^ (noise >> 13)) * 1274126177;
                 float grain = ((noise & 255) / 255f - .5f) * (.6f + 1.4f * wear);
-                float margin = Math.Min(Math.Min(x, width - 1 - x), Math.Min(y, height - 1 - y));
-                float age = MathF.Exp(-margin / 90f) * .06f * wear;
-                var color = paper * (1 - age) + new Vector3(grain);
+                var color = paper + (wearRow?.At(x) ?? Vector3.Zero) + new Vector3(grain);
                 float rule = 0;
                 int gridLine = Math.Max(gx[x], gy[y]);
                 if (options.Grid && gridLine > 0)
@@ -203,6 +219,7 @@ sealed class Canvas
                 Pixels[q + 1] = (byte)Math.Clamp(color.Y, 0, 255);
                 Pixels[q + 2] = (byte)Math.Clamp(color.Z, 0, 255);
             }
+        }
     }
 
     public Canvas(byte[] pixels, int width, int height, Vector3 ink)
@@ -220,6 +237,7 @@ sealed class Canvas
     {
         if (x < 0 || y < 0 || x >= width || y >= height || alpha <= 0)
             return;
+        if (!tracingLine) HitShape?.Pixel(x, y);
         int q = (y * width + x) * 3;
         var mixed = Vector3.Lerp(new(Pixels[q], Pixels[q + 1], Pixels[q + 2]), color, Math.Clamp(alpha, 0, 1));
         Pixels[q] = (byte)mixed.X;
@@ -229,14 +247,36 @@ sealed class Canvas
 
     public void Line(int x0, int y0, int x1, int y1, float alpha)
     {
+        if (x0 < 0 || y0 < 0 || x1 < 0 || y1 < 0 || x0 >= width || x1 >= width || y0 >= height || y1 >= height)
+        {
+            double lo = 0, hi = 1, dx = (double)x1 - x0, dy = (double)y1 - y0;
+            bool Edge(double p, double q)
+            {
+                if (p == 0) return q >= 0;
+                double t = q / p;
+                if (p < 0) lo = Math.Max(lo, t); else hi = Math.Min(hi, t);
+                return lo <= hi;
+            }
+            if (!Edge(-dx, x0) || !Edge(dx, width - 1d - x0) || !Edge(-dy, y0) || !Edge(dy, height - 1d - y0)) return;
+            int endX = (int)Math.Round(x0 + hi * dx), endY = (int)Math.Round(y0 + hi * dy);
+            x0 = (int)Math.Round(x0 + lo * dx); y0 = (int)Math.Round(y0 + lo * dy);
+            x1 = endX; y1 = endY;
+        }
+        if (alpha > 0) HitShape?.Line(x0, y0, x1, y1);
+        tracingLine = true;
         int n = Math.Max(Math.Abs(x1 - x0), Math.Abs(y1 - y0));
         for (int i = 0; i <= n; i++)
             Ink(x0 + (x1 - x0) * i / Math.Max(n, 1), y0 + (y1 - y0) * i / Math.Max(n, 1), alpha);
+        tracingLine = false;
     }
 
     public void InlineText(TextSpan[] spans, int x, int y, int size) => Runs.Add(new(string.Concat(spans.Select(s => s.Text)), x, y, size, ink, true, true, false, "Consolas", spans));
 
-    public void Text(string text, int x, int y, int size, float alpha, bool bold = false, bool italic = false, bool outline = false, string? face = null, bool underline = false) => Runs.Add(new(text, x, y, size, ink, bold, italic, outline, face, Underline: underline));
+    public void Text(string text, int x, int y, int size, float alpha, bool bold = false, bool italic = false, bool outline = false, string? face = null, bool underline = false)
+    {
+        if (alpha > 0) HitShape?.Text(text, x, y, size);
+        Runs.Add(new(text, x, y, size, ink, bold, italic, outline, face, Underline: underline));
+    }
 }
 
 static class PrintFiles
@@ -253,21 +293,14 @@ static class PrintFiles
 
     public static string Save(Sheet sheet, string folder, bool requireExistingFolder = false)
     {
+        if (sheet.Details.Any(d => d.SourceIssue != DetailSourceIssue.None))
+            throw new InvalidOperationException("Resolve the affected exploded views before exporting.");
         if (requireExistingFolder)
             Blueprint.Storage.ExportPreferences.RequireExistingFolder(folder);
         else
             Directory.CreateDirectory(folder);
-        string stem = $"PawPrints-{SafeStem(sheet.Title)}-{DateTime.UtcNow:yyyyMMdd-HHmmss}-{Guid.NewGuid():N}";
-        string target = Path.Combine(folder, stem + ".png"), temp = Path.Combine(folder, stem + ".partial");
-        try
-        {
-            var output = sheet.Options.OutputPage;
-            var rgb = DesktopExport.Resize(CompanyTitleBlock.StampExportDate(sheet, CompanyTitleBlock.LocalDate()), sheet.Options.Page, output);
-            int density = (int)Math.Round(PrintScale.Density(sheet.Options) * (double)output.Width / sheet.PixelWidth);
-            Png.Write(temp, output.Width, output.Height, rgb, density);
-            File.Move(temp, target, false);
-            return target;
-        }
-        finally { if (File.Exists(temp)) File.Delete(temp); }
+        var png = FinalPng.Prepare(sheet, null, false, CompanyTitleBlock.LocalDate(), RenderMemory.Retained(sheet), default);
+        using var pending = png.Stage(folder, sheet.Title, default);
+        return pending.Publish();
     }
 }

@@ -4,12 +4,12 @@ namespace Blueprint.Rendering;
 // Centres are normalized to paper dimensions; scale is a physical 1:N ratio.
 // IDs identify drawings, not cameras: repeated directions are intentional.
 sealed record ViewAxes(Vector3 Right, Vector3 Up, Vector3 Toward);
-sealed record DrawingView(int Id, int Camera, float X, float Y, int? Parent = null, int Alignment = 0, ViewAxes? Axes = null, int RollDirection = -1, int ProjectionAngle = 3);
-sealed record DrawingPlacement(float Ratio, DrawingView[] Views);
+sealed record DrawingView(int Id, int Camera, float X, float Y, int? Parent = null, int Alignment = 0, ViewAxes? Axes = null, int RollDirection = -1, int ProjectionAngle = 3, float? Ratio = null);
+sealed record DrawingPlacement(float Ratio, DrawingView[] Views, DrawingObject[]? Layers = null);
 static class DrawingPlacements
 {
     public const int Limit = 12;
-    public static readonly string[] Names = ["Three-quarter", "Front", "Side", "Top", "Isometric", "Rear", "Left side", "Bottom"];
+    public static readonly string[] Names = ["Three-quarter", "Front", "Left side", "Top", "Isometric", "Rear", "Right side", "Bottom"];
 
 
     public static bool Oblique(int camera) => camera is 0 or 4;
@@ -67,6 +67,36 @@ static class DrawingPlacements
 
     public static int Direction(Vector2 delta) => Math.Abs(delta.X) >= Math.Abs(delta.Y) ? delta.X >= 0 ? 0 : 2 : delta.Y < 0 ? 1 : 3;
 
+    public static int OppositeDirection(int direction) => direction < 4 ? (direction + 2) % 4 : 4 + (direction - 2) % 4;
+
+    public static DrawingPlacement Reproject(DrawingPlacement drawing, PageSize page, int angle)
+    {
+        var original = drawing.Views.ToDictionary(v => v.Id);
+        var projected = new Dictionary<int, DrawingView>();
+        DrawingView Project(DrawingView view)
+        {
+            if (projected.TryGetValue(view.Id, out var cached)) return cached;
+            if (view.Parent is { } parentId)
+            {
+                var before = original[parentId];
+                var parent = Project(before);
+                int direction = view.RollDirection;
+                if (direction < 0 && view.Alignment != 0 &&
+                    Math.Abs(Vector3.Dot(Axes(before).Toward, Axes(view).Toward)) < .001f)
+                {
+                    var delta = new Vector2((view.X - before.X) * page.Width, (view.Y - before.Y) * page.Height);
+                    direction = view.Alignment == 1 ? (delta.Y < 0 ? 1 : 3) : (delta.X < 0 ? 2 : 0);
+                }
+                if (direction >= 0 && (view.ProjectionAngle != angle || view.RollDirection < 0 || Axes(before) != Axes(parent)))
+                    view = Roll(view, parent, direction, angle);
+            }
+            projected.Add(view.Id, view);
+            return view;
+        }
+        var views = drawing.Views.Select(Project).ToArray();
+        return views.SequenceEqual(drawing.Views) ? drawing : drawing with { Views = views };
+    }
+
 
     public static int ProjectionDirection(Vector2 delta, int previous)
     {
@@ -99,14 +129,15 @@ static class DrawingPlacements
 
     // Capture projection extents once; scale previews and fit searches need no
     // rasterization or repeated walks over every mesh vertex.
-    public static Func<float, ViewRegion[]> PreparePlan(Capture capture, PrintOptions options, DrawingPlacement drawing)
+    public static Func<float, ViewRegion[]> PreparePlan(Capture capture, PrintOptions options, DrawingPlacement drawing, int? scaleGroup = null)
     {
         if (drawing.Views.Length > Limit || drawing.Views.Select(v => v.Id).Distinct().Count() != drawing.Views.Length)
             throw new InvalidOperationException("Invalid view collection.");
-        var points = capture.Meshes.SelectMany(m => m.Vertices).Select(ExplodedGeometry.World).ToArray();
+        var points = capture.Meshes.SelectMany(m => m.WorldVertices()).ToArray();
         var lo = points.Aggregate(new Vector3(float.PositiveInfinity), Vector3.Min);
         var hi = points.Aggregate(new Vector3(float.NegativeInfinity), Vector3.Max);
         var center = (lo + hi) / 2;
+        int? scaleRoot = scaleGroup is { } id ? ProjectionGroups.Root(drawing, id) : null;
         var measured = drawing.Views.Select(v =>
         {
             if (v.Id < 0 || v.Id >= 1000 || v.Camera < 0 || v.Camera >= Names.Length || !float.IsFinite(v.X) || !float.IsFinite(v.Y))
@@ -125,26 +156,62 @@ static class DrawingPlacements
                 || Vector3.Distance(Vector3.Cross(b.Right, b.Up), b.Toward) > .001f)
                 throw new InvalidOperationException("Invalid drawing orientation.");
             float dx = points.Max(p => Math.Abs(Vector3.Dot(p - center, b.Right))) * 2, dy = points.Max(p => Math.Abs(Vector3.Dot(p - center, b.Up))) * 2;
-            return (View: v, Axes: b, Width: dx, Height: dy);
+            return (View: v, Axes: b, Width: dx, Height: dy, Ratio: cursor.Ratio ?? drawing.Ratio,
+                InScaleGroup: cursor.Id == scaleRoot);
         }).ToArray();
+        var page = options.Page;
+        int density = PrintScale.Density(options);
         return ratio =>
         {
             if (!float.IsFinite(ratio) || ratio < .01f || ratio > 1000000)
                 throw new InvalidOperationException("Choose a positive drawing scale between 1:0.01 and 1:1000000.");
-            float scale = PrintScale.Density(options) / ratio;
+            float legacyFactor = scaleRoot == null ? drawing.Ratio / ratio : 1;
             return measured.Select(m =>
             {
                 var v = m.View;
                 var b = m.Axes;
                 float dx = m.Width, dy = m.Height;
+                float scale = density / (m.InScaleGroup ? ratio : m.Ratio) * legacyFactor;
+                if (!float.IsFinite(dx * scale + dy * scale) || dx * scale + 32 > 8192 || dy * scale + 32 > 8192)
+                    throw new InvalidOperationException(options.FreeLayout ? "View exceeds the render tile resource budget. Reduce its size." : "This preview is too big for the canvas.");
                 int w = Math.Max(100, (int)MathF.Ceiling(dx * scale) + 32), h = Math.Max(100, (int)MathF.Ceiling(dy * scale) + 32);
                 // Bound renderer allocations before any large buffers are created.
-                if (w > options.Page.Width || h + ViewCaption.Band > options.Page.Height)
-                    throw new InvalidOperationException("This preview is too big for the canvas.");
-                var box = new Box(MathF.Round(v.X * options.Page.Width - w / 2f), MathF.Round(v.Y * options.Page.Height - h / 2f), w, h);
-                return new ViewRegion(v.Id, Name(v).ToUpperInvariant(), box, new(w, h, scale, center, b.Right, b.Up, b.Toward), v.Camera);
+                if (options.FreeLayout ? (long)w * h > (long)page.Width * page.Height : w > page.Width || h + ViewCaption.Band > page.Height)
+                    throw new InvalidOperationException($"This preview is too big for the canvas ({Name(v).ToUpperInvariant()}).");
+                var frame = new ProjectionFrame(w, h, scale, center, b.Right, b.Up, b.Toward) { ContentExtent = new(dx * scale, dy * scale) };
+                return PlaceFrame(v, frame, page);
             }).ToArray();
         };
+    }
+
+
+    static ViewRegion PlaceFrame(DrawingView view, ProjectionFrame frame, PageSize page)
+    {
+        var box = new Box(MathF.Round(view.X * page.Width - frame.Width / 2f),
+            MathF.Round(view.Y * page.Height - frame.Height / 2f), frame.Width, frame.Height);
+        return new(view.Id, Name(view).ToUpperInvariant(), box, frame, view.Camera);
+    }
+
+
+    // Position-only edits keep the already measured projection frames.
+    public static ViewRegion[]? RelocateFrames(RenderScene previous, PrintOptions options)
+    {
+        if (previous.Drawing is not { } before || options.Drawing is not { } next ||
+            previous.Options.Page != options.Page || before.Ratio != next.Ratio ||
+            before.Views.Length != next.Views.Length || next.Views.Select(v => v.Id).Distinct().Count() != next.Views.Length)
+            return null;
+
+        var views = new ViewRegion[next.Views.Length];
+        for (int i = 0; i < next.Views.Length; i++)
+        {
+            var view = next.Views[i];
+            var old = before.Views.FirstOrDefault(v => v.Id == view.Id);
+            var frame = previous.Views.FirstOrDefault(v => v.Id == view.Id)?.Frame;
+            if (old == null || frame == null || view with { X = old.X, Y = old.Y } != old)
+                return null;
+            views[i] = PlaceFrame(view, frame, options.Page);
+        }
+        return views;
     }
 
 
@@ -153,20 +220,23 @@ static class DrawingPlacements
 
     public static void Validate(ViewRegion[] views, PrintOptions options, IEnumerable<Box>? obstacles = null)
     {
-        var area = Area(options);
+        foreach (var view in views) CanvasBounds.Require(view.Bounds);
+        if (options.FreeLayout) return;
         var boxes = views.Select(v => Footprint(v, options.Captions)).ToArray();
-        foreach (var b in boxes)
+        for (int i = 0; i < boxes.Length; i++)
         {
+            var b = boxes[i];
             if (!PageLayout.Fits(b, options))
-                throw new InvalidOperationException("Keep the view and its caption inside the drawing area; move it or reduce its scale.");
+                throw new InvalidOperationException($"Keep {views[i].Name} and its caption inside the drawing area and clear of the title block; move it inward or reduce its scale.");
             if ((obstacles ?? []).Any(o => o.Overlaps(b)))
-                throw new InvalidOperationException("Place the view clear of tables, details and performance blocks.");
+                throw new InvalidOperationException($"Move {views[i].Name} clear of tables, details and performance blocks.");
         }
         for (int i = 0; i < boxes.Length; i++)
             for (int j = i + 1; j < boxes.Length; j++)
                 if (boxes[i].Overlaps(boxes[j]))
-                    throw new InvalidOperationException("Separate the views before committing this placement or scale.");
+                    throw new InvalidOperationException($"Separate {views[i].Name} and {views[j].Name} before increasing their scale.");
     }
+
 
 
     public static DrawingPlacement Move(DrawingPlacement layout, int id, Vector2 centre, PrintOptions options, bool unlock = false)
@@ -209,6 +279,7 @@ static class DrawingPlacements
 
     public static DrawingPlacement Repage(PrintOptions before, IEnumerable<ViewRegion> regions, DrawingPlacement layout, PrintOptions options)
     {
+        if (options.FreeLayout) return layout;
         var views = regions.Where(v => v.Id < 1000).ToArray();
         if (views.Length == 0 || before.Page == options.Page)
             return layout;
@@ -349,7 +420,7 @@ static class DrawingPlacements
 
     public static float SuggestRatio(Capture capture, int camera, PrintOptions options)
     {
-        var pts = capture.Meshes.SelectMany(m => m.Vertices).Select(ExplodedGeometry.World).ToArray();
+        var pts = capture.Meshes.SelectMany(m => m.WorldVertices()).ToArray();
         var b = SheetLayout.Basis(camera);
         var area = PageLayout.UpperArea(options);
         float w = pts.Max(p => Vector3.Dot(p, b.Right)) - pts.Min(p => Vector3.Dot(p, b.Right)), h = pts.Max(p => Vector3.Dot(p, b.Up)) - pts.Min(p => Vector3.Dot(p, b.Up));

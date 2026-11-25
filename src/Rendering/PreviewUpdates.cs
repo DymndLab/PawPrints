@@ -27,6 +27,13 @@ sealed class PreviewUpdateGate
 
 static class PreviewUpdates
 {
+    public static Sheet RenderBlank(Sheet previous, PrintOptions options, CancellationToken token)
+    {
+        var fresh = BlankDrawing.Create(previous.Title, options, token, composeWear: false);
+        var scene = previous.Scene!.WithBase(fresh.Rgb, fresh.Options, fresh.Scene!.BaseLettering);
+        return AnnotationPainting.Compose(fresh with { Scene = scene }, previous.Labels, token);
+    }
+
     public static bool CanRepaint(Sheet main, PrintOptions desired)
     {
         var old = main.Options;
@@ -40,6 +47,8 @@ static class PreviewUpdates
                 WearLevel = old.WearLevel,
                 Zones = old.Zones,
                 TitleBlock = old.TitleBlock,
+                TitleBlockVisible = old.TitleBlockVisible,
+                ProjectionAngle = old.ProjectionAngle,
                 Brand = old.Brand,
                 PartsTable = old.PartsTable,
                 FlagTable = old.FlagTable
@@ -71,7 +80,7 @@ static class PreviewUpdates
             Options = options,
             Rgb = canvas.Pixels,
             PreviewRgba = Sheet.MakePreview(canvas.Pixels),
-            Scene = scene.WithBase(canvas.Pixels, options),
+            Scene = scene.WithBase(canvas.Pixels, options, WearPlacement.Lettering(canvas.Runs, options.Page)),
             Labels = [],
             Details = []
         };
@@ -79,9 +88,15 @@ static class PreviewUpdates
 
     public static Sheet Render(Sheet previous, Sheet main, PrintOptions desired, CancellationToken token)
     {
-        // A line/endpoint-only edit can reuse even the composed craft background.
+        // Label/endpoint edits reuse the background. Assembly guide patterns
+        // are in detail tiles, so a changed definition must rebuild those tiles.
         if (previous.Options == desired)
+        {
+            if (previous.Scene != null && !previous.Details.SequenceEqual(previous.Scene.Details.Select(d => d.Definition)))
+                return ExplodedPainting.Compose(main, previous, previous.Details, previous.Labels, token,
+                    tables: previous.Scene.Tables, captions: previous.Scene.Captions);
             return AnnotationPainting.Compose(previous, previous.Labels, token);
+        }
         var options = desired;
         bool cached = CanRepaint(main, options);
         Sheet fresh;
@@ -98,7 +113,7 @@ static class PreviewUpdates
                     : new Capture(drawing.Views.SelectMany(v => PartPoses.Exterior(source, PartPoses.Apply(source, poses, v.Id)).Meshes).ToArray());
                 options = options with
                 {
-                    Drawing = DrawingPlacements.FitToPage(envelope, options, drawing,
+                    Drawing = options.FreeLayout ? drawing : DrawingPlacements.FitToPage(envelope, options, drawing,
                     CompositionRegeneration.RepageObstacles(previous.Scene, options))
                 };
             }
@@ -112,4 +127,16 @@ static class PreviewUpdates
             Notice = "Preview updated. Ctrl+Z undoes the change."
         };
     }
+}
+
+// Apply a pending print-wide style to detached composition data. Accepted
+// scene/detail pixels stay untouched until the replacement render succeeds.
+static class PrintStyles
+{
+    public static Sheet Apply(Sheet current, LeaderLine line, LeaderTip tip) => current.Scene == null ? current : current with
+    {
+        Labels = current.Labels.Select(l => l with { Line = line, Tip = tip, ManualPlacement = true }).ToArray(),
+        Details = current.Details.Select(d => d with { GuideLine = line }).ToArray(),
+        Scene = current.Scene.WithSpecs(current.Scene.Specs.Select(s => s with { Line = line, Tip = tip }).ToArray())
+    };
 }

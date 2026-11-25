@@ -74,7 +74,16 @@ static class NativeText
     [DllImport("gdi32.dll")] static extern IntPtr CreatePen(int style, int width, uint color);
     static readonly System.Collections.Concurrent.ConcurrentDictionary<int, float> MonoWidths = new();
 
-    public static float MonoWidth(int height) => MonoWidths.GetOrAdd(height, size =>
+    public static float MonoWidth(int height)
+    {
+#if PAWPRINTS_PORTABLE_RENDERING
+        if (PortableRendering.Active)
+            return PortableRendering.MonoWidth(height);
+#endif
+        return MonoWidths.GetOrAdd(height, MeasureWindowsMono);
+    }
+
+    static float MeasureWindowsMono(int size)
     {
         var dc = CreateCompatibleDC(IntPtr.Zero);
         var font = CreateFontW(-size, 0, 0, 0, 400, 0, 0, 0, 1, 0, 0, 4, 0, "Consolas");
@@ -86,10 +95,17 @@ static class NativeText
             return measured.Width / 10f;
         }
         finally { SelectObject(dc, old); DeleteObject(font); DeleteDC(dc); }
-    });
+    }
 
     public static void Apply(byte[] rgb, int width, int height, List<TextRun> runs)
     {
+#if PAWPRINTS_PORTABLE_RENDERING
+        if (PortableRendering.Active)
+        {
+            PortableRendering.Apply(rgb, width, height, runs);
+            return;
+        }
+#endif
         if (!OperatingSystem.IsWindows())
             throw new PlatformNotSupportedException("Blueprint typography currently uses Windows fonts.");
         foreach (var face in runs.Select(r => r.Face).Distinct())

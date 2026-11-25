@@ -32,9 +32,10 @@ static class FreeTextPainting
         if (height > page.Height)
             throw new InvalidOperationException("This text is taller than the page. Reduce its size or use fewer lines.");
         var b = box.Bounds;
+        CanvasBounds.Require(b);
         return box with
         {
-            Bounds = new(MathF.Round(Math.Clamp(b.X, 0, page.Width - b.Width)), MathF.Round(Math.Clamp(b.Y, 0, page.Height - height)), b.Width, MathF.Ceiling(height))
+            Bounds = new(MathF.Round(options.FreeLayout ? b.X : Math.Clamp(b.X, 0, page.Width - b.Width)), MathF.Round(options.FreeLayout ? b.Y : Math.Clamp(b.Y, 0, page.Height - height)), b.Width, MathF.Ceiling(height))
         };
     }
 
@@ -45,6 +46,7 @@ static class FreeTextPainting
             if (box.Outline)
             {
                 var b = box.Bounds;
+                CanvasBounds.Require(b);
                 canvas.Line((int)b.X, (int)b.Y, (int)b.Right, (int)b.Y, 1);
                 canvas.Line((int)b.X, (int)b.Bottom, (int)b.Right, (int)b.Bottom, 1);
                 canvas.Line((int)b.X, (int)b.Y, (int)b.X, (int)b.Bottom, 1);

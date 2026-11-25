@@ -43,9 +43,26 @@ static class PrintScale
         var main = views.Where(v => v.Id < 1000).ToArray();
         if (main.Length == 0 || main.Any(v => v.Frame == null))
             return "NOT TO SCALE";
-        var groups = main.GroupBy(v => Ratio(v.Frame, options)).ToArray();
-        return groups.Length == 1 ? groups[0].Key : "";
+        var scales = main.ToDictionary(v => v.Id, v => Ratio(v.Frame, options));
+        if (scales.Values.Distinct().Count() == 1)
+            return scales.Values.First();
+        if (options is { FreeLayout: true, Drawing: { } drawing })
+        {
+            // When several groups use different scales, use the largest linked
+            // orthographic set. The other ratios remain on their view captions.
+            var primary = drawing.Views.Where(v => !DrawingPlacements.Oblique(v.Camera) && scales.ContainsKey(v.Id))
+                .GroupBy(v => ProjectionGroups.Root(drawing, v.Id))
+                .Where(group => group.Count() > 1 && group.Any(v => v.Id == group.Key))
+                .OrderByDescending(group => group.Count()).FirstOrDefault();
+            if (primary != null && primary.Select(v => scales[v.Id]).Distinct().Count() == 1)
+                return scales[primary.Key];
+        }
+        return "";
     }
+
+    public static string? PrintedTitleScale(IEnumerable<ViewRegion> views, PrintOptions options) =>
+        options is { FreeLayout: true, TitleBlockVisible: true, TitleBlock: { } title }
+            ? Text(title, Summary(views, options)) : null;
 
     public static string Title(string craft, TitleBlockData? data) => string.IsNullOrWhiteSpace(data?.Title) ? craft : AnnotationText.Clean(data.Title, 100);
 

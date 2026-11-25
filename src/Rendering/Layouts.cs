@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Numerics;
 namespace Blueprint.Rendering;
 
@@ -13,7 +14,10 @@ readonly record struct Box(float X, float Y, float Width, float Height)
 
     public bool Overlaps(Box b, float gap = 0) => X - gap < b.Right && Right + gap > b.X && Y - gap < b.Bottom && Bottom + gap > b.Y;
 }
-sealed record ProjectionFrame(int Width, int Height, float Scale, Vector3 Center, Vector3 Right, Vector3 Up, Vector3 Toward);
+sealed record ProjectionFrame(int Width, int Height, float Scale, Vector3 Center, Vector3 Right, Vector3 Up, Vector3 Toward)
+{
+    public Vector2? ContentExtent { get; init; }
+}
 sealed record ViewRegion(int Id, string Name, Box Bounds, ProjectionFrame? Frame, int? Projection = null)
 {
     public int CameraView => Projection ?? Id;
@@ -29,10 +33,19 @@ sealed class RenderScene
         get; private set;
     }
 
-    public RenderScene WithBase(byte[] rgb, PrintOptions options)
+    public Vector2[] BaseLettering { get; set; } = [];
+    public WearMark[] WearMarks { get; private set; } = [];
+    public RenderScene WithWear(WearMark[] marks)
+    {
+        var copy = (RenderScene)MemberwiseClone();
+        copy.WearMarks = marks;
+        return copy;
+    }
+    public RenderScene WithBase(byte[] rgb, PrintOptions options, Vector2[]? lettering = null)
     {
         var copy = (RenderScene)MemberwiseClone();
         copy.BaseRgb = rgb;
+        copy.BaseLettering = lettering ?? BaseLettering;
         copy.Options = options;
         return copy;
     }
@@ -184,7 +197,14 @@ sealed class RenderScene
     public readonly Dictionary<(int View, int Part), PartVisual> Visible = [];
 
     public RenderScene(byte[] rgb, int[] owners, LabelPart[] parts, ViewRegion[] views, Box[]? reserved = null, PrintOptions? options = null, int[]? viewOwners = null)
+        : this(rgb, owners, parts, views, reserved, options, viewOwners, null)
     {
+    }
+
+    public RenderScene(byte[] rgb, int[] owners, LabelPart[] parts, ViewRegion[] views, Box[]? reserved, PrintOptions? options, int[]? viewOwners,
+        Dictionary<(int View, int Part), PartVisual>? viewVisuals)
+    {
+        PixelViews = viewOwners;
         BaseRgb = rgb;
         Owners = owners;
         Parts = parts;
@@ -192,11 +212,16 @@ sealed class RenderScene
         Reserved = reserved ?? [];
         Options = options ?? new();
         Drawing = Options.Drawing;
+        if (viewVisuals != null)
+        {
+            Visible = viewVisuals;
+            return;
+        }
         foreach (var view in views)
         {
             var pixels = new Dictionary<int, List<int>>();
-            for (int y = (int)view.Bounds.Y; y < view.Bounds.Bottom; y++)
-                for (int x = (int)view.Bounds.X; x < view.Bounds.Right; x++)
+            for (int y = Math.Max(0, (int)view.Bounds.Y); y < Math.Min(Height, view.Bounds.Bottom); y++)
+                for (int x = Math.Max(0, (int)view.Bounds.X); x < Math.Min(Width, view.Bounds.Right); x++)
                 {
                     int q = y * Width + x, id = owners[q];
                     if (id < 0 || viewOwners != null && viewOwners[q] != view.Id)
@@ -233,11 +258,21 @@ sealed class RenderScene
         }
     }
 
+    public ViewInk[] PickingInk { get; init; } = [];
+    public int[]? PixelViews { get; }
+
     public int Owner(int x, int y) => x < 0 || y < 0 || x >= Width || y >= Height ? -1 : Owners[y * Width + x];
 
     public (int View, int Part)? Pick(Vector2 point)
     {
-        var view = Views.LastOrDefault(v => v.Bounds.Contains(point));
+        if (Options.FreeLayout)
+        {
+            var sample = PickLayer(point);
+            return sample is { } hit ? (hit.View, hit.Part) : null;
+        }
+        int px = (int)point.X, py = (int)point.Y;
+        if (px < 0 || py < 0 || px >= Width || py >= Height) return null;
+        var view = PixelViews == null ? Views.LastOrDefault(v => v.Bounds.Contains(point)) : Views.FirstOrDefault(v => v.Id == PixelViews[py * Width + px]);
         if (view == null)
             return null;
         int part = Owner((int)point.X, (int)point.Y);
@@ -246,11 +281,65 @@ sealed class RenderScene
 
     public uint? PickNode(Vector2 point)
     {
+        if (Options.FreeLayout)
+        {
+            var hit = PickLayer(point);
+            return hit is { } sample && MeshNodes != null && sample.Mesh >= 0 && sample.Mesh < MeshNodes.Length ? MeshNodes[sample.Mesh] : null;
+        }
         int x = (int)point.X, y = (int)point.Y;
         if (MeshOwners == null || MeshNodes == null || x < 0 || y < 0 || x >= Width || y >= Height)
             return null;
         int mesh = MeshOwners[y * Width + x];
         return mesh >= 0 && mesh < MeshNodes.Length ? MeshNodes[mesh] : null;
+    }
+
+    (int View, int Part, int Mesh)? PickLayer(Vector2 point)
+    {
+        var ordered = (Drawing?.Layers ?? []).Where(o => o.Kind == DrawingObjectKind.View)
+            .Select(o => o.Id).Concat(Views.Select(v => v.Id)).Distinct().Reverse();
+        foreach (int id in ordered)
+            if (PickSurface(id, point) is { } hit)
+                return (id, hit.Part, hit.Mesh);
+        return null;
+    }
+
+    public (int Part, int Mesh)? PickSurface(int view, Vector2 point)
+    {
+        if (Surface(view) is not { } surface)
+            return null;
+
+        int mesh = surface.MeshAt((int)MathF.Floor(point.X - surface.Origin.X),
+            (int)MathF.Floor(point.Y - surface.Origin.Y));
+        if (mesh < 0) return null;
+        if (surface.Detail is { } detail)
+        {
+            var part = Parts.FirstOrDefault(p => p.DetailOnly && p.NodeId == detail.Groups[mesh]);
+            return part != null ? (part.Id, detail.Meshes[mesh]) : null;
+        }
+        int owner = surface.Parts![mesh];
+        return owner >= 0 ? (owner, mesh) : null;
+    }
+
+    readonly record struct PartSurface(Vector2 Origin, int Width, int Height, int[] MeshOwners,
+        int[]? Parts = null, RenderedDetail? Detail = null)
+    {
+        public int MeshAt(int x, int y) => x >= 0 && x < Width && y >= 0 && y < Height
+            ? MeshOwners[y * Width + x] : -1;
+    }
+
+    PartSurface? Surface(int view)
+    {
+        if (Details.FirstOrDefault(d => d.Definition.ViewId == view) is { } detail)
+        {
+            if (detail.Definition.SourceIssue != DetailSourceIssue.None)
+                return null;
+            var tile = detail.Pixels;
+            var b = detail.Definition.Bounds;
+            return new(new((int)b.X + 12, (int)b.Y + 12), tile.Width, tile.Height, tile.MeshOwners, Detail: detail);
+        }
+        if (PickingInk.FirstOrDefault(t => t.ViewId == view) is { MeshOwners: not null, MeshParts: not null } main)
+            return new(new((int)main.Bounds.X, (int)main.Bounds.Y), main.Width, main.Height, main.MeshOwners, main.MeshParts);
+        return null;
     }
 
     public Box[] Highlight(int view, int part)
@@ -261,13 +350,21 @@ sealed class RenderScene
             return [];
         var runs = new List<Box>();
         var b = visual.Bounds;
+        var surface = Options.FreeLayout ? Surface(view) : null;
+        uint? group = surface?.Detail != null ? Parts.FirstOrDefault(p => p.Id == part)?.NodeId : null;
+        bool IsTarget(int x, int y)
+        {
+            if (surface is not { } tile) return Owner(x, y) == part;
+            int mesh = tile.MeshAt((int)MathF.Floor(x - tile.Origin.X), (int)MathF.Floor(y - tile.Origin.Y));
+            return mesh >= 0 && (tile.Detail is { } detail ? detail.Groups[mesh] == group : tile.Parts![mesh] == part);
+        }
         for (int y = (int)b.Y; y < b.Bottom; y++)
             for (int x = (int)b.X; x < b.Right; x++)
             {
-                if (Owner(x, y) != part)
+                if (!IsTarget(x, y))
                     continue;
                 int start = x;
-                while (x + 1 < b.Right && Owner(x + 1, y) == part)
+                while (x + 1 < b.Right && IsTarget(x + 1, y))
                     x++;
                 runs.Add(new(start, y, x - start + 1, 1));
             }
@@ -316,7 +413,7 @@ static class SheetLayout
             options = FixedViewLayouts.Resolve(capture, options);
         if (options.Boxes == null && options.TitleBlock == null && options.Layout == 0 && options.DrawingSize == 0 && !options.PartsTable && !options.FlagTable && options.Page == new PageSize(2400, 3000))
             return [new(options.View, ViewName(options.View), new(130, 280, 2140, 2200), null)];
-        var points = capture.Meshes.SelectMany(m => m.Vertices).Select(v => new Vector3((float)v[1], (float)v[2], (float)v[0])).ToArray();
+        var points = capture.Meshes.SelectMany(m => m.WorldVertices()).ToArray();
         var min = points.Aggregate(new Vector3(float.PositiveInfinity), Vector3.Min);
         var max = points.Aggregate(new Vector3(float.NegativeInfinity), Vector3.Max);
         var center = (min + max) * .5f;
@@ -407,7 +504,7 @@ static class SheetLayout
         return best;
     }
 
-    public static Sheet Render(Capture capture, IReadOnlyDictionary<string, Texture> maps, string title, LabelPart[] parts, PrintOptions options, string[] warnings, CancellationToken token, Action<string> progress, IReadOnlyDictionary<int, Capture>? viewCaptures = null, Capture? fitCapture = null, bool composeAnnotations = true)
+    public static Sheet Render(Capture capture, IReadOnlyDictionary<string, Texture> maps, string title, LabelPart[] parts, PrintOptions options, string[] warnings, CancellationToken token, Action<string> progress, IReadOnlyDictionary<int, Capture>? viewCaptures = null, Capture? fitCapture = null, bool composeAnnotations = true, Sheet? reuseMain = null)
     {
         if (options.Drawing == null)
             options = FixedViewLayouts.Resolve(fitCapture ?? capture, options);
@@ -420,7 +517,8 @@ static class SheetLayout
                     Title = title
                 }
             };
-        var views = Plan(fitCapture ?? capture, options, true);
+        var views = (reuseMain?.Scene is { } oldScene ? DrawingPlacements.RelocateFrames(oldScene, options) : null)
+            ?? Plan(fitCapture ?? capture, options, true);
         var meshParts = Enumerable.Repeat(-1, capture.Meshes.Length).ToArray();
         foreach (var part in parts)
             foreach (int mi in part.Meshes)
@@ -429,32 +527,68 @@ static class SheetLayout
             throw new InvalidDataException("Every captured mesh needs a part identity for safe label routing.");
         if (options.Drawing == null && options.Boxes == null && options.Layout == 0 && views[0].Frame == null)
         {
-            var renderer = new BlueprintRenderer(viewCaptures?.GetValueOrDefault(views[0].Id) ?? capture, maps, title, options.View, token);
+            var legacy = viewCaptures?.GetValueOrDefault(views[0].Id) ?? capture;
+            var renderer = new BlueprintRenderer(NormalLinework.Prepare(legacy, token, detailed: options.Detailed), maps, title, options.View, token);
             var result = renderer.Render(options, warnings, progress);
             var owners = renderer.MeshOwners();
             for (int i = 0; i < owners.Length; i++)
                 if (owners[i] >= 0)
                     owners[i] = meshParts[owners[i]];
-            return result with
+            result = result with
             {
-                Scene = new(result.Rgb, owners, parts, views, options: options)
+                Scene = new(result.Rgb, owners, parts, views, options: options) { BaseLettering = renderer.Lettering }
             };
+            return composeAnnotations && options.Archive && options.WearLevel > 0
+                ? AnnotationPainting.Compose(result, [], token) : result;
         }
         if (options.Drawing != null)
             DrawingPlacements.Validate(views, options);
+        if (options.FreeLayout && views.Sum(v => (long)v.Bounds.Width * (long)v.Bounds.Height) > 16_777_216)
+            throw new InvalidOperationException("View layers exceed the retained-pixel memory budget (16,777,216 pixels). Reduce view sizes.");
         int width = options.Page.Width, height = options.Page.Height;
         var colors = Colors(options.Theme);
         var canvas = new Canvas(width, height, colors.Paper, colors.Ink, options);
         var sheetOwners = Enumerable.Repeat(-1, width * height).ToArray();
         var meshOwners = Enumerable.Repeat(-1, width * height).ToArray();
+        var pixelViews = Enumerable.Repeat(-1, width * height).ToArray();
         var captions = new List<ViewCaptionMark>();
         var inkTiles = new List<ViewInk>();
-        foreach (var view in views)
+        var fullVisuals = new Dictionary<(int View, int Part), PartVisual>();
+        Capture? preparedMain = null;
+        var sharedCurvature = reuseMain?.MainCurvature;
+        for (int index = 0; index < views.Length; index++)
         {
+            var view = views[index];
             token.ThrowIfCancellationRequested();
+            string stage = $"Drawing view {index + 1} of {views.Length}";
             progress("Drawing " + view.Name.ToLowerInvariant());
-            var tile = RenderTile(viewCaptures?.GetValueOrDefault(view.Id) ?? capture, maps, title, view, token);
-            inkTiles.Add(new(view.Bounds, tile.Width, tile.Height, tile.Ink));
+            RenderProgress.Report(stage, (float)index / views.Length);
+            var tile = ReuseTile(reuseMain, view);
+            if (tile == null)
+            {
+                var viewCapture = viewCaptures?.GetValueOrDefault(view.Id) ?? capture;
+                if (options.Detailed && !ReferenceEquals(viewCapture, capture))
+                    viewCapture = NormalLinework.Prepare(viewCapture, token, detailed: true);
+                CurvatureLines? curvature = null;
+                if (ReferenceEquals(viewCapture, capture))
+                {
+                    preparedMain ??= NormalLinework.Prepare(capture, token, detailed: options.Detailed);
+                    if (sharedCurvature == null)
+                    {
+                        long started = Stopwatch.GetTimestamp();
+                        long allocated = GC.GetAllocatedBytesForCurrentThread();
+                        sharedCurvature = CurvatureLines.Build(preparedMain, token);
+                        RenderProgress.Report(stage, (float)index / views.Length);
+                        PrintDiagnostics.Record($"drawing.curvature elapsed_ms={(long)Stopwatch.GetElapsedTime(started).TotalMilliseconds} worker_allocated_bytes={GC.GetAllocatedBytesForCurrentThread() - allocated} retained_estimate_bytes={sharedCurvature.EstimatedRetainedBytes}");
+                    }
+                    curvature = sharedCurvature;
+                    viewCapture = preparedMain;
+                }
+                tile = RenderTile(viewCapture, maps, title, view, token, curvature);
+            }
+            inkTiles.Add(new(view.Bounds, tile.Width, tile.Height, tile.Ink, view.Id, options.FreeLayout ? tile.MeshOwners : null, options.FreeLayout ? meshParts : null));
+            if (options.FreeLayout)
+                foreach (var pair in ViewAnchors.Measure(tile, meshParts, view.Bounds, token)) fullVisuals[(view.Id, pair.Key)] = pair.Value;
             int left = tile.Width, top = tile.Height, right = -1, bottom = -1;
             for (int y = 0; y < tile.Height; y++)
             {
@@ -465,8 +599,12 @@ static class SheetLayout
                     canvas.Ink(xx, yy, tile.Ink[q] / 255f);
                     if (tile.MeshOwners[q] >= 0)
                     {
-                        sheetOwners[yy * width + xx] = meshParts[tile.MeshOwners[q]];
-                        meshOwners[yy * width + xx] = tile.MeshOwners[q];
+                        if (xx >= 0 && yy >= 0 && xx < width && yy < height && (!options.FreeLayout || tile.Ink[q] > 0))
+                        {
+                            sheetOwners[yy * width + xx] = meshParts[tile.MeshOwners[q]];
+                            meshOwners[yy * width + xx] = tile.MeshOwners[q];
+                            pixelViews[yy * width + xx] = view.Id;
+                        }
                         left = Math.Min(left, x);
                         right = Math.Max(right, x);
                         top = Math.Min(top, y);
@@ -481,16 +619,41 @@ static class SheetLayout
                 captions.Add(new(view.Id, view.Name, occupied, caption.Bounds, caption.FontSize));
             }
         }
+        RenderProgress.Report("Preparing preview");
         PageLayout.Decorate(canvas, title, options, PrintScale.Summary(views, options));
         NativeText.Apply(canvas.Pixels, width, height, canvas.Runs);
         token.ThrowIfCancellationRequested();
-        var resultSheet = new Sheet(title, options, canvas.Pixels, Sheet.MakePreview(canvas.Pixels), warnings) { MainInk = inkTiles.ToArray(), Scene = new RenderScene(canvas.Pixels, sheetOwners, parts, views, options: options) { MeshOwners = meshOwners, CraftHeight = HeightDimensions.Measure(capture), ViewHeights = viewCaptures?.ToDictionary(p => p.Key, p => HeightDimensions.Measure(p.Value)) ?? new Dictionary<int, CraftHeight>() }.WithCaptions(captions.ToArray()) };
+        const long curvatureCacheBudget = 64L * 1024 * 1024;
+        var resultSheet = new Sheet(title, options, canvas.Pixels, composeAnnotations ? [] : Sheet.MakePreview(canvas.Pixels), warnings)
+        {
+            MainInk = inkTiles.ToArray(),
+            MainCurvature = options.FreeLayout && sharedCurvature?.EstimatedRetainedBytes <= curvatureCacheBudget ? sharedCurvature : null,
+            Scene = new RenderScene(canvas.Pixels, sheetOwners, parts, views, reserved: null, options: options,
+                viewOwners: pixelViews, viewVisuals: options.FreeLayout ? fullVisuals : null)
+            {
+                BaseLettering = WearPlacement.Lettering(canvas.Runs, options.Page),
+                PickingInk = inkTiles.ToArray(),
+                MeshOwners = meshOwners,
+                CraftHeight = HeightDimensions.Measure(capture),
+                ViewHeights = viewCaptures?.ToDictionary(p => p.Key, p => HeightDimensions.Measure(p.Value)) ?? new Dictionary<int, CraftHeight>()
+            }.WithCaptions(captions.ToArray())
+        };
         // Rebuilding an existing composition restores its real table bounds and
         // notes first. Temporary default tables may not fit and must not veto it.
         return composeAnnotations ? AnnotationPainting.Compose(resultSheet, [], token) : resultSheet;
     }
 
+    static ViewPixels? ReuseTile(Sheet? previous, ViewRegion view)
+    {
+        if (previous?.Scene?.Views.FirstOrDefault(v => v.Id == view.Id) is not { } old ||
+            old.CameraView != view.CameraView || old.Frame != view.Frame ||
+            previous.MainInk?.FirstOrDefault(t => t.ViewId == view.Id) is not { MeshOwners: { } owners } tile)
+            return null;
+        return new(tile.Width, tile.Height, tile.Pixels, owners);
+    }
+
+
     // Separate method lets each large renderer become unreachable between views.
-    static ViewPixels RenderTile(Capture capture, IReadOnlyDictionary<string, Texture> maps, string title, ViewRegion view, CancellationToken token)
-        => new BlueprintRenderer(capture, maps, title, view.CameraView, token, view.Frame).RenderView(_ => { });
+    static ViewPixels RenderTile(Capture capture, IReadOnlyDictionary<string, Texture> maps, string title, ViewRegion view, CancellationToken token, CurvatureLines? curvature)
+        => new BlueprintRenderer(capture, maps, title, view.CameraView, token, view.Frame, sharedCurvature: curvature).RenderView(_ => { });
 }

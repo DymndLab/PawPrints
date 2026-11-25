@@ -20,7 +20,7 @@ static class PrintUiStyle
     public static void PopTabs() => ImGui.PopStyleColor(4);
 
 
-    public static bool YellowButton(string text)
+    public static bool YellowButton(string text, float2 size = default)
     {
         // Reuse KSA's warning/launch yellow, scoped to the current action.
         ImGui.PushStyleColor(ImGuiCol.Button, ConsoleStyle.Pending);
@@ -29,7 +29,7 @@ static class PrintUiStyle
         ImGui.PushStyleColor(ImGuiCol.Text, ConsoleStyle.Panel);
         try
         {
-            return ImGui.Button(text);
+            return ImGui.Button(text, size);
         }
         finally { ImGui.PopStyleColor(4); }
     }
@@ -61,7 +61,9 @@ static class PrintUiStyle
 
 
     // Scope the blue navigation-button style to PawPrints without changing game widgets.
-    public static bool BackButton(bool warning)
+    public const string ReturnToVehicleLabel = "Return to Vehicle Editor";
+
+    public static bool ReturnToVehicleButton(bool warning)
     {
         ImGui.PushStyleColor(ImGuiCol.Button, new float4(.16f, .29f, .45f, 1));
         ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new float4(.21f, .38f, .57f, 1));
@@ -69,13 +71,13 @@ static class PrintUiStyle
         ImGui.PushStyleColor(ImGuiCol.Text, warning ? ConsoleStyle.Pending : ConsoleStyle.TextPrimary);
         try
         {
-            bool clicked = ImGui.Button("Back to editor"u8);
+            bool clicked = ImGui.Button(ReturnToVehicleLabel);
             if (warning && ImGui.IsItemHovered())
             {
                 ImGui.BeginTooltip();
                 try
                 {
-                    ImGui.Text("Returns to the editor and cancels the unfinished annotation."u8);
+                    ImGui.Text("Returns to the Vehicle Editor and cancels the unfinished annotation."u8);
                 }
                 finally { ImGui.EndTooltip(); }
             }
@@ -85,13 +87,22 @@ static class PrintUiStyle
     }
 
 
+    public static void ShowUnavailableCursor(bool disabled)
+    {
+        if (disabled && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetMouseCursor(ImGuiMouseCursor.NotAllowed);
+    }
+
     public static void Help(string text)
     {
         if (!ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
             return;
         ImGui.BeginTooltip();
         ImGui.PushTextWrapPos(ImGui.GetFontSize() * 28);
-        try { PrintUiText.Wrapped(text); }
+        try
+        {
+            PrintUiText.Wrapped(text);
+        }
         finally
         {
             ImGui.PopTextWrapPos();

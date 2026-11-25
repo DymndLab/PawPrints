@@ -14,6 +14,10 @@
       "surface": "solar"
     },
     {
+      "templateId": "CoreElectricalA_Subpart_SolarPanelB_CellA",
+      "surface": "solar"
+    },
+    {
       "templateContains": "SolarPanelA_CellA",
       "surface": "solar"
     },

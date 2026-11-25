@@ -1,0 +1,10 @@
+<Project>
+  <PropertyGroup>
+    <DefineConstants>$(DefineConstants);PAWPRINTS_PORTABLE_RENDERING</DefineConstants>
+    <NuGetLockFilePath>$(MSBuildProjectDirectory)/obj/portable-rendering.lock.json</NuGetLockFilePath>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="SkiaSharp" Version="[3.119.4]" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="[3.119.4]" Condition="$([MSBuild]::IsOSPlatform('Linux')) Or '$(RuntimeIdentifier)' == 'linux-x64'" />
+  </ItemGroup>
+</Project>

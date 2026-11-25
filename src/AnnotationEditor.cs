@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Blueprint.Rendering;
 using Brutal.ImGuiApi;
 using Brutal.Numerics;
@@ -12,9 +13,10 @@ public sealed partial class BlueprintMod
     static readonly string[] TipNames = ["Dot", "Filled triangle", "Outline triangle", "None"];
     static readonly string[] LineNames = ["Dotted", "Dashed", "Solid"];
     static readonly string[] FitNames = ["Fit page", "Fit width", "Actual pixels"];
-    static int defaultLine, defaultTip, placeKind, previewFit, pageOrientation, pageAspect, brand = 2;
+    static int defaultLine, defaultTip, placeKind, previewFit, pageOrientation = 3, pageAspect, brand = 2;
     static readonly ImInputString noteText = new(512);
     static int selectedLabel = -1;
+    static bool pickingPartTool;
     static readonly ImInputString labelText = new(512);
     static bool composingLabels;
     static PartLabel? dragLabel, pendingLabel;
@@ -27,10 +29,16 @@ public sealed partial class BlueprintMod
 
     static void CancelPlacement()
     {
-        selectedCanvasView = -1;
+        activePlaceTool = PlaceTool.None;
+        referenceViewPick = null;
+        pickingPartTool = false;
+        choosingProjectionSource = false;
+        groupDrag = null;
+        pendingPrimaryDelete = -1;
+        selectedCanvasView = selectedHeight = -1;
         placingText = false;
         textBoxStart = null;
-        warningNotice = null;
+        newDrawingDialog = false;
         CancelTextPreview();
         textDraft = null;
         dragText = null;
@@ -49,6 +57,8 @@ public sealed partial class BlueprintMod
         partMenuScene = null;
         partMenuOpen = false;
         focusFlagnoteText = false;
+        if (flagnotePlacement is { } flag)
+            PrintDiagnostics.State("flagnote.phase", $"end stage={flag.Stage}");
         flagnotePlacement = null;
         flagnoteScene = null;
         flagnoteError = "";
@@ -58,6 +68,15 @@ public sealed partial class BlueprintMod
 
     static void SelectLabel(int id)
     {
+        if (id >= 0)
+        {
+            // Sidebar selection and newly placed flagnotes must own Delete just
+            // as canvas selection does; never retain an unrelated object target.
+            selectedHeight = selectedCanvasView = selectedText = selectedTable = selectedKitten = selectedDetail = -1;
+            selectedGroup = null;
+            detailEdit = null;
+            listedObject = new(DrawingObjectKind.Label, id);
+        }
         selectedSpec = -1;
         selectedLabel = id;
         labelText.SetValue((document?.Labels.FirstOrDefault(l => l.Id == id)?.Text ?? "").AsSpan());
@@ -70,22 +89,33 @@ public sealed partial class BlueprintMod
             return;
         bool changedPose = !sheet.Scene!.Poses.SequenceEqual(document.Scene.Poses) || sheet.Scene.Drawing != document.Scene.Drawing || sheet.Options.OutputPage != document.Scene.Options.OutputPage;
         var historyOptions = document.Scene.Options;
-        var source = sheet with { Scene = document.Scene, Details = document.Details, Labels = document.Labels };
+        var source = sheet with
+        {
+            Scene = document.Scene,
+            Details = document.Details,
+            Labels = document.Labels
+        };
         var main = sheet.PoseMain ?? basePrint ?? sheet;
-        cancellation?.Dispose();
-        cancellation = new();
-        var token = cancellation.Token;
+        var acceptedOptions = sheet.Options;
+        bool hadDetails = sheet.Details.Length > 0;
+        var historyTables = document.Tables;
         composingLabels = true;
         renderKeepsDocument = true;
         renderAdoptsHistory = true;
         progress = "Updating print";
-        renderTask = Task.Run(() => changedPose
-            ? PosePainting.Rebuild(source with { Options = historyOptions }, source.Scene.Poses, token, true)
-            : sheet.Options != historyOptions
+        StartRender(token => changedPose
+            ? PosePainting.Rebuild(source with
+            {
+                Options = historyOptions
+            }, source.Scene.Poses, token, true)
+            : acceptedOptions != historyOptions
                 ? PreviewUpdates.Render(source, main, historyOptions, token)
-                : (main.DetailSource != null && (source.Details.Length > 0 || sheet.Details.Length > 0)
-                    ? ExplodedPainting.Compose(main, source, source.Details, source.Labels, token, tables: document.Tables, captions: source.Scene.Captions)
-                    : AnnotationPainting.Compose(source, source.Labels, token)) with { Notice = "Print updated." }, token);
+                : (main.DetailSource != null && (source.Details.Length > 0 || hadDetails)
+                    ? ExplodedPainting.Compose(main, source, source.Details, source.Labels, token, tables: historyTables, captions: source.Scene.Captions)
+                    : AnnotationPainting.Compose(source, source.Labels, token)) with
+                {
+                    Notice = "Print updated."
+                });
     }
 
     static void ApplyPrintStyle(int line, int tip)
@@ -113,15 +143,12 @@ public sealed partial class BlueprintMod
         else
             ReportFailure(reason);
     }
-    static bool ControlsLocked => placingText || exportSetupOpen || warningNotice != null || viewSizeDialog || textDraft != null || dragText != null || GhostActive || viewDraft != null || dragView != null || specDraft != null || dragSpec != null || poseDialog || busy || dragKitten != null || dragHeight != null || dragLabel != null || pendingLabel != null || flagnotePlacement != null || DetailGesture;
+    static bool ControlsLocked => reviewExport || choosingProjectionSource || referenceViewPick != null || groupDrag != null || pendingPrimaryDelete >= 0 || newDrawingDialog || projectsToOpen != null || placingText || exportSetupOpen || viewSizeDialog || textDraft != null || dragText != null || GhostActive || viewDraft != null || dragView != null || specDraft != null || dragSpec != null || poseDialog || busy || dragKitten != null || dragHeight != null || dragLabel != null || pendingLabel != null || flagnotePlacement != null || DetailGesture;
 
 
-    static void DrawControls(VehicleEditor editor)
+    static void DrawControls()
     {
-        // Reserve a small status area; primary actions stay in the workspace header.
-        float footer = Math.Min(175, ImGui.GetContentRegionAvail().Y * .22f);
-        float content = Math.Max(80, ImGui.GetContentRegionAvail().Y - footer);
-        ImGui.BeginChild("Settings region"u8, new float2(0, content), ImGuiChildFlags.None, ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse);
+        ImGui.BeginChild("Settings region"u8, new float2(0, 0), ImGuiChildFlags.None, ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse);
         try
         {
             PrintUiStyle.PushTabs();
@@ -142,8 +169,6 @@ public sealed partial class BlueprintMod
             finally { PrintUiStyle.PopTabs(); }
         }
         finally { ImGui.EndChild(); }
-        ImGui.Separator();
-        DrawPrintActions(editor);
     }
 
 
@@ -156,6 +181,8 @@ public sealed partial class BlueprintMod
             requestedSettingsTab = null;
         if (!ImGui.BeginTabItem(name, requested ? ImGuiTabItemFlags.SetSelected : ImGuiTabItemFlags.None))
             return;
+        if (name != "Place")
+            LeavePlaceTab();
         PrintDiagnostics.State("settings.tab", name);
         try
         {
@@ -173,19 +200,10 @@ public sealed partial class BlueprintMod
     static void DrawSheetControls()
     {
         ImGui.BeginDisabled(ControlsLocked);
-        ImGui.Text("Layout");
-        ImGui.SetNextItemWidth(-1);
-        ImGui.Combo("##Shape"u8, ref pageOrientation, PageSize.Shapes, PageSize.Shapes.Length);
-        if (pageOrientation == 3)
-            DrawDesktopSize();
-        else if (pageOrientation != 1)
-        {
-            ImGui.Text("Aspect ratio");
-            ImGui.SetNextItemWidth(-1);
-            ImGui.Combo("##Aspect"u8, ref pageAspect, pageOrientation == 2 ? PageSize.WideRatios : PageSize.Ratios, PageSize.Ratios.Length);
-        }
+        DrawOutputControls();
         if (ImGui.Button("Use Template"u8))
             OpenTemplates();
+        DrawSaveTemplate();
         ImGui.EndDisabled();
 
         ImGui.Separator();
@@ -283,7 +301,7 @@ public sealed partial class BlueprintMod
                     {
                         string clean = AnnotationText.Clean(labelText.ToString());
                         if (clean.Length == 0)
-                            status = "Enter a label name.";
+                            ReportFailure("Enter a label name.");
                         else
                             ChangeLabel(selected with
                             {
@@ -332,34 +350,43 @@ public sealed partial class BlueprintMod
     }
 
 
-    static void DrawPrintActions(VehicleEditor editor)
-    {
-        bool current = sheet != null && PrintIsCurrent;
-        ImGui.BeginChild("Print status"u8, new float2(0, 0));
-        try
-        {
-            if (warningNotice == null && GenerationBlock(editor) is { } generationBlock)
-                PrintUiStyle.Warning(generationBlock);
-            if (renderTask != null)
-            {
-                PrintUiText.Wrapped(progress);
-                if (!composingLabels && ImGui.Button("Cancel"u8))
-                    cancellation?.Cancel();
-            }
-            if (!FailureStatus(status))
-                PrintUiText.Wrapped(status.StartsWith("Saved: ", StringComparison.Ordinal) ? "PNG saved. Select View exported drawings to open its folder." : status);
-            if (sheet != null && !current)
-                PrintUiText.Wrapped(livePreviewUpdates ? "Live preview will apply settled settings." : "Generate PawPrint to apply the changed settings.");
-            if (sheet != null && sheet.Warnings.Length > 0 && ImGui.CollapsingHeader("Capture warnings"u8))
-                foreach (var warning in sheet.Warnings)
-                    PrintUiStyle.Warning(warning);
+    static int dragFrameCount;
+    static double dragCanvasTotalMs, dragCanvasMaxMs;
 
+    static void DrawPreview()
+    {
+        string? dragKind = dragView != null ? "view" : groupDrag != null ? "group" : dragDetail != null ? "exploded" : null;
+        if (dragKind == null)
+        {
+            dragFrameCount = 0;
+            dragCanvasTotalMs = dragCanvasMaxMs = 0;
+            DrawPreviewCanvas();
+            return;
         }
-        finally { ImGui.EndChild(); }
+
+        long started = Stopwatch.GetTimestamp();
+        DrawPreviewCanvas();
+        double elapsed = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+        dragFrameCount++;
+        dragCanvasTotalMs += elapsed;
+        dragCanvasMaxMs = Math.Max(dragCanvasMaxMs, elapsed);
+        if (dragView == null && groupDrag == null && dragDetail == null)
+            PrintDiagnostics.Record($"view.drag kind={dragKind} frames={dragFrameCount} canvas_total_ms={(long)dragCanvasTotalMs} canvas_max_ms={(long)Math.Ceiling(dragCanvasMaxMs)}");
     }
 
 
-    static void DrawPreview()
+    static void DrawPartHighlight(RenderScene scene, int view, int part, float2 origin, float factor, ImDrawListPtr draw)
+    {
+        foreach (var run in scene.Highlight(view, part))
+        {
+            float y = (run.Y + .5f) * factor;
+            draw.AddLine(origin + new float2(run.X * factor, y), origin + new float2(run.Right * factor, y),
+                0x4099DDFF, Math.Max(factor, 1));
+        }
+    }
+
+
+    static void DrawPreviewCanvas()
     {
         alignmentGuides = [];
         hoveredKitten = -1;
@@ -382,7 +409,7 @@ public sealed partial class BlueprintMod
         var mouse = ImGui.GetMousePos();
         Vec? zoomScroll = null;
         bool navigating = spaceHeld || (!ImGui.GetIO().WantTextInput && ImGui.IsKeyDown(ImGuiKey.Space));
-        if (canvasHovered && dragText == null && dragView == null && dragSpec == null && dragKitten == null && dragHeight == null && dragLabel == null && !DetailGesture && !draftHeld && !panning && ImGui.GetIO().MouseWheel != 0)
+        if (!(viewDraft != null && ImGui.GetIO().KeyShift) && canvasHovered && dragText == null && dragView == null && dragSpec == null && dragKitten == null && dragHeight == null && dragLabel == null && !DetailGesture && !draftHeld && !panning && ImGui.GetIO().MouseWheel != 0)
         {
             float next = PreviewNavigation.Zoom(zoom, ImGui.GetIO().MouseWheel);
             var before = ImGui.GetCursorScreenPos();
@@ -429,9 +456,27 @@ public sealed partial class BlueprintMod
         var point = new Vec((mouse.X - origin.X) / factor, (mouse.Y - origin.Y) / factor);
         bool editable = !busy && PrintIsCurrent && document != null;
         bool hovered = ImGui.IsItemHovered();
-        if (hovered && ImGui.IsMouseClicked(ImGuiMouseButton.Left) && document != null
-            && !document.Scene.Captions.Any(c => c.ViewId < 1000 && c.Bounds.Contains(point)))
-            selectedCanvasView = -1;
+        if (editable && hovered && pickingPartTool && ImGui.IsMouseClicked(ImGuiMouseButton.Right))
+        {
+            CancelPlacement();
+            status = "Placement cancelled.";
+            return;
+        }
+        if (DrawWearPlacement(point, factor, origin, hovered, editable))
+            return;
+        if (DrawProjectionSource(point, factor, origin, hovered, editable) ||
+            DrawReferenceSource(point, factor, origin, hovered, editable))
+            return;
+        bool canvasPaneHovered = ImGui.IsWindowHovered();
+        if (DrawGroupResize(point, factor, origin, hovered || canvasPaneHovered, editable))
+            return;
+        if (!hovered && canvasPaneHovered && listedObject is { } selectedObject && document != null
+            && CanvasObjects.All(document.Scene, document.Labels).Contains(selectedObject))
+        {
+            var box = CanvasObjects.Bounds(document.Scene, document.Labels, selectedObject);
+            if (Vec.Distance(point, new(box.Right, box.Bottom)) * factor < 18)
+                hovered = true;
+        }
         if (DrawTextPlacement(point, factor, origin, hovered))
             return;
         UpdateReferenceSelection(point, hovered);
@@ -441,25 +486,31 @@ public sealed partial class BlueprintMod
             return;
         if (DrawGhost(point, factor, origin, hovered))
             return;
+        if (BeginRepeatedCanvasPlacement(hovered, editable))
+            return;
         if (DrawReferenceMenu(editable))
             return;
-        if (DrawTextCanvas(point, factor, origin, hovered, editable))
+        canvasTarget = document == null ? null : CanvasObjects.Pick(sheet, document.Scene, document.Labels, point, 5 / factor, listedObject);
+        if (hovered && editable && !ControlsLocked && ImGui.IsMouseClicked(ImGuiMouseButton.Left))
+            SelectCanvasObject(canvasTarget);
+        bool HitKind(DrawingObjectKind kind) => hovered && canvasTarget?.Kind == kind;
+        if (DrawTextCanvas(point, factor, origin, HitKind(DrawingObjectKind.Text), editable))
             return;
-        if (DrawSpecCanvas(point, factor, origin, hovered, editable))
+        if (DrawSpecCanvas(point, factor, origin, HitKind(DrawingObjectKind.Performance), editable))
             return;
-        if (DrawKittenCanvas(point, factor, origin, hovered, editable))
+        if (DrawKittenCanvas(point, factor, origin, HitKind(DrawingObjectKind.ScaleReference), editable))
             return;
-        if (DrawHeightCanvas(point, factor, origin, hovered, editable))
+        if (DrawHeightCanvas(point, factor, origin, HitKind(DrawingObjectKind.Dimension), editable))
             return;
-        if (DrawViewCanvas(point, factor, origin, hovered, editable))
+        if (DrawViewCanvas(point, factor, origin, !pickingPartTool && HitKind(DrawingObjectKind.View), editable))
             return;
         if (DrawCaptionMenu(point, hovered, editable))
             return;
         if (dragLabel == null && pendingLabel == null && flagnotePlacement == null)
         {
-            if (dragDetail == null && pendingDetail == null && !detailScopeOpen && DrawTableCanvas(point, factor, origin, hovered, editable))
+            if (dragDetail == null && pendingDetail == null && !detailScopeOpen && DrawTableCanvas(point, factor, origin, hovered && canvasTarget?.Kind is DrawingObjectKind.PartsTable or DrawingObjectKind.FlagTable, editable))
                 return;
-            if (DrawDetailCanvas(point, new(mouse.X, mouse.Y), factor, origin, hovered, editable))
+            if (DrawDetailCanvas(point, new(mouse.X, mouse.Y), factor, origin, HitKind(DrawingObjectKind.View), editable))
                 return;
         }
         if ((dragLabel != null || pendingLabel != null || flagnotePlacement?.Stage is FlagnoteStage.Start or FlagnoteStage.End) && ImGui.IsMouseClicked(ImGuiMouseButton.Right))
@@ -468,7 +519,7 @@ public sealed partial class BlueprintMod
             status = "Placement cancelled.";
             return;
         }
-        if (DrawPartMenu(hovered, point, editable))
+        if (DrawPartMenu(hovered, point, editable, origin, factor))
             return;
         if (flagnotePlacement is { } flag)
         {
@@ -479,11 +530,15 @@ public sealed partial class BlueprintMod
             }
             if (flag.Stage == FlagnoteStage.Start)
             {
-                var anchor = LeaderRouting.SnapAttachment(document!.Scene, flag.Label, point, 12 / factor)?.Vector ?? point;
-                if (hovered)
-                    Handle(anchor, 0xFF8EDD8E);
-                if (hovered && ImGui.IsMouseClicked(ImGuiMouseButton.Left))
-                    flag.PickStart(anchor);
+                if (hovered && LeaderRouting.SnapAttachment(document!.Scene, flag.Label, point, 12 / factor) is { } anchor)
+                {
+                    Handle(anchor.Vector, 0xFF8EDD8E);
+                    if (ImGui.IsMouseClicked(ImGuiMouseButton.Left))
+                    {
+                        flag.PickStart(anchor.Vector);
+                        PrintDiagnostics.State("flagnote.phase", "anchor");
+                    }
+                }
                 return; // The start click cannot also select the end.
             }
             var proposed = flag.Stage == FlagnoteStage.End ? flag.PreviewEnd(point) : flag.Label;
@@ -503,6 +558,7 @@ public sealed partial class BlueprintMod
             if (flag.Stage == FlagnoteStage.End && hovered && ImGui.IsMouseClicked(ImGuiMouseButton.Left))
             {
                 flag.PickEnd(point);
+                PrintDiagnostics.State("flagnote.phase", $"endpoint stage={flag.Stage}");
                 if (!flag.Custom && !CommitFlagnote())
                     flag.RetryEnd();
             }
@@ -511,23 +567,22 @@ public sealed partial class BlueprintMod
         LabelGeometry[] currentRoutes = document?.Routes ?? [];
         if (editable && hovered)
         {
-            var hoverLabel = currentRoutes.LastOrDefault(r => r.TextBox.Contains(point) || DistanceToLine(point, r.Start, r.End) * factor < 6);
+            var hoverLabel = currentRoutes.FirstOrDefault(r => canvasTarget?.Kind == DrawingObjectKind.Label && canvasTarget?.Id == r.Label.Id);
             hoveredLabel = hoverLabel?.Label.Id ?? -1;
             if (hoverLabel != null)
                 Outline(hoverLabel.TextBox, 0xFFFFDD99);
         }
         if (editable && hovered && dragLabel == null && pendingLabel == null && document!.Scene.Pick(point) is { } hover)
         {
-            foreach (var run in document.Scene.Highlight(hover.View, hover.Part))
-                ImGui.GetWindowDrawList().AddLine(ToScreen(new(run.X, run.Y + .5f)), ToScreen(new(run.Right, run.Y + .5f)), 0x6699DDFF, Math.Max(factor, 1));
+            DrawPartHighlight(document.Scene, hover.View, hover.Part, origin, factor, ImGui.GetWindowDrawList());
             var name = document.Scene.Parts.Single(p => p.Id == hover.Part).Name;
             PrintUiText.Tooltip(name);
         }
         if (editable && hovered && pendingLabel == null && dragLabel == null && ImGui.IsMouseClicked(ImGuiMouseButton.Left))
         {
             pressMouse = new(mouse.X, mouse.Y);
-            var handle = currentRoutes.OrderByDescending(r => r.Label.Id == selectedLabel).FirstOrDefault(r => Vec.Distance(point, r.Start) * factor < 10 || Vec.Distance(point, r.End) * factor < 10);
-            var label = document!.Labels.LastOrDefault(l => l.Visible && AnnotationText.Bounds(l).Contains(point));
+            var handle = currentRoutes.FirstOrDefault(r => r.Label.Id == selectedLabel && (Vec.Distance(point, r.Start) * factor < 10 || Vec.Distance(point, r.End) * factor < 10));
+            var label = document!.Labels.FirstOrDefault(l => l.Visible && canvasTarget?.Kind == DrawingObjectKind.Label && canvasTarget?.Id == l.Id);
             if (handle != null)
             {
                 SelectLabel(handle.Label.Id);
@@ -545,8 +600,9 @@ public sealed partial class BlueprintMod
                 draggingAttachment = false;
                 dragOffset = point - new Vec(label.X, label.Y);
             }
-            else if (document.Scene.Pick(point) is { } target)
+            else if (pickingPartTool && document.Scene.Pick(point) is { } target)
             {
+                pickingPartTool = false;
                 if (placeKind == 2)
                     BeginDetail(document.Scene.PickNode(point));
                 else if (placeKind == 3)
@@ -554,7 +610,7 @@ public sealed partial class BlueprintMod
                     if (EngineOwner(target.Part) != null)
                         BeginSpec(target.Part, target.View);
                     else
-                        status = "Select an engine to add its specification sheet.";
+                        ReportFailure("Select an engine to add its specification sheet.");
                 }
                 else
                     BeginPartPlacement(target.View, target.Part, placeKind == 1, true, point);
@@ -591,18 +647,28 @@ public sealed partial class BlueprintMod
             var proposedBox = AnnotationText.Bounds(proposed);
             proposed = proposed with
             {
-                X = Math.Clamp(proposed.X, 0, sheet.PixelWidth - proposedBox.Width),
-                Y = Math.Clamp(proposed.Y, 0, sheet.PixelHeight - proposedBox.Height)
+                X = Options.FreeLayout ? proposed.X : Math.Clamp(proposed.X, 0, sheet.PixelWidth - proposedBox.Width),
+                Y = Options.FreeLayout ? proposed.Y : Math.Clamp(proposed.Y, 0, sheet.PixelHeight - proposedBox.Height)
             };
+            if (!placing && !draggingAttachment)
+            {
+                var kept = CanvasMotion.KeepOnPage(AnnotationText.Bounds(proposed), Options);
+                proposed = proposed with
+                {
+                    X = kept.X,
+                    Y = kept.Y
+                };
+            }
             if (!placing && draggingAttachment)
             {
                 var anchor = LeaderRouting.SnapAttachment(document.Scene, original, point, 12 / factor);
-                proposed = original with
-                {
-                    ManualPlacement = true,
-                    AttachmentPinned = true,
-                    Attachment = anchor ?? new(Math.Clamp(point.X, 0, sheet.PixelWidth - 1), Math.Clamp(point.Y, 0, sheet.PixelHeight - 1))
-                };
+                if (!original.FlagNote || anchor != null)
+                    proposed = original with
+                    {
+                        ManualPlacement = true,
+                        AttachmentPinned = true,
+                        Attachment = anchor ?? (Options.FreeLayout ? new(point.X, point.Y) : new(Math.Clamp(point.X, 0, sheet.PixelWidth - 1), Math.Clamp(point.Y, 0, sheet.PixelHeight - 1)))
+                    };
             }
             var labels = placing ? [.. document.Labels, proposed] : document.Labels.Select(l => l.Id == proposed.Id ? proposed : l).ToArray();
             bool valid = LeaderRouting.TryLayout(document.Scene, labels, out var routes, out var reason);
@@ -631,7 +697,7 @@ public sealed partial class BlueprintMod
             {
                 if (valid && document.Apply(labels, out reason))
                 {
-                    CancelPlacement();
+                    FinishLabelPlacement();
                     SelectLabel(proposed.Id);
                     status = "Label placed. Drag either handle to adjust its leader.";
                     Repaint();

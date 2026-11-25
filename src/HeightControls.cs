@@ -6,10 +6,42 @@ namespace Blueprint;
 
 public sealed partial class BlueprintMod
 {
+    static void BeginDirectDimension()
+    {
+        if (document == null)
+            return;
+        var views = document.Scene.Views.Where(HeightDimensions.Eligible).ToArray();
+        if (views.Length == 0)
+        {
+            ReportFailure("Add a front, side or isometric view for a height dimension.");
+            return;
+        }
+        int id = views.FirstOrDefault(v => v.Id == selectedCanvasView)?.Id ?? views[Math.Clamp(heightViewIndex, 0, views.Length - 1)].Id;
+        BeginHeight(new(id));
+    }
+
+    static int selectedHeight = -1;
     static int heightViewIndex, heightGap = 90, heightControlsView = -1;
     static HeightDimension? heightControlsValue;
     static HeightDimension? dragHeight;
     static float heightGrabOffset;
+
+
+    static void SelectHeight(int viewId)
+    {
+        SelectLabel(-1);
+        SelectDetail(-1);
+        selectedCanvasView = selectedText = selectedKitten = selectedSpec = selectedTable = -1;
+        selectedHeight = viewId;
+    }
+
+    static void DeleteHeight(int viewId)
+    {
+        if (!CanEditAnnotations || document?.Scene.Dimensions.Any(d => d.ViewId == viewId) != true)
+            return;
+        QueueHeight(null, viewId);
+        selectedHeight = -1;
+    }
 
 
     static void QueueHeight(HeightDimension? dimension, int viewId)
@@ -22,13 +54,10 @@ public sealed partial class BlueprintMod
         if (dimension != null)
             dimensions.Add(dimension);
         var scene = document.Scene.WithDimensions(dimensions.ToArray());
-        cancellation?.Dispose();
-        cancellation = new();
-        var token = cancellation.Token;
         renderKeepsDocument = true;
         composingLabels = true;
         progress = "Updating craft height";
-        renderTask = Task.Run(() => AnnotationPainting.Compose(current with { Scene = scene }, labels, token) with { Notice = "Height dimension updated. Ctrl+Z undoes this change." }, token);
+        StartRender(token => AnnotationPainting.Compose(current with { Scene = scene }, labels, token) with { Notice = "Height dimension updated. Ctrl+Z undoes this change." });
     }
 
 
@@ -83,9 +112,9 @@ public sealed partial class BlueprintMod
             {
                 ImGui.SameLine();
                 if (ImGui.Button("Remove height"u8))
-                    QueueHeight(null, viewId);
+                    DeleteHeight(viewId);
             }
-            PrintUiText.Wrapped("Drag the number or bracket left/right, including between views. Ticks stay aligned to this view's actual craft height. Gap fine-tunes spacing on its current side. Ctrl+Z / Ctrl+Y undo or redo.");
+            PrintUiText.Wrapped("Click the number or bracket to select; Delete removes it. Drag left/right, including between views. Ticks stay aligned to this view's actual craft height. Gap fine-tunes spacing on its current side. Ctrl+Z / Ctrl+Y undo or redo.");
         }
         finally { ImGui.EndDisabled(); }
     }
@@ -107,8 +136,10 @@ public sealed partial class BlueprintMod
             draw.AddLine(Screen(mark.X, mark.TextBounds.Bottom + 10), Screen(mark.X, mark.Bottom), color, 1.5f);
             draw.AddLine(Screen(mark.X - 22, mark.Top), Screen(mark.X + 22, mark.Top), color, 1.5f);
             draw.AddLine(Screen(mark.X - 22, mark.Bottom), Screen(mark.X + 22, mark.Bottom), color, 1.5f);
-            draw.AddText(ImGui.GetFont(), HeightDimensions.Font * factor, Screen(mark.TextBounds.X, mark.TextBounds.Y), color, mark.Text);
+            draw.AddRect(Screen(mark.TextBounds.X - 3, mark.TextBounds.Y - 3), Screen(mark.TextBounds.Right + 3, mark.TextBounds.Bottom + 3), color);
         }
+        if (scene.Dimensions.FirstOrDefault(d => d.ViewId == selectedHeight) is { } selected)
+            DrawMark(HeightDimensions.Place(scene, selected), 0xFF88D8FF);
         if (dragHeight is { } dragging)
         {
             if (ImGui.IsMouseClicked(ImGuiMouseButton.Right))
@@ -118,7 +149,9 @@ public sealed partial class BlueprintMod
             }
             var proposed = HeightDimensions.Move(scene, dragging, point.X + heightGrabOffset);
             var mark = HeightDimensions.Place(scene, proposed);
-            bool clear = !scene.Specs.Any(b => b.Bounds.Overlaps(mark.Bounds)) && !scene.Details.Any(d => d.Definition.Bounds.Overlaps(mark.Bounds)) && !PrintTables.Panels(scene, document.Labels).Any(t => t.Bounds.Overlaps(mark.Bounds));
+            proposed = HeightDimensions.Move(scene, proposed, mark.X + CanvasMotion.Limit(mark.Bounds, Vec.Zero, Options.Page).X);
+            mark = HeightDimensions.Place(scene, proposed);
+            bool clear = scene.Options.FreeLayout || !scene.Specs.Any(b => b.Bounds.Overlaps(mark.Bounds)) && !scene.Details.Any(d => d.Definition.Bounds.Overlaps(mark.Bounds)) && !PrintTables.Panels(scene, document.Labels).Any(t => t.Bounds.Overlaps(mark.Bounds));
             DrawMark(mark, clear ? 0xFF8EDD8E : 0xFF7777FF);
             ImGui.SetMouseCursor(ImGuiMouseCursor.ResizeEW);
             if (!ImGui.IsMouseDown(ImGuiMouseButton.Left))
@@ -137,18 +170,18 @@ public sealed partial class BlueprintMod
         }
         if (!hovered || ControlsLocked || partMenuOpen)
             return false;
-        var hit = scene.Dimensions.LastOrDefault(d => HeightDimensions.Hit(HeightDimensions.Place(scene, d), point, 7 / factor));
+        var hit = scene.Dimensions.FirstOrDefault(d => canvasTarget?.Id == d.ViewId);
         if (hit == null)
             return false;
         var current = HeightDimensions.Place(scene, hit);
         DrawMark(current, 0xFFFFDD99);
         ImGui.SetMouseCursor(ImGuiMouseCursor.ResizeEW);
-        PrintUiText.Tooltip("Drag height left/right - " + scene.Views.Single(v => v.Id == hit.ViewId).Name);
+        PrintUiText.Tooltip("Click to select; Delete removes. Drag height left/right - " + scene.Views.Single(v => v.Id == hit.ViewId).Name);
         if (ImGui.IsMouseClicked(ImGuiMouseButton.Left))
         {
             dragHeight = hit;
             heightGrabOffset = current.X - point.X;
-            SelectLabel(-1);
+            SelectHeight(hit.ViewId);
             heightViewIndex = Array.FindIndex(scene.Views.Where(HeightDimensions.Eligible).ToArray(), v => v.Id == hit.ViewId);
             heightControlsView = hit.ViewId;
             heightGap = hit.Gap;

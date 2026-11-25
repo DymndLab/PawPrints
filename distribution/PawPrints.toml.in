@@ -1,4 +1,4 @@
-# Authored Borea listing; compatibility reflects the verified preview.
+# Authored Borea listing; compatibility for PawPrints 0.6.0.
 spec_version = 1
 id = "PawPrints"
 type = "mod"
@@ -18,9 +18,9 @@ repository = "https://github.com/DymndLab/PawPrints"
 bugtracker = "https://github.com/DymndLab/PawPrints/issues"
 
 [compatibility]
-# Tested preview bounds; see docs/ksa-5901-testing.md for coverage limits.
-game_min = "2026.11.16.5901"
-game_max = "2026.11.16.5901"
+# Tested game-build range for this release.
+game_min = "2026.11.25.5949"
+game_max = "2026.11.25.5949"
 os = ["windows"]
 
 [loader]

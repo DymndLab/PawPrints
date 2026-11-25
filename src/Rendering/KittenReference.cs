@@ -128,12 +128,14 @@ static class KittenReferences
     public static KittenModel Model(RenderScene scene, KittenReference reference) => reference.Kind == ScaleReferenceKind.Banana
         ? BananaReference.Model : scene.KittenModel ?? throw new InvalidOperationException("Kitten reference model is missing.");
 
-    public static KittenReference FromView(RenderScene scene, int id, int viewId, bool outline = true)
+    public static KittenReference FromView(RenderScene scene, int id, int viewId, bool outline = true,
+        ScaleReferenceKind kind = ScaleReferenceKind.Kitten)
     {
         var view = scene.Views.Single(v => v.Id == viewId);
         var frame = view.Frame ?? throw new InvalidOperationException("The view has no reference projection.");
-        int camera = view.Projection ?? scene.Drawing?.Views.FirstOrDefault(v => v.Id == viewId)?.Camera ?? 2;
-        return new(id, camera, view.Bounds.Right + 24, view.Bounds.Bottom, outline,
+        int camera = view.Projection ?? scene.Drawing?.Views.FirstOrDefault(v => v.Id == viewId)?.Camera ??
+            scene.Details.FirstOrDefault(v => v.Definition.ViewId == viewId)?.Definition.View ?? 2;
+        return new(id, camera, view.Bounds.Right + 24, view.Bounds.Bottom, outline, kind,
             SourceView: viewId, Axes: new(frame.Right, frame.Up, frame.Toward));
     }
 
@@ -163,6 +165,7 @@ static class KittenReferences
     public static KittenReference Clamp(RenderScene scene, KittenReference reference)
     {
         var b = Bounds(scene, reference);
+        if (scene.Options.FreeLayout) { CanvasBounds.Require(b); return reference; }
         var a = FrameLayout.Area(scene.Options);
         if (b.Width > a.Width || b.Height > a.Height)
             throw new InvalidOperationException("The scale reference does not fit at this drawing scale. Reduce View scale first.");
@@ -186,8 +189,9 @@ static class KittenReferences
             return;
         foreach (var kitten in scene.Kittens)
         {
+            canvas.HitTarget = new(DrawingObjectKind.ScaleReference, kitten.Id);
             var model = Model(scene, kitten);
-            if (!PageLayout.Fits(Bounds(scene, kitten), scene.Options))
+            if (!(scene.Options.FreeLayout ? CanvasBounds.Safe(Bounds(scene, kitten)) : PageLayout.Fits(Bounds(scene, kitten), scene.Options)))
                 throw new InvalidOperationException("Keep the scale reference inside the sheet and clear of the title block.");
             var p = Project(model, kitten.View, Scale(scene, kitten), Axes(scene, kitten));
             int pixelWidth = (int)p.Width, pixelHeight = (int)p.Height;

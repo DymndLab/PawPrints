@@ -92,13 +92,10 @@ public sealed partial class BlueprintMod
             // Resolve the asset on the game thread; only a path and detached data
             // enter the worker. No model asset is redistributed with the mod.
             string? path = kittens.Any(k => k.Kind == ScaleReferenceKind.Kitten) && scene.KittenModel == null ? ModLibrary.Get<Gltf2Reference>("KittenGlb").Source?.Value?.ModPath : null;
-            cancellation?.Dispose();
-            cancellation = new();
-            var token = cancellation.Token;
             renderKeepsDocument = true;
             composingLabels = true;
             progress = "Drawing scale references";
-            renderTask = Task.Run(() =>
+            StartRender(token =>
             {
                 token.ThrowIfCancellationRequested();
                 var model = scene.KittenModel;
@@ -113,7 +110,7 @@ public sealed partial class BlueprintMod
                 {
                     Notice = "Scale reference updated. Drag it to move; Ctrl+Z undoes the edit."
                 };
-            }, token);
+            });
         }
         catch (Exception e) { ReportFailure("Scale reference unavailable: " + e.Message); }
     }
@@ -206,6 +203,12 @@ public sealed partial class BlueprintMod
                 X = point.X - kittenGrab.X,
                 Y = point.Y - kittenGrab.Y
             });
+            var correction = CanvasMotion.Limit(KittenReferences.Bounds(scene, proposed), Vec.Zero, Options.Page);
+            proposed = proposed with
+            {
+                X = proposed.X + correction.X,
+                Y = proposed.Y + correction.Y
+            };
             Outline(proposed, 0xFF8EDD8E);
             ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
             if (!ImGui.IsMouseDown(ImGuiMouseButton.Left))
@@ -221,7 +224,7 @@ public sealed partial class BlueprintMod
             Outline(selected, 0xFFFFDD99);
         if (!hovered || ControlsLocked || partMenuOpen)
             return false;
-        var hit = scene.Kittens.LastOrDefault(k => KittenReferences.Bounds(scene, k).Contains(point));
+        var hit = scene.Kittens.FirstOrDefault(k => canvasTarget?.Id == k.Id);
         if (hit == null)
             return false;
         hoveredKitten = hit.Id;

@@ -58,6 +58,16 @@ static class DrawingPlacementChecks
         check(right.Camera == 1 && right.Alignment == 2 && above.Camera == 3 && above.Alignment == 1, "Third-angle side projections roll to Front on the right and Top above, never Bottom on the right");
         check(DrawingPlacements.Roll(draft, side, 1, 1).Camera == 7 && DrawingPlacements.Roll(draft, side, 0, 1).Camera == 5, "First-angle reverses the rolled faces: Bottom above and Rear to the right of Side");
         check(above.Axes!.Right == Vector3.UnitX && above.Axes.Up == Vector3.UnitY, "Rolling preserves the parent horizontal axis instead of resetting Top to its canonical rotation");
+        var third = new DrawingPlacement(100, [side, right, above with { Id = 102 }, new(103, 4, .8f, .1f)]);
+        var firstAngle = DrawingPlacements.Reproject(third, new(3000, 1688), 1);
+        check(firstAngle.Views[1].Camera == 5 && firstAngle.Views[2].Camera == 7 &&
+            firstAngle.Views.Select(v => (v.Id, v.X, v.Y, v.Parent)).SequenceEqual(third.Views.Select(v => (v.Id, v.X, v.Y, v.Parent))) &&
+            firstAngle.Views[3] == third.Views[3], "Changing the angle updates linked views in place and preserves the independent isometric view");
+        check(DrawingPlacements.Reproject(firstAngle, new(3000, 1688), 3).Views.SequenceEqual(third.Views),
+            "Switching back restores the same projected faces and axes");
+        var legacy = third with { Views = [side, right with { RollDirection = -1, Axes = null }, above with { Id = 102, RollDirection = -1, Axes = null, Y = .3f }] };
+        check(DrawingPlacements.Reproject(legacy, new(3000, 1688), 1).Views.Select(v => v.Camera).SequenceEqual(new[] { 2, 5, 7 }),
+            "The projection preference also updates aligned views created before roll directions were saved");
         foreach (int camera in Enumerable.Range(0, 8))
             foreach (int angle in new[] { 1, 3 })
             {
@@ -116,6 +126,33 @@ static class DrawingPlacementChecks
             Camera = 0
         }, 1, 3)) == "Auxiliary", "An oblique source produces an honestly named auxiliary projection");
         var source = new PoseSource(assembly, [], 1, [new(0, "Craft", "craft", [0], NodeId: 1)], new Dictionary<string, Texture>());
+        // A roomy isometric view still shares scale with an edge-bound front
+        // view. Template metadata must not impose hidden cell limits after moving.
+        var groupedOptions = new PrintOptions(Orientation: 2, Boxes: new(6, 1, 2, 4));
+        var grouped = new DrawingPlacement(400, [new(100, 4, .25f, .45f), new(101, 1, .6f, .3f), new(102, 2, .8f, .3f)]);
+        var initialGroup = DrawingPlacements.Plan(capture, groupedOptions, grouped);
+        float top = DrawingPlacements.Area(groupedOptions).Y;
+        grouped = grouped with { Views = grouped.Views.Select(v => v.Id == 100 ? v : v with
+        {
+            Y = (top + initialGroup.Single(p => p.Id == v.Id).Bounds.Height / 2) / groupedOptions.Page.Height
+        }).ToArray() };
+        ScaleFit GroupFit(DrawingPlacement placement, PrintOptions settings)
+        {
+            settings = settings with { Drawing = placement };
+            var regions = DrawingPlacements.Plan(capture, settings, placement);
+            DrawingPlacements.Validate(regions, settings);
+            var scene = new RenderScene([], Enumerable.Repeat(-1, settings.Page.Width * settings.Page.Height).ToArray(), [], regions, options: settings);
+            return ScaleAdjustment.ForMain(source, scene, placement, []);
+        }
+        var edgeFit = GroupFit(grouped, groupedOptions);
+        var soloFit = GroupFit(grouped with { Views = [grouped.Views[0]] }, groupedOptions);
+        // Pixel rounding permits a fraction of a percent at the opening edge.
+        check(edgeFit.Maximum < 101 && edgeFit.Warning.Contains("FRONT") && soloFit.Maximum > 110,
+            $"Shared scale names an edge-bound view despite room around ISOMETRIC (group {edgeFit.Maximum}%, solo {soloFit.Maximum}%): {edgeFit.Warning}");
+        var movedGroup = grouped with { Views = grouped.Views.Select(v => v.Id == 100 ? v : v with { Y = .4f }).ToArray() };
+        var movedFit = GroupFit(movedGroup, groupedOptions);
+        check(movedFit.Maximum > 110 && movedFit.Maximum == GroupFit(movedGroup, groupedOptions with { Boxes = null }).Maximum,
+            "Moving the limiting views inward permits growth; old template cells impose no hidden scale restriction");
         // Compare the advertised marker to production footprint validation,
         // including the next increment beyond it, without rasterizing sheets.
         foreach (int shape in new[] { 0, 1, 2 })

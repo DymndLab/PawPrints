@@ -15,13 +15,7 @@ public sealed partial class BlueprintMod
     {
         if (ControlsLocked || ShowingTemplates)
             return;
-        beforeTemplates = boxLayout;
-        beforeDrawing = drawingPlacement;
-        drawingPlacement = null;
-        templatesOpen = true;
-        annotationKeysActive = false;
-        spaceHeld = false;
-        panning = false;
+        BeginTemplateSetup();
     }
 
     static void DrawTemplateToolbar(VehicleEditor editor)
@@ -42,7 +36,7 @@ public sealed partial class BlueprintMod
             }
             ImGui.EndDisabled();
         }
-        if (warningNotice == null && GenerationBlock(editor) is { } reason)
+        if (GenerationBlock(editor) is { } reason)
             PrintUiStyle.Warning(reason);
         else if (sheet != null && (document?.Labels.Length > 0 || document?.Details.Length > 0))
             PrintUiText.Wrapped("Generate keeps your notes and detail frames. Referenced views must remain available.");
@@ -128,11 +122,18 @@ public sealed partial class BlueprintMod
         ImGui.Dummy(new float2(1, 1));
     }
 
-    static void DrawTemplateView(float2 center, float radius, int camera)
+    static void DrawTemplateView(float2 center, float radius, int camera, uint ink = 0xFFE5CFB4, ViewAxes? axes = null)
     {
         var draw = ImGui.GetWindowDrawList();
-        const uint ink = 0xFFE5CFB4;
-        float2 P(float x, float y) => center + new float2(x * radius, y * radius);
+        var right = new float2(1, 0);
+        var down = new float2(0, 1);
+        if (axes != null)
+        {
+            var basis = SheetLayout.Basis(camera);
+            right = new(System.Numerics.Vector3.Dot(basis.Right, axes.Right), -System.Numerics.Vector3.Dot(basis.Right, axes.Up));
+            down = new(-System.Numerics.Vector3.Dot(basis.Up, axes.Right), System.Numerics.Vector3.Dot(basis.Up, axes.Up));
+        }
+        float2 P(float x, float y) => center + (right * x + down * y) * radius;
         void L(float x, float y, float a, float b) => draw.AddLine(P(x, y), P(a, b), ink, 1);
         if (camera < 0)
         {
