@@ -1,3 +1,7 @@
+# PawPrints 0.6.1
+
+- Arrange Views now has a visual grid picker. Drag from the X or click a cell to set your grid size.
+
 # PawPrints 0.6.0 for KSA 5949
 
 Supports Windows x64 with KSA 2026.11.25.5949 and StarMap 0.5.4. Native Linux testing is pending.

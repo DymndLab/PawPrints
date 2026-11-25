@@ -78,6 +78,14 @@ static class StartupChecks
             var all = empty.Arrange(Enumerable.Range(0, 9).ToArray(), 0, 0, angle, null);
             check(all?.Slots.Length == 9 && all.Slots.Select(s => s.Cell).Distinct().Count() == 9 &&
                 all.ToTemplate().Layout.Views.Single(v => v.Exploded).Id == 1001, "Automatic sizing fits every view including Exploded");
+            var largest = all!.Arrange(Enumerable.Range(0, 9).ToArray(), 5, 4, angle, null);
+            check(largest is { Columns: 5, Rows: 4 } && largest.Slots.Select(s => s.Cell).Distinct().Count() == 9 &&
+                largest.ToTemplate().Layout.Views.Length == 9,
+                $"The 5 x 4 picker limit retains all views under angle {angle}");
+            var single = largest!.Arrange([1], 1, 1, angle, 1);
+            check(single is { Columns: 1, Rows: 1, Primary: 1 } && Cell(single, 1) == 0 &&
+                largest.Arrange([1, 2], 1, 1, angle, 1) == null,
+                $"The 1 x 1 picker fits one view and rejects a second under angle {angle}");
         }
     }
 

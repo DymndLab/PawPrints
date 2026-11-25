@@ -13,9 +13,7 @@ public sealed partial class BlueprintMod
     static bool creatingBlank, captureForView, captureForDetail;
     static int? captureViewCamera;
     static readonly bool[] setupViews = new bool[9];
-    static readonly (int Columns, int Rows)[] setupGrids = [(0, 0), (2, 1), (1, 2), (2, 2), (3, 2), (4, 2), (2, 3), (3, 3), (4, 3)];
-    static readonly string[] setupGridNames = setupGrids.Select(g => g.Columns == 0 ? "Automatic" : $"{g.Columns} x {g.Rows}").ToArray();
-    static int setupGrid;
+    static (int Columns, int Rows) setupGrid;
     static string? setupGridWarning;
     static readonly (string? Message, string? Hint, string? PrimaryIssue)[] setupViewIssues = new (string?, string?, string?)[setupViews.Length];
     static int? setupPrimary, resolvedSetupPrimary;
@@ -157,9 +155,9 @@ public sealed partial class BlueprintMod
         setupMoveHint = null;
     }
 
-    static void RefreshSetupViewIssues(int gridChoice, int[] cameras, int? primary)
+    static void RefreshSetupViewIssues((int Columns, int Rows) gridSize, int[] cameras, int? primary)
     {
-        var (columns, rows) = setupGrids[gridChoice];
+        var (columns, rows) = gridSize;
         int angle = setupWorkingGrid.Angle;
         resolvedSetupPrimary = setupWorkingGrid.Primary;
         var linked = setupWorkingGrid.Slots.Where(s => !s.Detached).Select(s => s.Camera).ToArray();
@@ -173,10 +171,10 @@ public sealed partial class BlueprintMod
         }
     }
 
-    static bool TrySetupLayout(int gridChoice, int? primary, int angle)
+    static bool TrySetupLayout((int Columns, int Rows) gridSize, int? primary, int angle)
     {
         var cameras = SelectedCameras();
-        var (columns, rows) = setupGrids[gridChoice];
+        var (columns, rows) = gridSize;
         var proposal = setupWorkingGrid.Arrange(cameras, columns, rows, angle, primary);
         if (proposal == null)
         {
@@ -185,10 +183,10 @@ public sealed partial class BlueprintMod
             return false;
         }
         setupWorkingGrid = proposal;
-        setupGrid = gridChoice;
+        setupGrid = gridSize;
         setupPrimary = primary;
         ClearSetupGesture();
-        RefreshSetupViewIssues(gridChoice, cameras, primary);
+        RefreshSetupViewIssues(gridSize, cameras, primary);
         return true;
     }
 

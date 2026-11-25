@@ -1,11 +1,11 @@
 # Installation
 
-PawPrints **0.6.0** requires **Windows x64**, **KSA 2026.11.25.5949** and **StarMap 0.5.4**. In Borea, choose PawPrints in the Stable channel for an instance with those versions. Native Linux testing is pending.
+PawPrints **0.6.1** requires **Windows x64**, **KSA 2026.11.25.5949** and **StarMap 0.5.4**. In Borea, choose PawPrints in the Stable channel for an instance with those versions. Native Linux testing is pending.
 
 ## Install with StarMap
 
 1. Close KSA.
-2. Download `PawPrints-0.6.0.zip` from [Releases](https://github.com/DymndLab/PawPrints/releases). Use the mod ZIP; GitHub's source archives contain development files.
+2. Download `PawPrints-0.6.1.zip` from [Releases](https://github.com/DymndLab/PawPrints/releases). Use the mod ZIP; GitHub's source archives contain development files.
 3. Extract its `PawPrints` folder into your StarMap profile's `mods` directory. Keep the packaged libraries and licenses together.
 4. Enable `PawPrints` in that profile's `manifest.toml`, updating an existing entry if present:
 
@@ -32,7 +32,7 @@ Company logos and title defaults are stored under `<active profile>/PawPrints/Lo
 
 ## Arrange a new drawing
 
-On **New drawing**, set the sheet, choose **Paper & Wear**, and fill in **Drafter Details**. Type your initials and click a handwriting sample to choose its font. Click **Blank drawing** to open the editor, **Arrange views** for the grid, or **From template** for the gallery. **Open Drawing** and **Return to Vehicle Editor** are beside the New Drawing heading. Click a circled **P** to choose the primary projection. Dashed guides connect views that share scale. Drag the primary to move its linked views together. Drag a secondary along its projection axis to keep it linked, or confirm an off-axis drop to give it independent scale. You can also click a view and then a destination cell. Open **Paper & wear** beside the grid to preview appearance, then choose **Start editing**.
+On **New drawing**, set the sheet, choose **Paper & Wear**, and fill in **Drafter Details**. Type your initials and click a handwriting sample to choose its font. Click **Blank drawing** to open the editor, **Arrange views** for the grid, or **From template** for the gallery. **Open Drawing** and **Return to Vehicle Editor** are beside the New Drawing heading. In **Grid Size**, drag from **X** or click a cell to select up to five columns and four rows. The size beside the heading shows the current grid. Select **Automatic** to let PawPrints size the grid to fit the selected views. Click a circled **P** to choose the primary projection. Dashed guides connect views that share scale. Drag the primary to move its linked views together. Drag a secondary along its projection axis to keep it linked, or confirm an off-axis drop to give it independent scale. You can also click a view and then a destination cell. Open **Paper & wear** beside the grid to preview appearance, then choose **Start editing**.
 
 **Save as Defaults** remembers the reusable settings for the active profile. Use **Export Preferences** or **Import Preferences** on New drawing to move a `.pawprofile` file between instances. It includes the default logo. Export can also include saved layouts and extra logo images. Import reviews the destination before applying and keeps existing library files.
 

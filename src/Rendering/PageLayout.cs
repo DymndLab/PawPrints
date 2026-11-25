@@ -64,7 +64,7 @@ static class ImagePresets
 
 static class PrintIdentity
 {
-    public const string Version = "0.6.0";
+    public const string Version = "0.6.1";
 
     public static string Mark(int variant) => variant == 1 ? "Dy M N D" : "Dy M & D";
 
