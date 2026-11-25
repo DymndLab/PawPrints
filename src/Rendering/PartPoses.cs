@@ -5,7 +5,10 @@ sealed record PoseTrack(uint Node, int Depth, uint[] Descendants, Matrix4x4[] De
 sealed record PoseControl(uint Part, string Key, string Name, bool DeployRetract, int CapturedPercent, PoseTrack[] Tracks, uint[]? SymmetryParts = null);
 // View -1 is shared by all main views and details; a view ID overrides it.
 sealed record PartPose(uint Part, string Key, int View, int Percent);
-sealed record PoseSource(AssemblyCapture Assembly, PoseControl[] Controls, int ExteriorCount, LabelPart[] Parts, IReadOnlyDictionary<string, Texture> Maps, PerformanceData? Performance = null);
+sealed record PoseSource(AssemblyCapture Assembly, PoseControl[] Controls, int ExteriorCount, LabelPart[] Parts, IReadOnlyDictionary<string, Texture> Maps, PerformanceData? Performance = null)
+{
+    public long DetachedGeometryBytes { get; init; }
+}
 
 static class PartPoses
 {
@@ -60,10 +63,7 @@ static class PartPoses
         {
             if (!transforms.TryGetValue(a.MeshNodes[i], out var matrix))
                 return m;
-            return m with
-            {
-                Vertices = m.Vertices.Select(v => { var p = Vector3.Transform(ExplodedGeometry.World(v), matrix); return new double[] { p.Z, p.X, p.Y }; }).ToArray()
-            };
+            return m.ApplyPose(matrix);
         }).ToArray();
         var nodes = a.Nodes.Select(n =>
         {

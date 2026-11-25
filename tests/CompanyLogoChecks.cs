@@ -44,7 +44,7 @@ static class CompanyLogoChecks
         var separateRead = System.Text.Json.JsonSerializer.Deserialize<TitleBlockData>(System.Text.Json.JsonSerializer.Serialize(separate))!;
         var independent = new Canvas(2400, 3000, new(255, 255, 255), new(0, 0, 0), new PrintOptions(Grid: false));
         CompanyTitleBlock.DrawCompact(independent, "Test", new PrintOptions(TitleBlock: separateRead));
-        check(independent.Runs.Any(r => r.Text == "Yn" && r.Face == "Kristi") && independent.Runs.Any(r => r.Text == "DHK" && r.Face == "Mr Dafoe"), "Creator and approver selections persist and render independently");
+        check(independent.Runs.Any(r => r.Text == "Yn" && r.Face == "Kristi") && independent.Runs.Any(r => r.Text == TitleBlockData.DefaultApproverInitials && r.Face == "Mr Dafoe"), "Creator and approver selections persist and render independently");
         foreach (string face in InitialsFont.Names)
         {
             var cell = new Box(170, 105, 100, 38);
@@ -66,6 +66,17 @@ static class CompanyLogoChecks
             var ys = Enumerable.Range(0, 100).Where(y => Enumerable.Range(0, 400).Any(x => sample.Pixels[(y * 400 + x) * 3] < 200)).ToArray();
             check(restored.InitialsStyle == face && sample.Runs.Single().Text == "Yn" && sample.Runs.Single().Face == face && ys.Length > 35 && ys.First() >= 10 && ys.Last() < 56, face + ": bundled face, saved choice, case and near-full ink height survive rendering");
         }
+        var initialsSamples = InitialsFont.Names.Select(face => InitialsFont.SampleInk("XYZ", face)).ToArray();
+        check(initialsSamples.All(sample => sample.Length == InitialsFont.SampleWidth * InitialsFont.SampleHeight && sample.Any(ink => ink > 150)) &&
+            initialsSamples.Select(Convert.ToHexString).Distinct().Count() == InitialsFont.Names.Length,
+            "All six selectable handwriting previews show distinct rendered glyphs");
+        check(!initialsSamples[0].SequenceEqual(InitialsFont.SampleInk("ABC", InitialsFont.Names[0])),
+            "The handwriting preview renders the entered initials");
+        var narrowSamples = InitialsFont.Names.Select(face => InitialsFont.SampleInk("tas", face, 46, 28)).ToArray();
+        check(narrowSamples.All(sample => sample.Length == 46 * 28 && sample.Any(ink => ink > 128) &&
+            sample.Any(ink => ink is > 0 and < 128)) &&
+            narrowSamples.Select(Convert.ToHexString).Distinct().Count() == InitialsFont.Names.Length,
+            "Small lowercase samples preserve each bundled face with antialiased edges");
         var pixels = new byte[400 * 240 * 4];
         for (int y = 25; y < 215; y++)
             for (int x = 28; x < 372; x++)
@@ -132,7 +143,7 @@ static class CompanyLogoChecks
             string target = Path.Combine(dir, "title-" + name + "-" + Guid.NewGuid().ToString("N") + ".png");
             Png.Write(target, 2400, 720, crop);
             File.Copy(target, Path.Combine(dir, "title-" + name + ".png"), true);
-            check(c.Runs.Any(r => r.Text == "EXAMPLE AEROSPACE LAB") && c.Runs.Any(r => r.Text == "DHK" && r.Face == InitialsFont.ApproverFace) && string.Concat(c.Runs.Where(r => r.Y == CompanyTitleBlock.CreditTop(options)).Select(r => r.Text)).Contains("N' DESIGN"), name + ": organization, cursive initials and selected footer appear together");
+            check(c.Runs.Any(r => r.Text == "EXAMPLE AEROSPACE LAB") && c.Runs.Any(r => r.Text == TitleBlockData.DefaultApproverInitials && r.Face == InitialsFont.ApproverFace) && string.Concat(c.Runs.Where(r => r.Y == CompanyTitleBlock.CreditTop(options)).Select(r => r.Text)).Contains("N' DESIGN"), name + ": organization, cursive initials and selected footer appear together");
             var sheet = new Sheet("Lander 1", options, c.Pixels, Sheet.MakePreview(c.Pixels), []);
             // Use a distinct date so the assertion cannot match the existing date row.
             string paintedDate = c.Runs.Single(r => r.Text.StartsWith("EXPORTED ")).Text[9..];

@@ -31,10 +31,19 @@ static class LogoPicker
     [DllImport("comdlg32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool GetOpenFileNameW(ref OpenFile data);
 
 
+    [DllImport("comdlg32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool GetSaveFileNameW(ref OpenFile data);
+
     [DllImport("comdlg32.dll")] static extern int CommDlgExtendedError();
 
 
-    public static Task<string?> Choose(IntPtr owner, string folder)
+    public static Task<string?> Choose(IntPtr owner, string folder) =>
+        ChooseFile(owner, folder, "Choose a company logo", "Logo images (*.png)\0*.png\0\0", "png", save: false);
+
+    public static Task<string?> ChooseProfile(IntPtr owner, bool save) =>
+        ChooseFile(owner, "", save ? "Export PawPrints profile" : "Import PawPrints profile",
+            "PawPrints profiles (*.pawprofile)\0*.pawprofile\0\0", "pawprofile", save);
+
+    static Task<string?> ChooseFile(IntPtr owner, string folder, string title, string filter, string extension, bool save)
     {
         if (!OperatingSystem.IsWindows())
             throw new PlatformNotSupportedException();
@@ -46,8 +55,13 @@ static class LogoPicker
             {
                 fileBuffer = Marshal.AllocCoTaskMem(32768 * sizeof(char));
                 Marshal.WriteInt16(fileBuffer, 0);
-                var data = new OpenFile { Size = Marshal.SizeOf<OpenFile>(), Owner = owner, Filter = "Logo images (*.png)\0*.png\0\0", FilterIndex = 1, File = fileBuffer, MaxFile = 32768, InitialDirectory = folder, Title = "Choose a company logo", Flags = 0x80000 | 0x1000 | 0x800 | 0x8 | 0x2000000 };
-                if (GetOpenFileNameW(ref data))
+                var data = new OpenFile
+                {
+                    Size = Marshal.SizeOf<OpenFile>(), Owner = owner, Filter = filter, FilterIndex = 1,
+                    File = fileBuffer, MaxFile = 32768, InitialDirectory = folder, Title = title, DefaultExtension = extension,
+                    Flags = 0x80000 | (save ? 0 : 0x1000) | 0x800 | 0x8 | 0x2000000
+                };
+                if (save ? GetSaveFileNameW(ref data) : GetOpenFileNameW(ref data))
                     completion.SetResult(Marshal.PtrToStringUni(fileBuffer));
                 else
                 {
@@ -66,7 +80,7 @@ static class LogoPicker
         })
         {
             IsBackground = true,
-            Name = "Paw Prints logo picker"
+            Name = "PawPrints file picker"
         };
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();

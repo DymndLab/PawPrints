@@ -10,6 +10,7 @@
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
   </PropertyGroup>
   <ItemGroup>
+    <EmbeddedResource Include="../assets/wear/*.rgba.z" LogicalName="PawPrints.Wear.%(Filename)%(Extension)" />
     <EmbeddedResource Include="../part-support.json" LogicalName="PawPrints.PartSupport.json" />
     <None Include="../part-support.json" Link="part-support.json" CopyToOutputDirectory="PreserveNewest" />
     <EmbeddedResource Include="../assets/fonts/mrdafoe/MrDafoe-Regular.ttf" LogicalName="PawPrints.Fonts.mrdafoe.ttf" />

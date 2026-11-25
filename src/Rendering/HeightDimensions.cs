@@ -11,8 +11,16 @@ static class HeightDimensions
 
     public static CraftHeight Measure(Capture capture)
     {
-        var z = capture.Meshes.SelectMany(m => m.Vertices).Select(v => (float)v[0]).ToArray();
-        return new(z.Min(), z.Max());
+        float min = float.PositiveInfinity, max = float.NegativeInfinity;
+        foreach (var mesh in capture.Meshes)
+            foreach (var point in mesh.WorldVertices())
+            {
+                min = Math.Min(min, point.Z);
+                max = Math.Max(max, point.Z);
+            }
+        if (float.IsPositiveInfinity(min))
+            throw new InvalidOperationException("No geometry available for craft height.");
+        return new(min, max);
     }
 
     public static bool Eligible(ViewRegion view) => view.Id < 1000 && view.Frame is { } f && Math.Abs(f.Up.Z) > .1f && Math.Abs(f.Right.Z) < .001f;

@@ -19,6 +19,7 @@ sealed record RawTexture(TextureInfo Info, int Format, byte[] Data)
                 throw new InvalidDataException("Truncated material.");
             for (int i = 0; i < count; i++)
             {
+                if ((i & 4095) == 0) token.ThrowIfCancellationRequested();
                 int q = i * 4;
                 bool bgr = Format is 44 or 50;
                 bgra[q] = Data[q + (bgr ? 0 : 2)];
@@ -44,6 +45,7 @@ sealed record RawTexture(TextureInfo Info, int Format, byte[] Data)
             var pixels = decoder.DecodeRawAsync(Data, format, Info.Width, Info.Height, token).GetAwaiter().GetResult();
             for (int i = 0; i < count; i++)
             {
+                if ((i & 4095) == 0) token.ThrowIfCancellationRequested();
                 int q = i * 4;
                 bgra[q] = pixels[i].b;
                 bgra[q + 1] = pixels[i].g;

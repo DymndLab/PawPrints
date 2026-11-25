@@ -151,7 +151,7 @@ static class FixedViewLayouts
         var layout = clearBlankFits ? options.Boxes!.ClearBlankFits() : options.Boxes!;
         if (!CanSplit(layout.Template))
             return layout;
-        var points = capture.Meshes.SelectMany(m => m.Vertices).Select(ExplodedGeometry.World).ToArray();
+        var points = capture.Meshes.SelectMany(m => m.WorldVertices()).ToArray();
         var center = (points.Aggregate(new Vector3(float.PositiveInfinity), Vector3.Min) + points.Aggregate(new Vector3(float.NegativeInfinity), Vector3.Max)) * .5f;
         var extents = Extents(points, center);
         var area = PageLayout.Drawing(options);

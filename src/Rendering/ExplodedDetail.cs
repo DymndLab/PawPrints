@@ -2,7 +2,10 @@ using System.Numerics;
 namespace Blueprint.Rendering;
 
 sealed record AssemblyPose(Vector3 Origin, Vector3 X, Vector3 Y, Vector3 Z);
-sealed record AssemblyNode(uint Id, uint? Parent, string Name, string TemplateId, bool Subpart, AssemblyPose? Pose = null);
+sealed record AssemblyNode(uint Id, uint? Parent, string Name, string TemplateId, bool Subpart, AssemblyPose? Pose = null)
+{
+    public Vector3 Scale { get; init; } = Vector3.One;
+}
 sealed record AssemblyCapture(Capture Geometry, AssemblyNode[] Nodes, uint[] MeshNodes, bool[] Internal)
 {
     public IReadOnlyDictionary<uint, ExplodedMount>? PosedMounts { get; init; }
@@ -14,11 +17,13 @@ sealed record AssemblyCapture(Capture Geometry, AssemblyNode[] Nodes, uint[] Mes
 }
 sealed record ExplodedSource(AssemblyCapture Assembly, IReadOnlyDictionary<string, Texture> Maps);
 sealed record ExplodedGroup(uint Node, Vector3 Offset, bool Hidden = false, int Axis = 0);
+enum DetailSourceIssue { None, MissingRoot, ChangedScope }
 sealed record DetailSizing(float Ratio, float? Spread = null, Vector3? Center = null, int Width = 0, int Height = 0);
 sealed record ExplodedDetail(int Id, uint Scope, Box Bounds, string Caption, int View = 4, float Separation = 1, int Axis = 0, bool IncludeInternal = false,
     bool Guides = true, uint[]? Expanded = null, ExplodedGroup[]? Groups = null, ProjectionFrame? Camera = null, uint? Seed = null, DetailSizing? Sizing = null, LeaderLine GuideLine = LeaderLine.Dotted)
 {
     public ScopeDefinition? Selection { get; init; }
+    public DetailSourceIssue SourceIssue { get; init; }
     public int ViewId => 1000 + Id;
 }
 sealed record DetailGeometry(Capture Capture, int[] OriginalMeshes, uint[] GroupNodes, Vector3[] OriginalCenters, Vector3[] MovedCenters)
@@ -58,16 +63,37 @@ static class AssemblyGraph
 {
 
 
-    public static uint[] Ancestors(AssemblyCapture source, uint seed)
+    public static void ValidateHierarchy(AssemblyNode[] nodes, CancellationToken token)
     {
-        var map = source.Nodes.ToDictionary(n => n.Id);
+        var parents = nodes.ToDictionary(n => n.Id, n => n.Parent);
+        var done = new HashSet<uint>();
+        var path = new HashSet<uint>();
+        foreach (var node in nodes)
+        {
+            token.ThrowIfCancellationRequested();
+            for (uint? id = node.Id; id.HasValue && !done.Contains(id.Value);)
+            {
+                if (!path.Add(id.Value) || !parents.TryGetValue(id.Value, out id))
+                    throw new InvalidDataException("Broken assembly hierarchy.");
+            }
+            done.UnionWith(path);
+            path.Clear();
+        }
+    }
+
+    public static uint[] Ancestors(AssemblyCapture source, uint seed) =>
+        Ancestors(source.Nodes.ToDictionary(n => n.Id), seed);
+
+    internal static uint[] Ancestors(IReadOnlyDictionary<uint, AssemblyNode> nodes, uint seed)
+    {
         var result = new List<uint>();
         var seen = new HashSet<uint>();
-        for (uint? id = seed; id.HasValue; id = map[id.Value].Parent)
+        for (uint? id = seed; id.HasValue;)
         {
-            if (!map.ContainsKey(id.Value) || !seen.Add(id.Value))
+            if (!nodes.TryGetValue(id.Value, out var node) || !seen.Add(id.Value))
                 throw new InvalidDataException("Broken assembly hierarchy.");
             result.Add(id.Value);
+            id = node.Parent;
         }
         return result.ToArray();
     }
@@ -77,7 +103,11 @@ static class AssemblyGraph
     {
         if (!source.Nodes.Any(n => n.Id == root))
             throw new InvalidDataException("Assembly no longer exists.");
-        var children = source.Nodes.Where(n => n.Parent != null).ToLookup(n => n.Parent!.Value);
+        return Subtree(source.Nodes.Where(n => n.Parent.HasValue).ToLookup(n => n.Parent!.Value), root);
+    }
+
+    internal static HashSet<uint> Subtree(ILookup<uint, AssemblyNode> children, uint root)
+    {
         var found = new HashSet<uint>();
         var todo = new Stack<uint>();
         todo.Push(root);
@@ -105,6 +135,24 @@ static class AssemblyGraph
         return new(root, [.. cuts], []);
     }
 
+
+    public static ExplodedDetail RootSubassembly(AssemblyCapture source, ExplodedDetail detail, uint part)
+    {
+        uint root = WholePart(source, part);
+        if (root == detail.Scope) return detail;
+        return detail with
+        {
+            Scope = root,
+            Seed = root,
+            Caption = source.Nodes.First(n => n.Id == root).Name,
+            Selection = LegacyScope(source, root),
+            Expanded = null,
+            Groups = null,
+            Camera = null,
+            Sizing = null,
+            SourceIssue = DetailSourceIssue.None
+        };
+    }
 
     public static HashSet<uint> Included(AssemblyCapture source, ExplodedDetail detail)
     {
@@ -155,7 +203,8 @@ static class AssemblyGraph
         if (branches.Contains(part)) return WithBranches(branches.Remove(part));
         if (selection.Removed.Contains(part))
             return detail with { Selection = selection with { Removed = selection.Removed.Remove(part) }, Camera = null };
-        if (Included(source, detail).Contains(part)) return WithBranches(branches.Add(part));
+        var included = Included(source, detail);
+        if (included.Contains(part)) return WithBranches(branches.Add(part));
 
         // A dimmed descendant can restore the excluded branch that contains it.
         foreach (uint branch in branches)
@@ -163,7 +212,16 @@ static class AssemblyGraph
             var candidate = WithBranches(branches.Remove(branch));
             if (Included(source, candidate).Contains(part)) return candidate;
         }
-        return detail;
+        if (selection.Cuts.IsEmpty) return detail;
+
+        // A rerooted subtree can be separated by joint cuts, not branch removals.
+        // Reopen the connections to the clicked component while keeping other cuts.
+        var outside = Included(source, detail with { Scope = part });
+        var restoredCuts = selection.Cuts.RemoveAll(joint =>
+            included.Contains(joint.A.Part) && outside.Contains(joint.B.Part) ||
+            included.Contains(joint.B.Part) && outside.Contains(joint.A.Part));
+        return restoredCuts.Length == selection.Cuts.Length ? detail :
+            detail with { Selection = selection with { Cuts = restoredCuts }, Camera = null };
     }
 
 
@@ -233,7 +291,7 @@ static class ExplodedGeometry
         var root = source.Nodes.First(n => n.Id == detail.Scope);
         // Captures without pose metadata use only the root's own geometry,
         // never the changing bounds of its descendants, as the fallback origin.
-        return root.Pose ?? new(Center(source.Geometry.Meshes.Where((_, i) => source.MeshNodes[i] == detail.Scope).SelectMany(m => m.Vertices).Select(World)), Vector3.UnitX, Vector3.UnitY, Vector3.UnitZ);
+        return root.Pose ?? new(Center(source.Geometry.Meshes.Where((_, i) => source.MeshNodes[i] == detail.Scope).SelectMany(m => m.WorldVertices())), Vector3.UnitX, Vector3.UnitY, Vector3.UnitZ);
     }
 
 
@@ -243,7 +301,7 @@ static class ExplodedGeometry
             return Vector3.Zero;
         if (source.Mounts?.GetValueOrDefault(group) is { } mount) return mount.Normal;
         var scope = AssemblyGraph.Included(source, detail);
-        var center = Center(source.Geometry.Meshes.Where((_, i) => scope.Contains(source.MeshNodes[i]) && AssemblyGraph.GroupFor(source, detail, source.MeshNodes[i]) == group && (detail.IncludeInternal || !source.Internal[i])).SelectMany(m => m.Vertices).Select(World));
+        var center = Center(source.Geometry.Meshes.Where((_, i) => scope.Contains(source.MeshNodes[i]) && AssemblyGraph.GroupFor(source, detail, source.MeshNodes[i]) == group && (detail.IncludeInternal || !source.Internal[i])).SelectMany(m => m.WorldVertices()));
         return Direction(RootPose(source, detail), detail, group, center);
     }
 
@@ -265,7 +323,7 @@ static class ExplodedGeometry
         float largest = 0;
         foreach (var group in groups.OrderBy(g => g.Key))
         {
-            var points = group.SelectMany(i => source.Geometry.Meshes[i].Vertices).Select(World).ToArray();
+            var points = group.SelectMany(i => source.Geometry.Meshes[i].WorldVertices()).ToArray();
             if (points.Length == 0)
                 continue;
             var lo = points.Aggregate(new Vector3(float.PositiveInfinity), Vector3.Min);
@@ -338,7 +396,7 @@ static class ExplodedGeometry
         var nodes = new List<uint>();
         var selected = Enumerable.Range(0, source.Geometry.Meshes.Length).Where(i => scope.Contains(source.MeshNodes[i]) && (detail.IncludeInternal || !source.Internal[i])).ToArray();
         var grouped = selected.GroupBy(i => AssemblyGraph.GroupFor(source, detail, source.MeshNodes[i])).OrderBy(g => g.Key).ToArray();
-        var all = selected.SelectMany(i => source.Geometry.Meshes[i].Vertices).Select(World).ToArray();
+        var all = selected.SelectMany(i => source.Geometry.Meshes[i].WorldVertices()).ToArray();
         if (all.Length == 0)
             throw new InvalidOperationException("This scope has no drawable geometry.");
         Vector3 lo = all.Aggregate(new Vector3(float.PositiveInfinity), Vector3.Min), hi = all.Aggregate(new Vector3(float.NegativeInfinity), Vector3.Max);
@@ -349,7 +407,7 @@ static class ExplodedGeometry
         var movedCenters = new List<Vector3>();
         var groupsById = grouped.ToDictionary(g => g.Key);
         var centers = grouped.ToDictionary(g => g.Key,
-            g => Center(g.SelectMany(i => source.Geometry.Meshes[i].Vertices).Select(World)));
+            g => Center(g.SelectMany(i => source.Geometry.Meshes[i].WorldVertices())));
         var settings = (detail.Groups ?? []).ToDictionary(g => g.Node);
         var shifts = new Dictionary<uint, Vector3>();
         var guides = new Dictionary<uint, (Vector3 Start, Vector3 End)>();
@@ -389,11 +447,7 @@ static class ExplodedGeometry
             {
                 var m = source.Geometry.Meshes[i];
                 // Translate detached vertices only. Source geometry/normals stay intact.
-                var shifted = m.Vertices.Select(p => new[] { p[0] + delta.Z, p[1] + delta.X, p[2] + delta.Y }).ToArray();
-                meshes.Add(m with
-                {
-                    Vertices = shifted
-                });
+                meshes.Add(m.Translate(delta));
                 indices.Add(i);
                 nodes.Add(group.Key);
                 originalCenters.Add(groupCenter);
@@ -416,7 +470,7 @@ static class ExplodedGeometry
         var geometry = Build(source.Assembly, detail);
         int w = (int)detail.Bounds.Width - 24, h = (int)detail.Bounds.Height - ExplodedPainting.CaptionSpace;
         var basis = SheetLayout.Basis(detail.View);
-        var points = geometry.Capture.Meshes.SelectMany(m => m.Vertices).Select(World).ToArray();
+        var points = geometry.Capture.Meshes.SelectMany(m => m.WorldVertices()).ToArray();
         var center = (points.Aggregate(new Vector3(float.PositiveInfinity), Vector3.Min) + points.Aggregate(new Vector3(float.NegativeInfinity), Vector3.Max)) * .5f;
         float dx = points.Max(p => Math.Abs(Vector3.Dot(p - center, basis.Right))) * 2, dy = points.Max(p => Math.Abs(Vector3.Dot(p - center, basis.Up))) * 2;
         ProjectionFrame frame;
@@ -476,7 +530,11 @@ static class ExplodedGeometry
         if ((long)w * h > remainingPixels)
             throw new InvalidOperationException("View layers exceed the retained-pixel memory budget (16,777,216 pixels). Reduce view sizes.");
         token.ThrowIfCancellationRequested();
-        var pixels = DetailSampling.Render(geometry.Capture, source.Maps, detail.Caption, detail.View, frame, token);
+        // Size tiers use the visible assembly before explosion offsets, so
+        // spreading or resizing a detail does not promote or demote parts.
+        var unspread = new Capture(geometry.OriginalMeshes.Select(i => source.Assembly.Geometry.Meshes[i]).ToArray());
+        var inkGeometry = NormalLinework.Prepare(geometry.Capture, token, unspread, options?.Detailed == true);
+        var pixels = DetailSampling.Render(inkGeometry, source.Maps, detail.Caption, detail.View, frame, token);
         if (detail.Guides)
         {
             Vector2 Project(Vector3 p) => new(w * .5f + Vector3.Dot(p - frame.Center, frame.Right) * frame.Scale, h * .5f - Vector3.Dot(p - frame.Center, frame.Up) * frame.Scale);

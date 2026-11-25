@@ -1,4 +1,4 @@
-using Blueprint.Rendering;
+﻿using Blueprint.Rendering;
 using System.Numerics;
 using System.Text.Json;
 
@@ -527,7 +527,11 @@ static class ExplodedChecks
         var relocatedTables = AnnotationPainting.Compose(initial, [], default, tableLayout);
         var tablesRetained = ExplodedPainting.Compose(original, relocatedTables, [detail with { Bounds = detail.Bounds with { Y = detail.Bounds.Y + 40 } }], [], default, true);
         check(tablesRetained.Scene!.Tables == tableLayout, "Detail recomposition preserves independently moved tables");
-        var noDetails = ExplodedPainting.Compose(original, tablesRetained, [], [], default);
+        var linkedReference = KittenReferences.FromView(tablesRetained.Scene!, 1, detail.ViewId, kind: ScaleReferenceKind.Banana);
+        var withReference = tablesRetained with { Scene = tablesRetained.Scene!.WithKittens([linkedReference]) };
+        var noDetails = ExplodedPainting.Compose(original, withReference, [], [], default);
+        check(noDetails.Scene!.Kittens.Length == 0,
+            "Deleting an exploded view removes its linked scale reference within the same edit");
         check(noDetails.Scene!.Tables == tableLayout, "Removing the last detail preserves table positions");
         var distant = detail with
         {
@@ -693,6 +697,31 @@ static class ExplodedChecks
         check(AssemblyGraph.Included(assembly, AssemblyGraph.ToggleBranch(assembly, toggled, 5)).SetEquals(nodes.Select(n => n.Id)),
             "Clicking a dimmed descendant restores its excluded branch");
         check(AssemblyGraph.ToggleBranch(assembly, open, 2) == open, "The root stays included when clicked");
+        var whole = new ExplodedDetail(1, 1, new(5, 10, 300, 200), "Tank", Seed: 1, Expanded: [1],
+            Groups: [new(1, Vector3.One)], Sizing: new(1)) { Selection = new(1, [], [4]) };
+        var rerooted = AssemblyGraph.RootSubassembly(loop, whole, 4);
+        check(rerooted.Scope == 2 && rerooted.Seed == 2 && rerooted.Caption == "Cargo bay" &&
+            rerooted.Selection?.Root == 2 && rerooted.Id == whole.Id && rerooted.Bounds == whole.Bounds,
+            "Rerooting from an owned mesh uses the whole part and retains the draft frame");
+        check(AssemblyGraph.Included(loop, rerooted).SetEquals(new uint[] { 2, 3, 4 }) &&
+            rerooted.Selection!.Cuts.Length == 2 && rerooted.Expanded == null && rerooted.Groups == null && rerooted.Sizing == null,
+            "Rerooting includes the new subtree, cutting alternate structural paths and clearing old root-dependent edits");
+        check(ExplodedGeometry.AnchorGroup(loop, rerooted) == 2 && whole.Scope == 1 && whole.Selection!.Removed.Contains(4),
+            "The new root anchors the explosion and the previous draft stays available for undo");
+        check(AssemblyGraph.RootSubassembly(loop, rerooted, 4) == rerooted,
+            "Selecting the current whole-part root leaves its scope unchanged");
+        var upper = AssemblyGraph.ToggleBranch(assembly, detail, 5);
+        check(AssemblyGraph.Included(assembly, upper).SetEquals(new uint[] { 1, 2, 4, 5 }) &&
+            upper.Selection!.Cuts.SequenceEqual(new[] { Joint(2, 3) }) && upper.Scope == 2,
+            "Clicking a dimmed part past the former root restores just that side of the new root");
+        var lower = AssemblyGraph.ToggleBranch(assembly, detail, 3);
+        check(AssemblyGraph.Included(assembly, lower).SetEquals(new uint[] { 2, 3, 4 }) &&
+            lower.Selection!.Cuts.SequenceEqual(new[] { Joint(1, 2) }),
+            "Branches behind a cut can also be restored on the other side of the new root");
+        check(AssemblyGraph.Included(loop, AssemblyGraph.ToggleBranch(loop, rerooted, 5)).SetEquals(nodes.Select(n => n.Id)),
+            "Restoring a dimmed component reconnects each of its joints to the shown assembly");
+        check(AssemblyGraph.Included(assembly, AssemblyGraph.ToggleBranch(assembly, upper, 1)).SetEquals(new uint[] { 2, 4 }),
+            "A restored branch can be excluded again without reopening the other cut");
         check(AssemblyGraph.GroupFor(assembly, open, 1) == 1 && AssemblyGraph.GroupFor(assembly, open, 4) == 2,
             "Scoped geometry groups upstream parts and keeps owned meshes with their parent");
     }

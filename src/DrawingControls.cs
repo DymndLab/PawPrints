@@ -33,6 +33,13 @@ public sealed partial class BlueprintMod
     static string viewPlacementIssue = "";
     static bool GhostActive => ghostTask != null || ghostCommit != null;
 
+    static bool RequestViewConfirmation()
+    {
+        if (viewDraft == null || !GhostActive || ghostPress != null)
+            return false;
+        ghostConfirmRequested = true;
+        return true;
+    }
 
     static void CancelGhost()
     {
@@ -121,7 +128,8 @@ public sealed partial class BlueprintMod
         ghostPosition = position;
         ghostCancel = new();
         var token = ghostCancel.Token;
-        ghostTask = Task.Run(() => prepare(token), token);
+        long retained = RenderMemory.Retained(sheet, basePrint);
+        ghostTask = Task.Run(() => RenderMemory.InSlot(() => prepare(token), token, retained), token);
         status = "Preparing " + name + " preview";
     }
 
@@ -133,6 +141,7 @@ public sealed partial class BlueprintMod
         if (hovered && ImGui.IsMouseClicked(ImGuiMouseButton.Right))
         {
             CancelGhost();
+            activePlaceTool = PlaceTool.None;
             status = "Placement cancelled.";
             return true;
         }
@@ -251,10 +260,9 @@ public sealed partial class BlueprintMod
                 var c = origin + new float2(source.Bounds.Center.X * factor, source.Bounds.Center.Y * factor);
                 draw.AddLine(c, origin + new float2(box.Center.X * factor, (box.Y + (box.Height - (Options.Captions ? ViewCaption.Band : 0)) / 2) * factor), 0x889DDDFF, 1);
             }
-            bool enter = viewDraft != null && annotationKeysActive && !ImGui.GetIO().WantTextInput
-                && ImGui.IsKeyPressed(ImGuiKey.Enter);
-            bool confirm = ghostConfirmRequested || enter;
-            ghostConfirmRequested = false;
+            bool confirm = ghostConfirmRequested && ghostTask == null && ghostPress == null;
+            if (confirm)
+                ghostConfirmRequested = false;
             if (valid && ghostTask == null && ghostPress == null && (confirm || hovered &&
                 (viewDraft is { Parent: null } ? ghostReleased && ghostClick : ImGui.IsMouseClicked(ImGuiMouseButton.Left))))
             {
@@ -415,6 +423,7 @@ public sealed partial class BlueprintMod
     static void BeginViewDraft(int? parent, int? cameraOverride)
     {
         requestedSettingsTab = "Place";
+        workspaceFocus.Request();
         if (document == null)
             return;
         if (sheet?.PoseSource == null)
@@ -595,7 +604,7 @@ public sealed partial class BlueprintMod
             PrintUiText.Wrapped("Click or press Enter to place the yellow preview. Primary views can be dragged and resized; Shift+scroll also resizes. Right-click cancels.");
             ImGui.BeginDisabled(ghostTask != null || ghostPixels == null || ghostLastBox == null || ghostPress != null);
             if (PrintUiStyle.YellowButton("Confirm placement (Enter)"))
-                ghostConfirmRequested = true;
+                RequestViewConfirmation();
             ImGui.EndDisabled();
             if (ImGui.Button("Cancel placement"u8))
                 CancelGhost();

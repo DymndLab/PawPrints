@@ -58,11 +58,6 @@ public sealed partial class BlueprintMod
     static unsafe FreeTextBox DrawEditableText(FreeTextBox draft, float height)
     {
         float width = Math.Max(160, ImGui.GetContentRegionAvail().X);
-        if (warningNotice != null)
-        {
-            ImGui.Dummy(new float2(width, height));
-            return draft;
-        }
         var origin = ImGui.GetCursorScreenPos();
         var size = new float2(width, height);
         float scale = Math.Min(1, width / draft.Bounds.Width);

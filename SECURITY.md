@@ -7,9 +7,10 @@ PawPrints renders locally inside the KSA process. It opens no server, uses no AI
 - Capture reads the loaded craft on the editor thread. Rendering operates on detached copies with cancellation and geometry/material budgets.
 - PNG logos are decoded only after file-size, dimensions, pixel-count, format and animation checks. Imports use a generated name in the active profile's logo library; they do not overwrite unrelated files.
 - Initials fonts are bundled, privately loaded for rendering and never installed system-wide. Their exact unmodified files and OFL licenses are recorded in `assets/fonts/source.json`.
+- Editable projects in the 0.6 preview include user-entered text, layout and vehicle reference data. Review projects before sharing them.
 - PNG exports go only to the user-selected folder. Saves use new temporary files followed by an atomic rename and do not overwrite an existing print. A missing destination produces an error instead of silently changing paths.
 - Title defaults, logo selection and the live-preview choice stay in the active profile. Approval fields reset to their defaults on each session. Mod installation files are separate from writable user data, including in Borea instances.
-- Local logs live at `<active profile>/logs/PawPrints.log`, with three rotated files and a 512 KiB limit per file. The custom log omits typed drawing text, exception messages and personal paths. KSA/loader logs or Windows crash dumps can still include machine-specific data; inspect and redact them before sharing.
+- Local logs live at `<active profile>/logs/PawPrints.log`, with five rotated copies. PawPrints rotates the current file at 512 KiB. The custom log omits typed drawing text, exception messages and personal paths. KSA/loader logs or Windows crash dumps can still include machine-specific data; inspect and redact them before sharing.
 
 ## Release checks
 

@@ -5,7 +5,7 @@ namespace Blueprint.Rendering;
 // bases as the print. Cache linework once; no raster textures or per-frame mesh work.
 static class TemplateRocket
 {
-    public static readonly (Vector2 A, Vector2 B)[][] Views = Enumerable.Range(0, 5).Select(Build).ToArray();
+    public static readonly (Vector2 A, Vector2 B)[][] Views = Enumerable.Range(0, 8).Select(Build).ToArray();
 
     static (Vector2 A, Vector2 B)[] Build(int camera)
     {

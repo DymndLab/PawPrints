@@ -12,6 +12,7 @@ Directory.CreateDirectory(output);
 var suites = new Dictionary<string, Action>
 {
     ["groups"] = () => GroupChecks.Run(Check),
+    ["archival-wear"] = () => ArchivalWearChecks.Run(Check),
     ["foundation"] = () => FoundationChecks.Run(Check),
     ["startup"] = () => StartupChecks.Run(Check, output),
     ["capture-stats"] = () => CaptureStatsChecks.Run(Check),

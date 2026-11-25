@@ -8,9 +8,10 @@ sealed record DrawingContent(PartLabel[] Labels, ExplodedDetail[] Details, Table
     ViewCaptionMark[] Captions, HeightDimension[] Dimensions, KittenReference[] Kittens,
     PartPose[] Poses, SpecBlock[] Specs, FreeTextBox[] FreeText, DrawingPlacement? Drawing, PrintOptions Options)
 {
+    public WearMark[] WearMarks { get; init; } = [];
     public DrawingContent Copy() => this with
     {
-        Labels = [.. Labels],
+        Labels = [.. Labels], WearMarks = [.. WearMarks],
         Details = [.. Details],
         Captions = [.. Captions], Dimensions = [.. Dimensions], Kittens = [.. Kittens], Poses = [.. Poses],
         Specs = [.. Specs], FreeText = [.. FreeText]
@@ -18,7 +19,7 @@ sealed record DrawingContent(PartLabel[] Labels, ExplodedDetail[] Details, Table
 
     public RenderScene ApplyTo(RenderScene scene) => scene.WithTables(Tables).WithCaptions(Captions, false)
         .WithDimensions(Dimensions).WithKittens(Kittens).WithPoses(Poses).WithSpecs(Specs)
-        .WithFreeText(FreeText).WithDrawing(Drawing).WithOptions(Options);
+        .WithFreeText(FreeText).WithWear(WearMarks).WithDrawing(Drawing).WithOptions(Options);
 }
 
 sealed record AcceptedDrawing(Sheet Sheet, Sheet? RegeneratedBase, AnnotationDocument Document, DrawingDefinition Definition);
@@ -44,7 +45,7 @@ static class DrawingAcceptance
         if (previous != null && (keep || regenerated != null))
         {
             next = previous.Fork();
-            if (regenerated != null) next.Regenerate(result.Scene, result.Labels, result.Details);
+            if (regenerated != null) next.Regenerate(result.Scene, result.Labels, result.Details, result.Refresh != null);
             else next.Rebind(result.Scene, result.Labels, result.Details, !history);
         }
         else

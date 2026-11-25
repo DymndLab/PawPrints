@@ -57,9 +57,10 @@ static class InitialsFont
 
     [DllImport("gdi32.dll")] static extern IntPtr AddFontMemResourceEx(byte[] bytes, uint size, IntPtr reserved, out uint count);
 
-    static Box Measure(string text, string face, int size)
+    static Box Measure(string text, string face, int size, bool compact)
     {
-        const int w = 2048, h = 400;
+        int w = compact ? Math.Min(2048, 160 + (text.Length + 1) * size) : 2048;
+        int h = compact ? Math.Min(400, 40 + 3 * size) : 400;
         var rgb = new byte[w * h * 3];
         Array.Fill(rgb, (byte)255);
         var c = new Canvas(rgb, w, h, System.Numerics.Vector3.Zero);
@@ -82,20 +83,53 @@ static class InitialsFont
         return new(x0 - 100, y0 - 20, x1 - x0 + 1, y1 - y0 + 1);
     }
 
-    public static void Draw(Canvas c, string text, Box box, string? style, int percent = 100, bool leftAligned = false)
+    internal const int SampleWidth = 84, SampleHeight = 34;
+
+    internal static byte[] SampleInk(string text, string face, int width = SampleWidth, int height = SampleHeight)
+    {
+        // Filter the supersampled ink to the size painted by the picker.
+        const int scale = 3, area = scale * scale;
+        int w = width * scale;
+        int h = height * scale;
+        var rgb = new byte[w * h * 3];
+        Array.Fill(rgb, (byte)255);
+        var canvas = new Canvas(rgb, w, h, System.Numerics.Vector3.Zero);
+        int padding = Math.Min(3, (Math.Min(width, height) - 1) / 2) * scale;
+        DrawFitted(canvas, text, new Box(padding, padding, w - padding * 2, h - padding * 2),
+            face, 100, leftAligned: false, compact: true);
+        NativeText.Apply(rgb, w, h, canvas.Runs);
+
+        var coverage = new byte[width * height];
+        for (int y = 0; y < height; y++)
+        for (int x = 0; x < width; x++)
+        {
+            int ink = 0;
+            for (int dy = 0; dy < scale; dy++)
+            for (int dx = 0; dx < scale; dx++)
+                ink += 255 - rgb[((y * scale + dy) * w + x * scale + dx) * 3];
+            coverage[y * width + x] = (byte)((ink + area / 2) / area);
+        }
+        return coverage;
+    }
+
+    public static void Draw(Canvas c, string text, Box box, string? style, int percent = 100, bool leftAligned = false) =>
+        DrawFitted(c, text, box, style, percent, leftAligned, compact: false);
+
+    static void DrawFitted(Canvas c, string text, Box box, string? style, int percent, bool leftAligned, bool compact)
     {
         text = AnnotationText.Clean(text, 16);
         if (string.IsNullOrWhiteSpace(text) || box.Width < 1 || box.Height < 1)
             return;
         string face = Normalize(style);
-        var reference = Measure(text, face, 100);
+        var reference = Measure(text, face, 100, compact);
         if (reference.Width == 0 || reference.Height == 0)
             return;
         const float padding = .94f;
-        int fit = Math.Clamp((int)Math.Floor(100 * Math.Min(box.Width / reference.Width, box.Height / reference.Height) * padding), 1, 160);
-        Box ink = Measure(text, face, fit);
+        int maxFit = compact ? 320 : 160;
+        int fit = Math.Clamp((int)Math.Floor(100 * Math.Min(box.Width / reference.Width, box.Height / reference.Height) * padding), 1, maxFit);
+        Box ink = Measure(text, face, fit, compact);
         while (fit > 1 && (ink.Width > box.Width || ink.Height > box.Height))
-            ink = Measure(text, face, --fit);
+            ink = Measure(text, face, --fit, compact);
 
         int size = Math.Max(1, (int)Math.Round(fit * Math.Clamp(percent, MinPercent, MaxPercent) / 100f));
         float factor = (float)size / fit;

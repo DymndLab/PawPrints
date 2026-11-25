@@ -20,16 +20,12 @@ static class DetailPartSizing
         var meshes = geometry.Capture.Meshes.Select((mesh, i) =>
         {
             var delta = MoveCenter(geometry.MovedCenters[i]) - geometry.MovedCenters[i];
-            return mesh with
-            {
-                Vertices = mesh.Vertices.Select(p => new[] { p[0] + delta.Z, p[1] + delta.X, p[2] + delta.Y }).ToArray()
-            };
+            return mesh.Translate(delta);
         }).ToArray();
         float minX = float.PositiveInfinity, minY = minX, maxX = float.NegativeInfinity, maxY = maxX;
         foreach (var mesh in meshes)
-            foreach (var vertex in mesh.Vertices)
+            foreach (var p in mesh.WorldVertices())
             {
-                var p = ExplodedGeometry.World(vertex);
                 float x = Vector3.Dot(p - center, axes.Right), y = Vector3.Dot(p - center, axes.Up);
                 minX = Math.Min(minX, x);
                 maxX = Math.Max(maxX, x);
@@ -62,7 +58,7 @@ static class DetailPartSizing
             throw new InvalidOperationException("Choose a positive part scale between 1:0.01 and 1:1000000.");
         float scale = PrintScale.Density(options) / sizing.Ratio;
         var axes = SheetLayout.Basis(view);
-        var points = geometry.Capture.Meshes.SelectMany(m => m.Vertices).Select(ExplodedGeometry.World).ToArray();
+        var points = geometry.Capture.Meshes.SelectMany(m => m.WorldVertices()).ToArray();
         var center = sizing.Center ?? (points.Aggregate(new Vector3(float.PositiveInfinity), Vector3.Min) + points.Aggregate(new Vector3(float.NegativeInfinity), Vector3.Max)) * .5f;
         float low = 0, high = float.PositiveInfinity;
         void Limit(float location, float extent, float half)
@@ -80,9 +76,9 @@ static class DetailPartSizing
         for (int i = 0; i < geometry.Capture.Meshes.Length; i++)
         {
             var partCenter = geometry.MovedCenters[i];
-            foreach (var vertex in geometry.Capture.Meshes[i].Vertices)
+            foreach (var vertex in geometry.Capture.Meshes[i].WorldVertices())
             {
-                var offset = ExplodedGeometry.World(vertex) - partCenter;
+                var offset = vertex - partCenter;
                 Limit(Vector3.Dot(partCenter - center, axes.Right), Vector3.Dot(offset, axes.Right) * scale, (width - 32) * .5f);
                 Limit(Vector3.Dot(partCenter - center, axes.Up), Vector3.Dot(offset, axes.Up) * scale, (height - 32) * .5f);
             }
@@ -95,10 +91,7 @@ static class DetailPartSizing
         var meshes = geometry.Capture.Meshes.Select((m, i) =>
         {
             var delta = MoveCenter(geometry.MovedCenters[i]) - geometry.MovedCenters[i];
-            return m with
-            {
-                Vertices = m.Vertices.Select(p => new[] { p[0] + delta.Z, p[1] + delta.X, p[2] + delta.Y }).ToArray()
-            };
+            return m.Translate(delta);
         }).ToArray();
         return (geometry with
         {

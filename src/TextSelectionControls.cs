@@ -125,7 +125,7 @@ public sealed partial class BlueprintMod
 
     static void TextEditorHistory()
     {
-        if (warningNotice != null || textDraft == null || !ImGui.IsKeyDown(ImGuiKey.LeftCtrl) && !ImGui.IsKeyDown(ImGuiKey.RightCtrl))
+        if (textDraft == null || !ImGui.IsKeyDown(ImGuiKey.LeftCtrl) && !ImGui.IsKeyDown(ImGuiKey.RightCtrl))
             return;
         if (textInputActive)
         {

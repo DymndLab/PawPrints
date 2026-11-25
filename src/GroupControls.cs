@@ -9,7 +9,6 @@ public sealed partial class BlueprintMod
     static DrawingObject? canvasTarget, listedObject;
     static int pendingPrimaryDelete = -1;
     static bool groupCenterAnchor;
-    static DateTime clippingNoticeUntil;
     static void ReportCanvasClipping(Sheet? previous, Sheet result)
     {
         if (result.Scene is not { } scene || !scene.Options.FreeLayout)
@@ -23,8 +22,8 @@ public sealed partial class BlueprintMod
                 return (!before.TryGetValue(o, out var oldBounds) || oldBounds != bounds) && CanvasBounds.Clipped(bounds, scene.Options);
             }))
             {
-                clippingNoticeUntil = DateTime.UtcNow.AddSeconds(5);
                 PrintDiagnostics.Record("layout.clipped");
+                AddActivity("layout.clipped", "Part of the drawing is outside the image. Use Objects to reveal it.", notify: true);
             }
         }
         catch (Exception)

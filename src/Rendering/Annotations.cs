@@ -403,7 +403,7 @@ sealed class AnnotationDocument
     readonly List<DrawingContent> undo = [], redo = [];
 
 
-    public DrawingContent Snapshot() => new DrawingContent(Labels, Details, Tables, Scene.Captions, Scene.Dimensions, Scene.Kittens, Scene.Poses, Scene.Specs, Scene.FreeText, Scene.Drawing, Scene.Options).Copy();
+    public DrawingContent Snapshot() => new DrawingContent(Labels, Details, Tables, Scene.Captions, Scene.Dimensions, Scene.Kittens, Scene.Poses, Scene.Specs, Scene.FreeText, Scene.Drawing, Scene.Options) { WearMarks = Scene.WearMarks }.Copy();
 
     public AnnotationDocument Fork() => new(this);
 
@@ -448,7 +448,7 @@ sealed class AnnotationDocument
     public void Rebind(RenderScene scene, PartLabel[] labels, ExplodedDetail[] details, bool remember = true)
     {
         labels = FlagnoteNumbers.Normalize(labels, scene.Options.FlagTable);
-        if (remember && (!Details.SequenceEqual(details) || !Labels.SequenceEqual(labels) || Tables != scene.Tables || !Scene.Captions.SequenceEqual(scene.Captions) || !Scene.Dimensions.SequenceEqual(scene.Dimensions) || !Scene.Kittens.SequenceEqual(scene.Kittens) || !Scene.Poses.SequenceEqual(scene.Poses) || !Scene.Specs.SequenceEqual(scene.Specs) || !Scene.FreeText.SequenceEqual(scene.FreeText) || Scene.Drawing != scene.Drawing || Scene.Options != scene.Options))
+        if (remember && (!Details.SequenceEqual(details) || !Labels.SequenceEqual(labels) || Tables != scene.Tables || !Scene.Captions.SequenceEqual(scene.Captions) || !Scene.Dimensions.SequenceEqual(scene.Dimensions) || !Scene.Kittens.SequenceEqual(scene.Kittens) || !Scene.Poses.SequenceEqual(scene.Poses) || !Scene.Specs.SequenceEqual(scene.Specs) || !Scene.FreeText.SequenceEqual(scene.FreeText) || !Scene.WearMarks.SequenceEqual(scene.WearMarks) || Scene.Drawing != scene.Drawing || Scene.Options != scene.Options))
             Remember();
         Scene = scene;
         Tables = scene.Tables;
@@ -461,11 +461,11 @@ sealed class AnnotationDocument
     }
 
 
-    public void Regenerate(RenderScene scene, PartLabel[] labels, ExplodedDetail[] details)
+    public void Regenerate(RenderScene scene, PartLabel[] labels, ExplodedDetail[] details, bool sourceChanged = false)
     {
         bool paperChange = Scene.Options.OutputPage != scene.Options.OutputPage;
         Rebind(scene, labels, details);
-        if (!paperChange)
+        if (sourceChanged || !paperChange)
         {
             undo.Clear();
             redo.Clear();
@@ -749,10 +749,15 @@ static class AnnotationPainting
         FreeTextPainting.Paint(canvas, scene.FreeText);
         NativeText.Apply(canvas.Pixels, scene.Width, scene.Height, canvas.Runs);
         token.ThrowIfCancellationRequested();
+        Vector2[] fields = scene.BaseLettering;
+        if (source.Options.Archive && source.Options.WearLevel > 0 && (fields.Length < 4 || !source.Options.TitleBlockVisible))
+            fields = WearPlacement.Lettering(canvas.Runs, source.Options.Page).Concat(fields).Distinct().ToArray();
+        var wear = WearPlacement.Resolve(source.Options, source.Title, fields, scene.WearMarks);
+        WearPainting.Apply(canvas.Pixels, scene.Width, scene.Height, source.Options.Theme, wear, token);
         return source.WithPixels(canvas.Pixels) with
         {
             Labels = labels,
-            ObjectHits = canvas.HitShapes
+            AppliedWear = wear, ObjectHits = canvas.HitShapes
         };
     }
 

@@ -5,8 +5,13 @@ sealed record TextSpan(string Text, bool Outline = false, float Scale = 1, int S
 sealed record TextRun(string Text, int X, int Y, int Height, Vector3 Color, bool Bold = false, bool Italic = false, bool Outline = false, string? Face = null, TextSpan[]? Spans = null, bool Underline = false);
 
 sealed record PrintOptions(int View = 0, int Theme = 0, bool Grid = true, bool Archive = false, int Emphasis = 10, int Layout = 0, int VisibleViews = 15, bool Captions = true,
-    bool PartsTable = false, bool FlagTable = false, int DrawingSize = 0, int Orientation = 0, int Aspect = 0, int Brand = 0, TitleBlockData? TitleBlock = null, int Arrangement = 0, FixedViewLayout? Boxes = null, DrawingPlacement? Drawing = null, bool Zones = true, int CustomWidth = 2560, int CustomHeight = 1440, int WearLevel = 3, DrawingOutput OutputTarget = DrawingOutput.Image, bool FreeLayout = false, bool TitleBlockVisible = true)
+    bool PartsTable = false, bool FlagTable = false, int DrawingSize = 0, int Orientation = 0, int Aspect = 0, int Brand = 0, TitleBlockData? TitleBlock = null, int Arrangement = 0, FixedViewLayout? Boxes = null, DrawingPlacement? Drawing = null, bool Zones = true, int CustomWidth = 2560, int CustomHeight = 1440, int WearLevel = 3, DrawingOutput OutputTarget = DrawingOutput.Image, bool FreeLayout = false, bool TitleBlockVisible = true, uint WearSeed = 0, int? ProjectionAngle = null)
 {
+    // Earlier editable drawings recorded the convention only on projected children.
+    internal int DrawingAngle => ProjectionAngle ?? Drawing?.Views.FirstOrDefault(v => v.Parent != null && (v.RollDirection >= 0 || v.Alignment != 0))?.ProjectionAngle ?? 3;
+
+    // Set only on the detached final render. Editable projects store Normal options.
+    internal bool Detailed { get; init; }
     public PageSize Page => Orientation == 3 ? PageSize.Workspace(CustomWidth, CustomHeight) : PageSize.From(Orientation, Aspect);
     public PageSize OutputPage => Orientation == 3 ? PageSize.Custom(CustomWidth, CustomHeight) : Page;
 }
@@ -21,6 +26,7 @@ sealed record Sheet(string Title, PrintOptions Options, byte[] Rgb, byte[] Previ
         get; init;
     }
     public IReadOnlyDictionary<DrawingObject, CanvasHitShape>? ObjectHits { get; init; }
+    public WearMark[] AppliedWear { get; init; } = [];
     public ViewInk[]? MainInk
     {
         get; init;
@@ -36,6 +42,7 @@ sealed record Sheet(string Title, PrintOptions Options, byte[] Rgb, byte[] Previ
     {
         get; init;
     }
+    public CraftRefreshReview? Refresh { get; init; }
     public Sheet? RegeneratedBase
     {
         get; init;
@@ -85,30 +92,20 @@ sealed partial class BlueprintRenderer
                     var t = Triangles[id];
                     var m = capture.Meshes[t.Mesh];
                     line = structuralLines[q];
-                    float nd = 0, ld = 0;
-                    foreach (int offset in neighbors)
+                    if (!m.FeatureInk)
                     {
-                        int j = q + offset;
-                        if (face[j] < 0)
+                        foreach (int offset in neighbors)
                         {
-                            line = 1;
-                            continue;
+                            int j = q + offset;
+                            if (face[j] < 0)
+                                line = 1;
+                            else if (t.Mesh != Triangles[face[j]].Mesh)
+                                line = Math.Max(line, .72f);
                         }
-                        var other = Triangles[face[j]];
-                        if (t.Mesh != other.Mesh)
-                        {
-                            line = Math.Max(line, .72f);
-                            continue;
-                        }
-                        if (m.Surface != "structure")
-                        {
-                            nd = Math.Max(nd, Vector3.Distance(surfaceNormal[q], surfaceNormal[j]));
-                            ld = Math.Max(ld, Math.Abs(luma[q] - luma[j]));
-                        }
+                        if (m.Surface == "solar")
+                            line = Math.Max(line, solarInk?[q] ?? 0);
+                        line = Math.Max(line, HatchInk(q, x, y, 5));
                     }
-                    if (m.Surface == "solar")
-                        line = Math.Max(line, solarInk?[q] ?? 0);
-                    line = Math.Max(line, HatchInk(q, x, y, 5));
                 }
                 float neighbor = Math.Max(Math.Max(structuralLines[q - 1], structuralLines[q + 1]), Math.Max(structuralLines[q - W], structuralLines[q + W]));
                 put(x, y, Math.Max(line, neighbor * .3f));
@@ -121,7 +118,7 @@ sealed partial class BlueprintRenderer
     {
         progress("Drawing view");
         Rasterize();
-        PrepareStructure(22);
+        PrepareStructure(capture.Detailed ? 12 : 22);
         PreservePanelCorners();
         PrepareHatching();
         var ink = new byte[W * H];
@@ -132,6 +129,8 @@ sealed partial class BlueprintRenderer
         return new(W, H, ink, owners);
     }
 
+    internal Vector2[] Lettering { get; private set; } = [];
+
     internal int[] MeshOwners() => face.Select(id => id < 0 ? -1 : Triangles[id].Mesh).ToArray();
 
     public Sheet Render(PrintOptions options, string[] warnings, Action<string> progress)
@@ -140,7 +139,7 @@ sealed partial class BlueprintRenderer
         Rasterize();
         cancellation.ThrowIfCancellationRequested();
         progress("Tracing panel edges");
-        PrepareStructure(22);
+        PrepareStructure(capture.Detailed ? 12 : 22);
         PreservePanelCorners();
         cancellation.ThrowIfCancellationRequested();
         progress("Drawing crosshatching");
@@ -157,6 +156,7 @@ sealed partial class BlueprintRenderer
         var canvas = new Canvas(W, H, paper, ink, options);
         DrawCraftInk(canvas.Ink);
         PageLayout.Decorate(canvas, title, options);
+        Lettering = WearPlacement.Lettering(canvas.Runs, options.Page);
         NativeText.Apply(canvas.Pixels, W, H, canvas.Runs);
         var preview = Sheet.MakePreview(canvas.Pixels);
         cancellation.ThrowIfCancellationRequested();
@@ -293,21 +293,14 @@ static class PrintFiles
 
     public static string Save(Sheet sheet, string folder, bool requireExistingFolder = false)
     {
+        if (sheet.Details.Any(d => d.SourceIssue != DetailSourceIssue.None))
+            throw new InvalidOperationException("Resolve the affected exploded views before exporting.");
         if (requireExistingFolder)
             Blueprint.Storage.ExportPreferences.RequireExistingFolder(folder);
         else
             Directory.CreateDirectory(folder);
-        string stem = $"PawPrints-{SafeStem(sheet.Title)}-{DateTime.UtcNow:yyyyMMdd-HHmmss}-{Guid.NewGuid():N}";
-        string target = Path.Combine(folder, stem + ".png"), temp = Path.Combine(folder, stem + ".partial");
-        try
-        {
-            var output = sheet.Options.OutputPage;
-            var rgb = DesktopExport.Resize(CompanyTitleBlock.StampExportDate(sheet, CompanyTitleBlock.LocalDate()), sheet.Options.Page, output);
-            int density = (int)Math.Round(PrintScale.Density(sheet.Options) * (double)output.Width / sheet.PixelWidth);
-            Png.Write(temp, output.Width, output.Height, rgb, density);
-            File.Move(temp, target, false);
-            return target;
-        }
-        finally { if (File.Exists(temp)) File.Delete(temp); }
+        var png = FinalPng.Prepare(sheet, null, false, CompanyTitleBlock.LocalDate(), RenderMemory.Retained(sheet), default);
+        using var pending = png.Stage(folder, sheet.Title, default);
+        return pending.Publish();
     }
 }

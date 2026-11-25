@@ -37,6 +37,7 @@ foreach (var (patch, type, name, parameters) in new[]
     ("VehicleSwitchPatch", "KSA.Program", "DispatchKeyEvent", new[] { "RenderCore.Input.GlfwKeyEvent&" }),
     ("MenuPatch", "KSA.Program", "DrawMenuBar", new[] { "KSA.IGameViewport", "System.Int32" }),
     ("EditorPatch", "KSA.VehicleEditor", "OnDrawUi", new[] { "KSA.IGameViewport" }),
+    ("EditorToolPromptPatch", "KSA.VehicleEditor", "OnDrawUi", new[] { "KSA.IGameViewport" }),
     ("EditorResourcesPatch", "KSA.ResourcesPanel", "DrawEditor", new[] { "KSA.PartTree", "Brutal.Numerics.float2" }),
     ("EditorStagingPatch", "KSA.VehicleEditingSpace", "DrawStageWindow", new[] { "KSA.IViewport" })
 })
@@ -189,6 +190,25 @@ for (int i = 0; i < after.Length; i++)
         throw new InvalidDataException("Unexpected menu rewrite at instruction " + i);
 }
 Require(after.Count(i => i.Calls(replacement)) == callCount, "Production menu transpiler rewrites only matching calls");
+var editorUi = ReadIl(targets["EditorToolPromptPatch"]);
+int prompt = editorUi.FindIndex(i => i.opcode == OpCodes.Ldstr && Equals(i.operand, "Select a part to "));
+int foreground = editorUi.FindIndex(prompt + 1, i => i.operand is MethodInfo m &&
+    m.DeclaringType == imgui && m.Name == "GetForegroundDrawList");
+int drawPrompt = editorUi.FindIndex(foreground + 1, i => i.operand is MethodInfo m &&
+    m.DeclaringType?.FullName == "Brutal.ImGuiApi.ImDrawListExtensions" && m.Name == "AddText");
+Require(prompt >= 0 && foreground > prompt && drawPrompt > foreground,
+    "The native transform hint is drawn in the foreground after building its text");
+var nativePrompt = (MethodInfo)editorUi[drawPrompt].operand;
+var promptPatch = modType.GetNestedType("EditorToolPromptPatch", BindingFlags.NonPublic)!;
+var promptReplacement = promptPatch.GetMethod("DrawPrompt", flags)!;
+Require(promptReplacement.IsStatic && promptReplacement.ReturnType == nativePrompt.ReturnType &&
+    promptReplacement.GetParameters().Select(p => p.ParameterType).SequenceEqual(nativePrompt.GetParameters().Select(p => p.ParameterType)),
+    "The transform hint wrapper matches the native draw signature");
+var editorBefore = editorUi.Select(i => (i.opcode, i.operand)).ToArray();
+var editorAfter = ((IEnumerable<CodeInstruction>)promptPatch.GetMethod("Transpiler", flags)!.Invoke(null, [editorUi])!).ToArray();
+Require(editorAfter.Length == editorBefore.Length && editorAfter.Select((i, index) =>
+    i.opcode == editorBefore[index].opcode && Equals(i.operand, index == drawPrompt ? promptReplacement : editorBefore[index].operand)).All(v => v),
+    "The tool prompt hook replaces only the native foreground text draw");
 PrintRecoveryChecks.Run(modType, mod, Require);
 SelectionChecks.Run(modType, Require);
 FuelHoseCaptureChecks.Run(host, mod, Require);

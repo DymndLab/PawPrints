@@ -184,12 +184,14 @@ public sealed partial class BlueprintMod
                 ImGui.CloseCurrentPopup();
             }
         }
-        finally { DrawWarningDialog(true); ImGui.EndPopup(); }
+        finally { ImGui.EndPopup(); }
     }
 
 
     static void CancelTextPlacement()
     {
+        if (activePlaceTool == PlaceTool.Text)
+            activePlaceTool = PlaceTool.None;
         placingText = false;
         textBoxStart = null;
         textPlacementSpace = null;

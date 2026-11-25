@@ -9,6 +9,8 @@ PawPrints has one runtime assembly, `PawPrints.dll`, installed under `mods/PawPr
 3. `Rendering/` projects that data, plans placement and scale, extracts linework and composes page backgrounds, drawings, annotations and the title block.
 4. The editor uploads the rendered preview, handles interaction and saves PNGs. Print-only poses and explosions do not alter live craft transforms.
 
+Editable drawings use `DrawingProjectControls.cs` and the bounded project codec and store. Across restarts the assembly fingerprint and referenced part addresses must resolve before the loaded document replaces the current one. Final PNG preview and publication use `FinalExportControls.cs` and `Rendering/FinalPng.cs`. The publish check covers the accepted sheet, revision, source lifetime, output dimensions, quality and date.
+
 ## Editor code
 
 `BlueprintMod` is a partial class. Files named `*Controls.cs` and `*Editor.cs` divide the interface by feature, but share its editor state. Render jobs, selection and document history are coordinated through that shared state.
@@ -20,7 +22,7 @@ PawPrints has one runtime assembly, `PawPrints.dll`, installed under `mods/PawPr
 | Annotations and tables | `PlacementControls.cs`, `PreferencesControls.cs`, `AnnotationEditor.cs`, `AnnotationActions.cs`, `TableEditor.cs` |
 | Exploded views and print-only movement | `ExplodedEditor.cs`, `PoseControls.cs` |
 | Free text and selection formatting | `FreeTextControls.cs`, `TextSelectionControls.cs`, `TextPreviewControls.cs` |
-| Metadata, logos and warnings | `TitleBlockControls.cs`, `LogoPicker.cs`, `WarningControls.cs` |
+| Metadata, logos and warnings | `TitleBlockControls.cs`, `LogoPicker.cs`, `ActivityControls.cs` |
 
 The renderer's document/history operations and the editor's transient gestures have different lifetimes. Keep pending placement, accepted composition and asynchronous render results separate. A failed generation must retain the last accepted print.
 

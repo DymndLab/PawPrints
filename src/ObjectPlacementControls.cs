@@ -107,9 +107,9 @@ public sealed partial class BlueprintMod
     {
         if (sheet?.Scene == null || document == null)
             return;
-        if (document.Scene.Views.All(v => v.Id >= 1000))
+        if (kitten.SourceView == null && document.Scene.Views.All(v => v.Id >= 1000))
         {
-            status = "Place the primary view first to establish the reference scale.";
+            ReportFailure("Place the primary view first to establish the reference scale.");
             return;
         }
         var scene = document.Scene;
@@ -122,7 +122,12 @@ public sealed partial class BlueprintMod
             var posed = KittenReferences.PlacementScene(scene, kitten, model);
             var b = KittenReferences.Bounds(posed, posed.Kittens[0]);
             return PlacementPreviews.Panel(posed, b, c => KittenReferences.Paint(c, posed, token));
-        }, b => { document!.Rebind(document.Scene.WithKittens(document.Scene.Kittens, model), document.Labels, document.Details, false); QueueKittens([.. document.Scene.Kittens, kitten with { X = b.X, Y = b.Y }]); });
+        }, b =>
+        {
+            document!.Rebind(document.Scene.WithKittens(document.Scene.Kittens, model), document.Labels, document.Details, false);
+            QueueKittens([.. document.Scene.Kittens, kitten with { X = b.X, Y = b.Y }]);
+            activePlaceTool = PlaceTool.None;
+        });
     }
 
 

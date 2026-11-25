@@ -1,13 +1,11 @@
 # Installation
 
-PawPrints **0.5.39** requires **Windows x64**, **KSA 2026.11.16.5901** and **StarMap 0.5.4**. It refuses unsupported game builds and is available in Borea's Stable channel.
-
-PawPrints remains under active development. Native drawing, performance and pose scenarios and focused editor checks have passed on 5901.
+PawPrints **0.6.0** requires **Windows x64**, **KSA 2026.11.25.5949** and **StarMap 0.5.4**. In Borea, choose PawPrints in the Stable channel for an instance with those versions. Native Linux testing is pending.
 
 ## Install with StarMap
 
 1. Close KSA.
-2. Download `PawPrints-0.5.39.zip` from [Releases](https://github.com/DymndLab/PawPrints/releases). Use the mod ZIP; GitHub's source archives contain development files.
+2. Download `PawPrints-0.6.0.zip` from [Releases](https://github.com/DymndLab/PawPrints/releases). Use the mod ZIP; GitHub's source archives contain development files.
 3. Extract its `PawPrints` folder into your StarMap profile's `mods` directory. Keep the packaged libraries and licenses together.
 4. Enable `PawPrints` in that profile's `manifest.toml`, updating an existing entry if present:
 
@@ -28,13 +26,24 @@ On first opening, choose where to save PNGs. PawPrints remembers the destination
 
 Company logos must be PNG files; transparency and image proportions are preserved. Single black or white logos follow the paper theme. Coloured logos retain their colours.
 
-Company logos and title defaults are stored under `<active profile>/PawPrints/Logos`. Your drawn-by name, initials, company and selected logo carry across sessions in that profile. Approver fields start each session as `Dymnd H. K.` and `DHK` and can be edited for that session.
+Company logos and title defaults are stored under `<active profile>/PawPrints/Logos`. Your drawn-by name, initials, company and selected logo carry across sessions in that profile. You can edit the approver name and initials for the current session.
 
 **Live preview updates** is off by default. When enabled in Preferences, menu changes update the drawing after a short pause or slider release. Otherwise, select **Generate PawPrint** to apply them. Placing and editing objects updates the drawing immediately. Generate PawPrint also recaptures the craft from the Vehicle Editor.
 
-## Preview limitations
+## Arrange a new drawing
 
-- Exports are PNG images. Save PNG before loading another craft, leaving the Vehicle Editor or ending the game. Editable sheets do not persist across those transitions. **Back to editor** keeps the sheet while the same craft stays open.
+On **New drawing**, set the sheet, choose **Paper & Wear**, and fill in **Drafter Details**. Type your initials and click a handwriting sample to choose its font. Click **Blank drawing** to open the editor, **Arrange views** for the grid, or **From template** for the gallery. **Open Drawing** and **Return to Vehicle Editor** are beside the New Drawing heading. Click a circled **P** to choose the primary projection. Dashed guides connect views that share scale. Drag the primary to move its linked views together. Drag a secondary along its projection axis to keep it linked, or confirm an off-axis drop to give it independent scale. You can also click a view and then a destination cell. Open **Paper & wear** beside the grid to preview appearance, then choose **Start editing**.
+
+**Save as Defaults** remembers the reusable settings for the active profile. Use **Export Preferences** or **Import Preferences** on New drawing to move a `.pawprofile` file between instances. It includes the default logo. Export can also include saved layouts and extra logo images. Import reviews the destination before applying and keeps existing library files.
+
+## Editable projects and 4K export
+
+Use **Save Drawing** to keep a `.pawprint` in the active profile's `PawPrints/Drawings` folder. To resume after a restart, load the matching vehicle and choose **Open Drawing**. A changed or ambiguous assembly can prevent reopening. In an open drawing, refresh after a craft edit and resolve missing exploded roots before exporting.
+
+Choose **Save PNG** to export the current sheet. At 3840 x 2160 or 2160 x 3840, **Preferences > Detailed export** enables finer final linework. The preference starts off and is remembered across size changes. **Preview final PNG** shows the export pixels and encoded size. Set a PNG size target to review a smaller copy when the original exceeds it. The original remains available at its selected dimensions.
+
+## Limitations
+
 - Large craft and high-resolution drawings can use substantial memory.
 - Third-party parts and display scaling configurations may need additional compatibility testing.
 

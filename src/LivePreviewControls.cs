@@ -17,12 +17,12 @@ public sealed partial class BlueprintMod
         return PrintStyles.Apply(current, (LeaderLine)defaultLine, (LeaderTip)defaultTip);
     }
 
-    static void RefreshTitleVisibility()
+    static void RefreshTitleBlock()
     {
         if (sheet == null || document == null) return;
         var current = sheet with { Scene = document.Scene, Labels = document.Labels, Details = document.Details };
         var main = sheet.PoseMain ?? basePrint ?? sheet;
-        var desired = sheet.Options with { TitleBlockVisible = titleBlockVisible };
+        var desired = sheet.Options with { TitleBlockVisible = titleBlockVisible, ProjectionAngle = CurrentProjectionAngle };
         renderKeepsDocument = true;
         renderAdoptsHistory = false;
         renderAppliesSettings = true;
@@ -65,6 +65,7 @@ public sealed partial class BlueprintMod
 
     static void AdoptPrintSettings(PrintOptions o)
     {
+        projectionStyle = o.DrawingAngle == 1 ? 1 : 0;
         titleBlockVisible = o.TitleBlockVisible;
         outputTarget = o.OutputTarget == DrawingOutput.DesktopBackground ? 0 : 1;
         view = o.View; theme = o.Theme; grid = o.Grid; archivalWear = o.Archive ? o.WearLevel : 0;
@@ -74,6 +75,12 @@ public sealed partial class BlueprintMod
         pageOrientation = o.Orientation; pageAspect = o.Aspect; brand = o.Brand; arrangement = o.Arrangement;
         boxLayout = o.Boxes ?? boxLayout; drawingPlacement = o.Drawing; zones = o.Zones;
         customWidth = customWidthEdit = o.CustomWidth; customHeight = customHeightEdit = o.CustomHeight;
+        if (o.OutputTarget == DrawingOutput.DesktopBackground && o.Orientation == 3)
+        {
+            int preset = Array.FindIndex(DesktopSizes, size => size.W == o.CustomWidth && size.H == o.CustomHeight);
+            desktopPreset = preset >= 0 ? preset : DesktopSizes.Length;
+            if (preset < 0) lastCustomDesktop = new(o.CustomWidth, o.CustomHeight);
+        }
         if (o.TitleBlock is { } t)
         {
             companyText.SetValue(t.Company.AsSpan()); creatorText.SetValue(t.Creator.AsSpan());

@@ -18,7 +18,7 @@ public sealed partial class BlueprintMod
     static RenderScene? flagnoteScene;
     static string flagnoteError = "";
     static bool CanEditAnnotations => CanEditAnnotationState(false);
-    static bool CanEditAnnotationState(bool allowArmedText) => !choosingProjectionSource && groupDrag == null && pendingPrimaryDelete < 0 && !newDrawingDialog && (!placingText || allowArmedText && textBoxStart == null) && !exportSetupOpen && warningNotice == null && !viewSizeDialog && textDraft == null && dragText == null && !GhostActive && viewDraft == null && dragView == null && specDraft == null && dragSpec == null && !poseDialog && !busy && document != null && sheet?.Options == Options && dragKitten == null && dragHeight == null && dragLabel == null && pendingLabel == null && flagnotePlacement == null && !panning && !DetailGesture;
+    static bool CanEditAnnotationState(bool allowArmedText) => !choosingProjectionSource && referenceViewPick == null && groupDrag == null && pendingPrimaryDelete < 0 && !newDrawingDialog && (!placingText || allowArmedText && textBoxStart == null) && !exportSetupOpen && !viewSizeDialog && textDraft == null && dragText == null && !GhostActive && viewDraft == null && dragView == null && specDraft == null && dragSpec == null && !poseDialog && !busy && document != null && sheet?.Options == Options && dragKitten == null && dragHeight == null && dragLabel == null && pendingLabel == null && flagnotePlacement == null && !panning && !DetailGesture;
 
 
     static void DeleteAnnotation(int id)
@@ -66,6 +66,11 @@ public sealed partial class BlueprintMod
         }
         if (!open || !annotationKeysActive || !ReferenceEquals(sourceEditor, KSA.Program.Editor) || KSA.Program.Editor == null || KSA.Program.ConsoleWindow.IsOpen || NativeDialogOpen || Popup.AnyOpen)
             return false;
+        if (key is (GlfwKey.Enter or GlfwKey.KpEnter) && action == GlfwKeyAction.Press && mods == 0 && viewDraft != null
+            && !ImGui.GetIO().WantTextInput && !partMenuOpen
+            && !ImGui.IsPopupOpen(""u8, ImGuiPopupFlags.AnyPopupId | ImGuiPopupFlags.AnyPopupLevel)
+            && RequestViewConfirmation())
+            return true;
         if (key == GlfwKey.Space && canvasHovered && !partMenuOpen)
         {
             spaceHeld = action != GlfwKeyAction.Release;
@@ -170,10 +175,8 @@ public sealed partial class BlueprintMod
             ReportFailure(reason);
             return false;
         }
-        CancelPlacement();
+        FinishLabelPlacement();
         SelectLabel(label.Id);
-        placeKind = 1;
-        pickingPartTool = true;
         PrintDiagnostics.State("flagnote.phase", "commit");
         Repaint();
         return true;

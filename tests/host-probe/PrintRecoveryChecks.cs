@@ -22,6 +22,18 @@ static class PrintRecoveryChecks
         try
         {
             var accepted = Property("Options");
+            var square = Copy(accepted, ("Orientation", 3), ("CustomWidth", 2048), ("CustomHeight", 2048),
+                ("OutputTarget", Enum.Parse(Type("DrawingOutput"), "Image")));
+            object Size(int width, int height) => Activator.CreateInstance(Type("PageSize"), [width, height])!;
+            Call("AdoptPrintSettings", square);
+            check(Property("CurrentOutputSize").Equals(Size(2048, 2048)),
+                "Shared output controls read the accepted drawing's square image dimensions");
+            Set("desktopPreset", 1);
+            Call("ChangeOutputTarget", 0);
+            check(Property("CurrentOutputSize").Equals(Size(2560, 1440)), "Switching to Desktop Background applies its own preset");
+            Call("ChangeOutputTarget", 1);
+            check(Property("CurrentOutputSize").Equals(Size(2048, 2048)), "Returning to Image restores the previously chosen square size");
+            Call("AdoptPrintSettings", accepted);
             var scene = Activator.CreateInstance(Type("RenderScene"), new object?[]
                 { Array.Empty<byte>(), Array.Empty<int>(), Empty("LabelPart"), Empty("ViewRegion"), null, accepted, null })!;
             var sheet = Activator.CreateInstance(Type("Sheet"), new object[]
@@ -30,6 +42,30 @@ static class PrintRecoveryChecks
             var doc = Activator.CreateInstance(Type("AnnotationDocument"), new object?[] { scene, null })!;
             Set("sheet", sheet);
             Set("document", doc);
+            // Open adopts the project's output. Export quality belongs to the profile.
+            Set("detailedExport", true);
+            foreach (var size in new[] { (3840, 2160, true), (2048, 2048, false), (2160, 3840, true) })
+            {
+                var output = Copy(accepted, ("Orientation", 3), ("CustomWidth", size.Item1), ("CustomHeight", size.Item2));
+                Call("AdoptPrintSettings", output);
+                var reopened = Copy(sheet, ("Options", output));
+                Set("sheet", reopened);
+                var key = Property("CurrentExportKey");
+                check((bool)key.GetType().GetProperty("Detailed")!.GetValue(key)! == size.Item3 &&
+                    (bool)Get("detailedExport")!, $"Opening {size.Item1} x {size.Item2} applies the remembered 4K preference");
+            }
+            Set("detailedExport", false);
+            Set("sheet", sheet);
+            Call("AdoptPrintSettings", accepted);
+            Set("exportSource", sheet);
+            Set("exportKey", Property("CurrentExportKey"));
+            check((bool)Property("ExportMatches"), "Final PNG key matches the accepted drawing");
+            long epoch = (long)Get("sourceEpoch")!;
+            Set("sourceEpoch", epoch + 1);
+            check(!(bool)Property("ExportMatches"), "A source revision change invalidates already encoded final pixels");
+            Set("sourceEpoch", epoch);
+            Set("exportKey", null);
+            Set("exportSource", null);
             var setup = modType.GetField("setupStage", flags)!.FieldType;
             Set("setupStage", Enum.Parse(setup, "Editing"));
             Call("RequestNewDrawing");
@@ -49,17 +85,18 @@ static class PrintRecoveryChecks
             Call("AdoptPrintSettings", changed);
             Set("printStyleDirty", true);
             Set("templatesOpen", true);
-            Set("warningNotice", "Preview failed: Cannot keep label 'removed part'.");
             check(!(bool)Property("CanEditAnnotations") && !(bool)Property("PrintIsCurrent"),
                 "Failed regeneration fixture reproduces disabled editing and PNG save");
             Call("ReportFailure", "Preview failed: fixture");
-            check((string?)Get("warningNotice") == "Preview failed: fixture", "Automatic failure recovery retains the error explanation");
-            Set("warningNotice", null); // Dismiss the warning, as OK does in the UI.
+            var notice = Get("activeNotice")!;
+            check((string?)notice.GetType().GetProperty("Message")!.GetValue(notice) == "Preview failed: fixture" &&
+                (string?)notice.GetType().GetProperty("Code")!.GetValue(notice) == "render.failed",
+                "Automatic failure recovery retains a structured Activity notice");
             check((bool)Property("CanEditAnnotations") && (bool)Property("PrintIsCurrent"),
-                "Reporting generation failure automatically restores annotation editing and PNG save without capturing the changed craft");
-            check(Property("Options").Equals(accepted) && Get("warningNotice") == null
+                "Reporting generation failure automatically restores annotation editing and PNG save while the notice is active");
+            check(Property("Options").Equals(accepted)
                 && !(bool)Get("templatesOpen")! && Get("beforeDrawing") == null && !(bool)Get("printStyleDirty")!,
-                "Recovery restores accepted page, title, scale and style; exits templates after warning dismissal");
+                "Recovery restores accepted page, title, scale and style and exits templates");
             check(ReferenceEquals(Get("sheet"), sheet) && ReferenceEquals(Get("document"), doc)
                 && Get("renderTask") == null,
                 "Recovery retains the existing sheet and document without a render or GPU call");
@@ -69,6 +106,39 @@ static class PrintRecoveryChecks
             Set("newDrawingDialog", false);
             check((bool)Property("CanEditAnnotations") && ReferenceEquals(Get("document"), doc),
                 "Canceling fresh-drawing confirmation leaves the retained document editable");
+
+            var detailType = Type("ExplodedDetail");
+            var ctor = detailType.GetConstructors().Single();
+            var args = ctor.GetParameters().Select(p => p.DefaultValue).ToArray();
+            args[0] = 1;
+            args[1] = 17u;
+            args[2] = Activator.CreateInstance(Type("Box"), [100f, 120f, 300f, 420f]);
+            args[3] = "Coupler";
+            var detail = ctor.Invoke(args);
+            var details = Array.CreateInstance(detailType, 1);
+            details.SetValue(detail, 0);
+            doc.GetType().GetMethod("Rebind")!.Invoke(doc, [scene, Empty("PartLabel"), details, false]);
+            Call("SelectDetail", 1);
+            var listed = Get("listedObject")!;
+            check((int)listed.GetType().GetProperty("Id")!.GetValue(listed)! == 1001,
+                "Accepting a new detail selects its canvas object for immediate resize");
+            Call("SelectDetail", -1);
+
+            var stale = detailType.GetMethod("<Clone>$")!.Invoke(detail, null)!;
+            detailType.GetProperty("SourceIssue")!.SetValue(stale, Enum.Parse(Type("DetailSourceIssue"), "MissingRoot"));
+            var staleDetails = Array.CreateInstance(detailType, 1);
+            staleDetails.SetValue(stale, 0);
+            var refreshed = Type("Sheet").GetMethod("<Clone>$")!.Invoke(sheet, null)!;
+            Type("Sheet").GetProperty("Details")!.SetValue(sheet, details);
+            Type("Sheet").GetProperty("Details")!.SetValue(refreshed, staleDetails);
+            Set("sheet", refreshed);
+            var review = Activator.CreateInstance(Type("CraftRefreshReview"), [1, 0, 0]);
+            var queue = (System.Collections.IEnumerable)Get("missingRoots")!;
+            Call("AcceptCraftRefresh", sheet, review);
+            check(queue.Cast<int>().SequenceEqual(new[] { 1 }), "Accepting a craft edit queues the missing-root dialog without pressing Delete");
+            Call("AcceptCraftRefresh", refreshed, review);
+            check(queue.Cast<int>().SequenceEqual(new[] { 1 }), "The same already-unresolved detail does not queue a second dialog");
+            queue.GetType().GetMethod("Clear")!.Invoke(queue, null);
             Call("AdoptPrintSettings", changed);
             var taskType = modType.GetField("renderTask", flags)!.FieldType;
             var completion = Activator.CreateInstance(typeof(TaskCompletionSource<>).MakeGenericType(taskType.GenericTypeArguments))!;

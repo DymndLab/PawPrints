@@ -87,8 +87,8 @@ static class CraftIdentityChecks
         // game startup, asset loading, profile writes or native ID counter edits.
         var single = Part(99, "fixture.single");
         var serialize = partType.GetMethod("GetReferenceWithChildren", flags, null,
-            [typeof(uint).MakeByRefType(), reference, typeof(bool)], null)!;
-        object?[] firstArgs = [1u, null, false], secondArgs = [500u, null, false];
+            [typeof(uint).MakeByRefType()], null)!;
+        object?[] firstArgs = [1u], secondArgs = [500u];
         var first = serialize.Invoke(single, firstArgs)!;
         var second = serialize.Invoke(single, secondArgs)!;
         check((uint)reference.GetField("LocalInstanceId")!.GetValue(first)! == 1

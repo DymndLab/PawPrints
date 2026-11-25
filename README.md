@@ -8,21 +8,21 @@ Part poses affect the drawing without changing your craft. Rendering runs locall
 
 ## Get started
 
-**Release 0.5.39** targets **Windows x64**, **KSA 2026.11.16.5901** and **StarMap 0.5.4** and is available in Borea's Stable channel. Drawing, performance, pose and Borea-profile PNG export checks passed on this build. Other versions are unsupported. The editor workflow may change during development.
+**PawPrints 0.6.0** requires **Windows x64**, **KSA 2026.11.25.5949** and **StarMap 0.5.4**. Install it from Borea's Stable channel or use the release ZIP.
 
-Native Linux support is open to community contributions and testing. The current release uses Windows APIs for font rendering, PNG logo loading and file dialogs. There is no Linux release date; interested contributors and testers can [open or join a Linux support discussion in Issues](https://github.com/DymndLab/PawPrints/issues). Please discuss the approach before starting a substantial port.
+Native Linux testing is pending. If you can test on a native Linux KSA and StarMap setup, [open or join a Linux testing discussion](https://github.com/DymndLab/PawPrints/issues).
 
-1. Download the mod ZIP from [Releases](https://github.com/DymndLab/PawPrints/releases) and follow the [installation instructions](INSTALL.md).
+1. Install through Borea or download the mod ZIP from [Releases](https://github.com/DymndLab/PawPrints/releases) and follow the [installation instructions](INSTALL.md).
 2. Load a craft in the Vehicle Editor, then choose **Editor > Open PawPrint Editor** or press **Ctrl+Alt+P**.
 3. Choose an export folder, arrange your drawing and select **Save PNG**.
 
-Exports are images. Save PNG before loading another craft, leaving the Vehicle Editor or ending the game: editable sheets are not saved across those transitions. **Back to editor** keeps the sheet while the same craft stays open. Large craft and high-resolution sheets can use substantial memory; compatibility with third-party parts varies with their implementation.
+Use **Save Drawing** to keep an editable project for the current craft. Large craft and high-resolution sheets can use substantial memory. Compatibility with third-party parts varies with their implementation.
 
 For problems, [open an issue](https://github.com/DymndLab/PawPrints/issues) with reproduction steps and your PawPrints, KSA and StarMap versions. See [security and local data](SECURITY.md) before sharing logs or files.
 
-## Development status
+## What’s new in 0.6.0
 
-The next release, **0.5.40**, is in local testing. See the [testing scope](docs/release-0.5.40-testing.md) and [roadmap](docs/roadmap.md) for implemented changes and future work.
+Start with a blank drawing, a template, or **Arrange views** to drag views into a snapping grid before editing. **Import Preferences** and **Export Preferences** transfer defaults and optional libraries between instances. Linked projections share a scale, and independent views can overlap. **Save Drawing** and **Open Drawing** keep editable projects in the active profile. **Save PNG** exports the finished image. At 4K, Preferences offers an optional Detailed export and a final preview with its exact encoded size. Archival wear adds lettering rubs, paper tears and occasional coffee rings. Choose **Place > Place wear** to add an individual mark. [Release notes](distribution/RELEASE-NOTES.md)
 
 ## Contributing
 

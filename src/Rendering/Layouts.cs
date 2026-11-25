@@ -33,10 +33,19 @@ sealed class RenderScene
         get; private set;
     }
 
-    public RenderScene WithBase(byte[] rgb, PrintOptions options)
+    public Vector2[] BaseLettering { get; set; } = [];
+    public WearMark[] WearMarks { get; private set; } = [];
+    public RenderScene WithWear(WearMark[] marks)
+    {
+        var copy = (RenderScene)MemberwiseClone();
+        copy.WearMarks = marks;
+        return copy;
+    }
+    public RenderScene WithBase(byte[] rgb, PrintOptions options, Vector2[]? lettering = null)
     {
         var copy = (RenderScene)MemberwiseClone();
         copy.BaseRgb = rgb;
+        copy.BaseLettering = lettering ?? BaseLettering;
         copy.Options = options;
         return copy;
     }
@@ -322,6 +331,8 @@ sealed class RenderScene
     {
         if (Details.FirstOrDefault(d => d.Definition.ViewId == view) is { } detail)
         {
+            if (detail.Definition.SourceIssue != DetailSourceIssue.None)
+                return null;
             var tile = detail.Pixels;
             var b = detail.Definition.Bounds;
             return new(new((int)b.X + 12, (int)b.Y + 12), tile.Width, tile.Height, tile.MeshOwners, Detail: detail);
@@ -402,7 +413,7 @@ static class SheetLayout
             options = FixedViewLayouts.Resolve(capture, options);
         if (options.Boxes == null && options.TitleBlock == null && options.Layout == 0 && options.DrawingSize == 0 && !options.PartsTable && !options.FlagTable && options.Page == new PageSize(2400, 3000))
             return [new(options.View, ViewName(options.View), new(130, 280, 2140, 2200), null)];
-        var points = capture.Meshes.SelectMany(m => m.Vertices).Select(v => new Vector3((float)v[1], (float)v[2], (float)v[0])).ToArray();
+        var points = capture.Meshes.SelectMany(m => m.WorldVertices()).ToArray();
         var min = points.Aggregate(new Vector3(float.PositiveInfinity), Vector3.Min);
         var max = points.Aggregate(new Vector3(float.NegativeInfinity), Vector3.Max);
         var center = (min + max) * .5f;
@@ -516,16 +527,19 @@ static class SheetLayout
             throw new InvalidDataException("Every captured mesh needs a part identity for safe label routing.");
         if (options.Drawing == null && options.Boxes == null && options.Layout == 0 && views[0].Frame == null)
         {
-            var renderer = new BlueprintRenderer(viewCaptures?.GetValueOrDefault(views[0].Id) ?? capture, maps, title, options.View, token);
+            var legacy = viewCaptures?.GetValueOrDefault(views[0].Id) ?? capture;
+            var renderer = new BlueprintRenderer(NormalLinework.Prepare(legacy, token, detailed: options.Detailed), maps, title, options.View, token);
             var result = renderer.Render(options, warnings, progress);
             var owners = renderer.MeshOwners();
             for (int i = 0; i < owners.Length; i++)
                 if (owners[i] >= 0)
                     owners[i] = meshParts[owners[i]];
-            return result with
+            result = result with
             {
-                Scene = new(result.Rgb, owners, parts, views, options: options)
+                Scene = new(result.Rgb, owners, parts, views, options: options) { BaseLettering = renderer.Lettering }
             };
+            return composeAnnotations && options.Archive && options.WearLevel > 0
+                ? AnnotationPainting.Compose(result, [], token) : result;
         }
         if (options.Drawing != null)
             DrawingPlacements.Validate(views, options);
@@ -540,6 +554,7 @@ static class SheetLayout
         var captions = new List<ViewCaptionMark>();
         var inkTiles = new List<ViewInk>();
         var fullVisuals = new Dictionary<(int View, int Part), PartVisual>();
+        Capture? preparedMain = null;
         var sharedCurvature = reuseMain?.MainCurvature;
         for (int index = 0; index < views.Length; index++)
         {
@@ -552,18 +567,22 @@ static class SheetLayout
             if (tile == null)
             {
                 var viewCapture = viewCaptures?.GetValueOrDefault(view.Id) ?? capture;
+                if (options.Detailed && !ReferenceEquals(viewCapture, capture))
+                    viewCapture = NormalLinework.Prepare(viewCapture, token, detailed: true);
                 CurvatureLines? curvature = null;
                 if (ReferenceEquals(viewCapture, capture))
                 {
+                    preparedMain ??= NormalLinework.Prepare(capture, token, detailed: options.Detailed);
                     if (sharedCurvature == null)
                     {
                         long started = Stopwatch.GetTimestamp();
                         long allocated = GC.GetAllocatedBytesForCurrentThread();
-                        sharedCurvature = CurvatureLines.Build(capture, token);
+                        sharedCurvature = CurvatureLines.Build(preparedMain, token);
                         RenderProgress.Report(stage, (float)index / views.Length);
                         PrintDiagnostics.Record($"drawing.curvature elapsed_ms={(long)Stopwatch.GetElapsedTime(started).TotalMilliseconds} worker_allocated_bytes={GC.GetAllocatedBytesForCurrentThread() - allocated} retained_estimate_bytes={sharedCurvature.EstimatedRetainedBytes}");
                     }
                     curvature = sharedCurvature;
+                    viewCapture = preparedMain;
                 }
                 tile = RenderTile(viewCapture, maps, title, view, token, curvature);
             }
@@ -612,6 +631,7 @@ static class SheetLayout
             Scene = new RenderScene(canvas.Pixels, sheetOwners, parts, views, reserved: null, options: options,
                 viewOwners: pixelViews, viewVisuals: options.FreeLayout ? fullVisuals : null)
             {
+                BaseLettering = WearPlacement.Lettering(canvas.Runs, options.Page),
                 PickingInk = inkTiles.ToArray(),
                 MeshOwners = meshOwners,
                 CraftHeight = HeightDimensions.Measure(capture),

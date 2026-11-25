@@ -40,6 +40,13 @@ static class CanvasObjects
 
     public static DrawingObject? Pick(Sheet sheet, RenderScene s, PartLabel[] labels, Vector2 point, float tolerance, DrawingObject? selected = null)
     {
+        if (selected is { Kind: DrawingObjectKind.View, Id: >= 1000 } detailSelection &&
+            s.Details.FirstOrDefault(d => d.Definition.ViewId == detailSelection.Id) is { } selectedDetail)
+        {
+            var box = selectedDetail.Definition.Bounds;
+            if (Vector2.Distance(point, new(box.Right, box.Bottom)) <= tolerance * 3.6f)
+                return detailSelection;
+        }
         foreach (var item in All(s, labels).Reverse())
         {
             var b = Bounds(s, labels, item);
@@ -49,8 +56,7 @@ static class CanvasObjects
                 if (route != null && (Vector2.Distance(point, route.Start) <= tolerance * 2 || Vector2.Distance(point, route.End) <= tolerance * 2))
                     return item;
             }
-            bool grip = item.Kind is DrawingObjectKind.Text or DrawingObjectKind.Performance or DrawingObjectKind.PartsTable or DrawingObjectKind.FlagTable
-                || item.Kind == DrawingObjectKind.View && item.Id >= 1000;
+            bool grip = item.Kind is DrawingObjectKind.Text or DrawingObjectKind.Performance or DrawingObjectKind.PartsTable or DrawingObjectKind.FlagTable;
             if (selected == item && grip && Vector2.Distance(point, new(b.Right, b.Bottom)) <= tolerance * 3.6f)
                 return item;
             if (item.Kind == DrawingObjectKind.View)

@@ -8,15 +8,14 @@ static class SolarSketch
     // has a clear authored front. A closed slab has two plausible faces.
     internal static Vector3? SingleSidedAxis(Mesh mesh)
     {
-        static Vector3 V(double[] p) => new((float)p[0], (float)p[1], (float)p[2]);
         var sum = Vector3.Zero;
         float total = 0;
         for (int i = 0; i < mesh.Indices.Length; i += 3)
         {
             int a = mesh.Indices[i], b = mesh.Indices[i + 1], c = mesh.Indices[i + 2];
-            var origin = V(mesh.SourceVertices[a]);
-            var area = Vector3.Cross(V(mesh.SourceVertices[b]) - origin, V(mesh.SourceVertices[c]) - origin);
-            var normal = V(mesh.SourceNormals[a]) + V(mesh.SourceNormals[b]) + V(mesh.SourceNormals[c]);
+            var origin = mesh.LocalPosition(a);
+            var area = Vector3.Cross(mesh.LocalPosition(b) - origin, mesh.LocalPosition(c) - origin);
+            var normal = mesh.LocalNormal(a) + mesh.LocalNormal(b) + mesh.LocalNormal(c);
             sum += Vector3.Dot(area, normal) < 0 ? -area : area;
             total += area.Length();
         }

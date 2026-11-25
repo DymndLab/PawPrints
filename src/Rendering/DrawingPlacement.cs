@@ -9,7 +9,7 @@ sealed record DrawingPlacement(float Ratio, DrawingView[] Views, DrawingObject[]
 static class DrawingPlacements
 {
     public const int Limit = 12;
-    public static readonly string[] Names = ["Three-quarter", "Front", "Side", "Top", "Isometric", "Rear", "Left side", "Bottom"];
+    public static readonly string[] Names = ["Three-quarter", "Front", "Left side", "Top", "Isometric", "Rear", "Right side", "Bottom"];
 
 
     public static bool Oblique(int camera) => camera is 0 or 4;
@@ -67,6 +67,36 @@ static class DrawingPlacements
 
     public static int Direction(Vector2 delta) => Math.Abs(delta.X) >= Math.Abs(delta.Y) ? delta.X >= 0 ? 0 : 2 : delta.Y < 0 ? 1 : 3;
 
+    public static int OppositeDirection(int direction) => direction < 4 ? (direction + 2) % 4 : 4 + (direction - 2) % 4;
+
+    public static DrawingPlacement Reproject(DrawingPlacement drawing, PageSize page, int angle)
+    {
+        var original = drawing.Views.ToDictionary(v => v.Id);
+        var projected = new Dictionary<int, DrawingView>();
+        DrawingView Project(DrawingView view)
+        {
+            if (projected.TryGetValue(view.Id, out var cached)) return cached;
+            if (view.Parent is { } parentId)
+            {
+                var before = original[parentId];
+                var parent = Project(before);
+                int direction = view.RollDirection;
+                if (direction < 0 && view.Alignment != 0 &&
+                    Math.Abs(Vector3.Dot(Axes(before).Toward, Axes(view).Toward)) < .001f)
+                {
+                    var delta = new Vector2((view.X - before.X) * page.Width, (view.Y - before.Y) * page.Height);
+                    direction = view.Alignment == 1 ? (delta.Y < 0 ? 1 : 3) : (delta.X < 0 ? 2 : 0);
+                }
+                if (direction >= 0 && (view.ProjectionAngle != angle || view.RollDirection < 0 || Axes(before) != Axes(parent)))
+                    view = Roll(view, parent, direction, angle);
+            }
+            projected.Add(view.Id, view);
+            return view;
+        }
+        var views = drawing.Views.Select(Project).ToArray();
+        return views.SequenceEqual(drawing.Views) ? drawing : drawing with { Views = views };
+    }
+
 
     public static int ProjectionDirection(Vector2 delta, int previous)
     {
@@ -103,7 +133,7 @@ static class DrawingPlacements
     {
         if (drawing.Views.Length > Limit || drawing.Views.Select(v => v.Id).Distinct().Count() != drawing.Views.Length)
             throw new InvalidOperationException("Invalid view collection.");
-        var points = capture.Meshes.SelectMany(m => m.Vertices).Select(ExplodedGeometry.World).ToArray();
+        var points = capture.Meshes.SelectMany(m => m.WorldVertices()).ToArray();
         var lo = points.Aggregate(new Vector3(float.PositiveInfinity), Vector3.Min);
         var hi = points.Aggregate(new Vector3(float.NegativeInfinity), Vector3.Max);
         var center = (lo + hi) / 2;
@@ -390,7 +420,7 @@ static class DrawingPlacements
 
     public static float SuggestRatio(Capture capture, int camera, PrintOptions options)
     {
-        var pts = capture.Meshes.SelectMany(m => m.Vertices).Select(ExplodedGeometry.World).ToArray();
+        var pts = capture.Meshes.SelectMany(m => m.WorldVertices()).ToArray();
         var b = SheetLayout.Basis(camera);
         var area = PageLayout.UpperArea(options);
         float w = pts.Max(p => Vector3.Dot(p, b.Right)) - pts.Min(p => Vector3.Dot(p, b.Right)), h = pts.Max(p => Vector3.Dot(p, b.Up)) - pts.Min(p => Vector3.Dot(p, b.Up));

@@ -25,6 +25,7 @@ public sealed partial class BlueprintMod
     static void ConfirmNewDrawing()
     {
         CancelPlacement();
+        DiscardDrawingDraft();
         setupStage = SetupStage.Choose;
     }
 
@@ -49,7 +50,6 @@ public sealed partial class BlueprintMod
         beforeTemplates = null;
         beforeDrawing = null;
         livePreviewGate.Reset();
-        SaveTitlePreferences();
 
     }
 
@@ -67,8 +67,16 @@ public sealed partial class BlueprintMod
         {
             partMenuOpen = true;
             PrintUiText.Wrapped("Start a new drawing and clear the current one?");
-            PrintUiText.Wrapped("Your current drawing stays available until you finish creating the new one. You can return to it from setup. Save PNG first if you need an image copy.");
-            if (PrintUiStyle.PrimaryButton("Create new drawing"))
+            PrintUiText.Wrapped("You can return to the current drawing until creation succeeds.");
+            bool saved = false;
+            if (DrawingHasUnsavedChanges)
+            {
+                ImGui.BeginDisabled(!PrintIsCurrent || ExportRefreshBlock != null);
+                if (PrintUiStyle.PrimaryButton("Save and continue")) saved = SaveDrawingProject();
+                ImGui.EndDisabled();
+                ImGui.SameLine();
+            }
+            if (ImGui.Button(DrawingHasUnsavedChanges ? "Continue without saving" : "Create new drawing") || saved)
             {
                 newDrawingDialog = false;
                 ImGui.CloseCurrentPopup();

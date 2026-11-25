@@ -69,9 +69,9 @@ static class ScaleAdjustment
         for (int i = 0; i < geometry.Capture.Meshes.Length; i++)
         {
             var part = geometry.MovedCenters[i];
-            foreach (var vertex in geometry.Capture.Meshes[i].Vertices)
+            foreach (var vertex in geometry.Capture.Meshes[i].WorldVertices())
             {
-                var offset = ExplodedGeometry.World(vertex) - part;
+                var offset = vertex - part;
                 Limit(Vector3.Dot(part - center, axes.Right) * spread, Vector3.Dot(offset, axes.Right) * scale, (sizing.Width - 32) * .5f);
                 Limit(Vector3.Dot(part - center, axes.Up) * spread, Vector3.Dot(offset, axes.Up) * scale, (sizing.Height - 32) * .5f);
             }

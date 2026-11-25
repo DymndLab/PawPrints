@@ -18,6 +18,7 @@ sealed record CapturedCraft(string Name, Capture Geometry, Dictionary<string, Ra
     {
         get; init;
     }
+    public long DetachedGeometryBytes { get; init; }
     public PoseControl[] Poses { get; init; } = [];
 }
 
@@ -26,57 +27,109 @@ static class CraftCapture
 
 
     // This entire method runs on the editor thread. No game-owned object escapes it.
-    public static CapturedCraft Take(VehicleEditor editor)
+    public static CapturedCraft Take(VehicleEditor editor) => TakeCancellable(editor, default);
+
+    public static CapturedCraft TakeForDrawing(VehicleEditor editor, PageSize page, params Sheet?[] retained) =>
+        TakeCancellable(editor, default, page, RenderMemory.Retained(retained));
+
+    internal static CapturedCraft TakeCancellable(VehicleEditor editor, CancellationToken token, PageSize? page = null, long retained = 0)
     {
         var stats = new CaptureStats();
         var timer = System.Diagnostics.Stopwatch.StartNew();
-        try { return TakeCore(editor, stats); }
+        try
+        {
+            stats.RetainedBytes = retained;
+            stats.CandidatePixelBytes = page.HasValue ? RenderMemory.CandidatePixels(page.Value) : 0;
+            return TakeCore(editor, stats, token);
+        }
+        catch (OperationCanceledException) { stats.Failure = "cancelled"; throw; }
+        catch (OverflowException) { stats.Failure = "arithmetic-overflow"; throw; }
+        catch
+        {
+            if (stats.Failure == "none") stats.Failure = "invalid-source";
+            throw;
+        }
         finally { stats.Log(timer.Elapsed); }
     }
 
-    static CapturedCraft TakeCore(VehicleEditor editor, CaptureStats stats)
+    static CapturedCraft TakeCore(VehicleEditor editor, CaptureStats stats, CancellationToken token)
     {
         var tree = editor.EditingSpace.Parts ?? throw new InvalidOperationException("Load a craft in the editor first.");
         var support = PartSupport.Load(Path.GetDirectoryName(typeof(CraftCapture).Assembly.Location)!);
+        var census = System.Diagnostics.Stopwatch.StartNew();
+        FuelHoseCapture.SampledRoute[] routes;
+        try { routes = CraftCensus.Count(tree, support, stats, token); }
+        finally { stats.CensusMilliseconds = census.ElapsedMilliseconds; }
+        stats.RequireBudget(includeInterior: false);
+        string? omittedInterior = null;
+        try { stats.RequireBudget(includeInterior: true); }
+        catch (InvalidOperationException e)
+        {
+            omittedInterior = e.Message;
+            stats.InteriorFailure = stats.Failure;
+            stats.Failure = "none";
+        }
+
+        var copy = System.Diagnostics.Stopwatch.StartNew();
+        try { return CopyCraft(editor, tree, support, routes, stats, token, omittedInterior); }
+        finally { stats.CopyMilliseconds = copy.ElapsedMilliseconds; }
+    }
+
+    static CapturedCraft CopyCraft(VehicleEditor editor, PartTree tree, PartSupport support,
+        FuelHoseCapture.SampledRoute[] routes, CaptureStats stats, CancellationToken token, string? omittedInterior)
+    {
         var meshes = new List<Rendering.Mesh>();
         var identities = new List<PartIdentity>();
         var nodes = new Dictionary<uint, AssemblyNode>();
-        void Remember(Part part, Part? modelOwner = null)
+        var pending = new Stack<(Part Part, Part? Owner)>();
+        void Remember(Part root)
         {
-            if (nodes.TryGetValue(part.InstanceId, out var known))
+            pending.Push((root, null));
+            while (pending.TryPop(out var entry))
             {
-                if (modelOwner != null)
-                    nodes[part.InstanceId] = known with
-                    {
-                        Parent = modelOwner.InstanceId,
-                        Subpart = true
-                    };
-                return;
+                token.ThrowIfCancellationRequested();
+                var (part, modelOwner) = entry;
+                if (nodes.TryGetValue(part.InstanceId, out var known))
+                {
+                    if (modelOwner != null)
+                        nodes[part.InstanceId] = known with
+                        {
+                            Parent = modelOwner.InstanceId,
+                            Subpart = true
+                        };
+                    continue;
+                }
+                var parent = modelOwner ?? part.PartParent ?? part.TreeParent;
+                var pose = part.ComputeMatrixAsmb2VehicleAsmb();
+                System.Numerics.Vector3 Point(double x, double y, double z)
+                {
+                    var p = new double3(x, y, z).Transform(pose);
+                    return new((float)p.Y, (float)p.Z, (float)p.X);
+                }
+                var origin = Point(0, 0, 0);
+                var x = Point(1, 0, 0) - origin;
+                var y = Point(0, 1, 0) - origin;
+                var z = Point(0, 0, 1) - origin;
+                var axes = new AssemblyPose(origin, System.Numerics.Vector3.Normalize(x), System.Numerics.Vector3.Normalize(y), System.Numerics.Vector3.Normalize(z));
+                // KSA's AttachedInternal is a separate tree Part (e.g. capsule IVA
+                // owning its glass), but belongs to the same structural part.
+                nodes.Add(part.InstanceId, new(part.InstanceId, parent?.InstanceId, PartNames.Display(part.Template.Id, part.Template.DisplayName, support), part.Template.Id, modelOwner != null || part.PartParent != null || part.Template.IsSubPart || part.IsAttachedInternal, axes)
+                {
+                    Scale = new(x.Length(), y.Length(), z.Length())
+                });
+                var children = part.SubParts;
+                for (int i = children.Length - 1; i >= 0; i--)
+                    pending.Push((children[i], part));
+                if (parent != null)
+                    pending.Push((parent, null));
             }
-            var parent = modelOwner ?? part.PartParent ?? part.TreeParent;
-            var pose = part.ComputeMatrixAsmb2VehicleAsmb();
-            System.Numerics.Vector3 Point(double x, double y, double z)
-            {
-                var p = new double3(x, y, z).Transform(pose);
-                return new((float)p.Y, (float)p.Z, (float)p.X);
-            }
-            var origin = Point(0, 0, 0);
-            var axes = new AssemblyPose(origin, System.Numerics.Vector3.Normalize(Point(1, 0, 0) - origin), System.Numerics.Vector3.Normalize(Point(0, 1, 0) - origin), System.Numerics.Vector3.Normalize(Point(0, 0, 1) - origin));
-            // KSA's AttachedInternal is a separate tree Part (e.g. capsule IVA
-            // owning its glass), but belongs to the same structural part.
-            nodes.Add(part.InstanceId, new(part.InstanceId, parent?.InstanceId, PartNames.Display(part.Template.Id, part.Template.DisplayName, support), part.Template.Id, modelOwner != null || part.PartParent != null || part.Template.IsSubPart || part.IsAttachedInternal, axes));
-            if (parent != null)
-                Remember(parent);
-            foreach (var child in part.SubParts)
-                Remember(child, part);
         }
         foreach (var part in tree.Parts)
             Remember(part);
+        stats.CapturedParts = nodes.Count;
         var textures = new Dictionary<string, RawTexture>();
         var warnings = new HashSet<string>();
-        int vertexCount = 0;
-        bool interior = false;
-        var sourceCache = new Dictionary<(MeshReference Mesh, int Primitive), (double[][] Local, double[][] Normals, double[][] UV, int[] Indices)>();
+        var sourceCache = new Dictionary<(MeshReference Mesh, int Primitive), MeshSource>();
         long decodedBytes = 0;
         TextureInfo? Map(TextureReference? reference)
         {
@@ -113,8 +166,10 @@ static class CraftCapture
             textures.Add(key, new(info, format, asset.FaceData(0).ToArray()));
             return info;
         }
-        void Add(Part part, MeshReference? mesh, PbrMaterialReference? material, double4x4 pose)
+        var gimbal = AccessTools.Method(typeof(PartTreeRenderData), "ApplyGimbal") ?? throw new MissingMethodException("Part gimbal transform unavailable.");
+        void Add(Part part, MeshReference? mesh, PbrMaterialReference? material, PartModelDynamicModule? dynamic)
         {
+            token.ThrowIfCancellationRequested();
             Remember(part);
             if (mesh?.HostPrimitives == null)
             {
@@ -148,75 +203,73 @@ static class CraftCapture
                     break;
                 }
             }
+            var pose = part.ComputeMatrixAsmb2VehicleAsmb();
+            if (dynamic != null)
+                pose = (double4x4)gimbal.Invoke(null, [dynamic, pose])!;
+            var transform = new MeshTransform(new(pose.M11, pose.M12, pose.M13), new(pose.M21, pose.M22, pose.M23),
+                new(pose.M31, pose.M32, pose.M33), new(pose.M41, pose.M42, pose.M43));
+            if (!transform.Finite)
+                throw new InvalidDataException("Nonfinite craft transform.");
             var assembly = part.StructuralPart;
             int primitiveNumber = 0;
             foreach (var primitive in mesh.HostPrimitives)
             {
-                int primitiveIndex = primitiveNumber++;
-                var positions = primitive.GetVertexSpan<float3>(MeshAttribute.Position);
-                var normals = primitive.GetVertexSpan<float3>(MeshAttribute.Normal);
-                var uvs = primitive.GetVertexSpan<float2>(MeshAttribute.Uv0);
-                int indexCount = primitive.IndexBuffer == null ? 0 : primitive.IndexBuffer.ToSpan<int>().Length;
-                stats.Add(template, part.InstanceId, interior, positions.Length, indexCount / 3);
-                long proposed = (long)vertexCount + positions.Length;
-                if (proposed > 1000000)
-                {
-                    stats.Failure = "geometry-vertices";
-                    throw new InvalidOperationException($"Craft geometry exceeds budget: {proposed:N0} vertices (limit: {1000000:N0}). See PawPrints diagnostics.");
-                }
-                vertexCount = (int)proposed;
-                if (positions.Length == 0)
-                    continue;
-                if (normals.Length != positions.Length)
-                    throw new InvalidDataException($"Missing mesh normals: {part.DisplayName}");
-                if (primitive.IndexBuffer == null)
-                    throw new InvalidDataException("Mesh index data unavailable.");
-                var key = (mesh, primitiveIndex);
+                var key = (mesh, primitiveNumber++);
                 if (!sourceCache.TryGetValue(key, out var source))
                 {
-                    var local = new double[positions.Length][];
-                    var n = new double[positions.Length][];
-                    var uv = new double[positions.Length][];
+                    var positions = primitive.GetVertexSpan<float3>(MeshAttribute.Position);
+                    if (positions.Length == 0) continue;
+                    var normals = primitive.GetVertexSpan<float3>(MeshAttribute.Normal);
+                    var uvs = primitive.GetVertexSpan<float2>(MeshAttribute.Uv0);
+                    if (normals.Length != positions.Length)
+                        throw new InvalidDataException($"Missing mesh normals: {part.DisplayName}");
+                    if (primitive.IndexBuffer == null)
+                        throw new InvalidDataException("Mesh index data unavailable.");
+                    var local = new System.Numerics.Vector3[positions.Length];
+                    var n = new System.Numerics.Vector3[positions.Length];
+                    var uv = new System.Numerics.Vector2[positions.Length];
                     for (int i = 0; i < positions.Length; i++)
                     {
+                        if ((i & 4095) == 0) token.ThrowIfCancellationRequested();
                         var p = positions[i];
-                        local[i] = [p.X, p.Y, p.Z];
-                        n[i] = [normals[i].X, normals[i].Y, normals[i].Z];
-                        uv[i] = uvs.Length == positions.Length ? [uvs[i].X, uvs[i].Y] : [0d, 0d];
+                        if (!float.IsFinite(p.X) || !float.IsFinite(p.Y) || !float.IsFinite(p.Z))
+                            throw new InvalidDataException("Nonfinite craft geometry.");
+                        local[i] = new(p.X, p.Y, p.Z);
+                        n[i] = new(normals[i].X, normals[i].Y, normals[i].Z);
+                        if (uvs.Length == positions.Length)
+                            uv[i] = new(uvs[i].X, uvs[i].Y);
                     }
-                    var indices = primitive.IndexBuffer.ToSpan<int>().ToArray();
-                    int positionCount = positions.Length;
-                    if (indices.Length % 3 != 0 || indices.Any(i => i < 0 || i >= positionCount))
+                    var input = primitive.IndexBuffer.ToSpan<int>();
+                    if (input.Length % 3 != 0)
                         throw new InvalidDataException("Invalid mesh indices.");
-                    source = (local, n, uv, indices);
+                    var indices = new int[input.Length];
+                    for (int i = 0; i < indices.Length; i++)
+                    {
+                        if ((i & 4095) == 0) token.ThrowIfCancellationRequested();
+                        int value = input[i];
+                        if ((uint)value >= (uint)local.Length)
+                            throw new InvalidDataException("Invalid mesh indices.");
+                        indices[i] = value;
+                    }
+                    source = new(local, n, uv, indices);
                     sourceCache.Add(key, source);
                 }
-                var world = new double[positions.Length][];
-                for (int i = 0; i < positions.Length; i++)
+                meshes.Add(new(part.DisplayName, [], source.Indices, [], [], [], surface, normal, diffuse)
                 {
-                    var p = positions[i];
-                    var v = new double3(p.X, p.Y, p.Z).Transform(pose);
-                    if (!double.IsFinite(v.X) || !double.IsFinite(v.Y) || !double.IsFinite(v.Z))
-                        throw new InvalidDataException("Nonfinite craft geometry.");
-                    world[i] = [v.X, v.Y, v.Z];
-                }
-                meshes.Add(new(part.DisplayName, world, source.Indices, source.Local, source.Normals, source.UV, surface, normal, diffuse) { SolarDirection = solarDirection });
+                    LineworkNode = part.InstanceId,
+                    Instance = new(source, transform),
+                    SolarDirection = solarDirection
+                });
                 identities.Add(new(part.InstanceId, template, part.DisplayName, assembly.InstanceId, assembly.Template.Id, PartNames.Display(assembly.Template.Id, assembly.Template.DisplayName, support)));
             }
         }
-        foreach (var m in tree.Modules.Get<PartModelModule>())
-            if (!m.PartModel.Template.Internal && m.PartModel.Template.RayTracing != PartModelModule.RaytracingMode.ShadowProxy)
-                Add(m.Parent, m.PartModel.Template.Mesh?.Value, m.PartModel.Template.Material?.Value, m.Parent.ComputeMatrixAsmb2VehicleAsmb());
-        var gimbal = AccessTools.Method(typeof(PartTreeRenderData), "ApplyGimbal") ?? throw new MissingMethodException("Part gimbal transform unavailable.");
-        foreach (var m in tree.Modules.Get<PartModelDynamicModule>())
-            Add(m.Parent, m.PartModelDynamic.Template.Mesh?.Value, m.PartModelDynamic.Template.Material?.Value, (double4x4)gimbal.Invoke(null, [m, m.Parent.ComputeMatrixAsmb2VehicleAsmb()])!);
-        foreach (var m in tree.Modules.Get<PartModelGlassModule>())
-            Add(m.Parent, m.PartModelGlass.Template.Mesh?.Value, m.PartModelGlass.Template.Material?.Value, m.Parent.ComputeMatrixAsmb2VehicleAsmb());
-        foreach (var (part, hose) in FuelHoseCapture.Take(tree, 1000000 - vertexCount))
+        CraftCensus.VisitModels(tree, false, Add);
+        foreach (var route in routes)
         {
+            token.ThrowIfCancellationRequested();
+            var part = route.First;
+            var hose = FuelHoseCapture.Build(route);
             Remember(part);
-            vertexCount += hose.Vertices.Length;
-            stats.Add(part.Template.Id, part.InstanceId, false, hose.Vertices.Length, hose.Indices.Length / 3);
             meshes.Add(hose);
             // A hose belongs to its first fuel port for picking and exploded
             // disassembly. It is not an additional stock part in the parts table.
@@ -230,33 +283,37 @@ static class CraftCapture
         var exterior = new Capture(meshes.ToArray());
         var exteriorIds = identities.ToArray();
         var exteriorTextures = textures.Keys.ToHashSet();
-        try
+        if (omittedInterior == null)
         {
-            interior = true;
-            foreach (var m in tree.Modules.Get<PartModelModule>())
-                if (m.PartModel.Template.Internal && m.PartModel.Template.RayTracing != PartModelModule.RaytracingMode.ShadowProxy)
-                    Add(m.Parent, m.PartModel.Template.Mesh?.Value, m.PartModel.Template.Material?.Value, m.Parent.ComputeMatrixAsmb2VehicleAsmb());
+            try { CraftCensus.VisitModels(tree, true, Add); }
+            catch (Exception e) when (e is InvalidOperationException or InvalidDataException)
+            {
+                stats.InteriorFailure = stats.Failure == "none" ? "invalid-interior" : stats.Failure;
+                stats.Failure = "none";
+                omittedInterior = e.Message;
+                meshes.RemoveRange(exteriorCount, meshes.Count - exteriorCount);
+                identities.RemoveRange(exteriorCount, identities.Count - exteriorCount);
+                foreach (var key in textures.Keys.Where(k => !exteriorTextures.Contains(k)).ToArray())
+                    textures.Remove(key);
+            }
         }
-        catch (Exception e) when (e is InvalidOperationException or InvalidDataException)
+        if (omittedInterior != null)
         {
-            sourceCache.Clear();
-            meshes.RemoveRange(exteriorCount, meshes.Count - exteriorCount);
-            identities.RemoveRange(exteriorCount, identities.Count - exteriorCount);
-            foreach (var key in textures.Keys.Where(k => !exteriorTextures.Contains(k)).ToArray())
-                textures.Remove(key);
-            warnings.Add("Internal detail geometry omitted: " + e.Message);
+            stats.InteriorOmitted = true;
+            warnings.Add("Internal detail geometry omitted: " + omittedInterior);
         }
+        token.ThrowIfCancellationRequested();
         var assembly = new AssemblyCapture(new(meshes.ToArray()), nodes.Values.ToArray(), identities.Select(p => p.InstanceId).ToArray(), Enumerable.Range(0, meshes.Count).Select(i => i >= exteriorCount).ToArray())
         {
             Topology = CraftIdentityCapture.Take(tree)
         };
-        foreach (var node in assembly.Nodes)
-            AssemblyGraph.Ancestors(assembly, node.Id);
+        AssemblyGraph.ValidateHierarchy(assembly.Nodes, token);
         var poses = PoseCapture.Take(tree, assembly, support);
         return new(editor.EditingSpace.Id, exterior, textures, exteriorIds, warnings.ToArray())
         {
             Assembly = assembly,
             Poses = poses,
+            DetachedGeometryBytes = stats.SourceBytes(!stats.InteriorOmitted),
             Performance = PerformanceCapture.Take(tree, assembly, support) with
             {
                 CraftName = editor.EditingSpace.Id

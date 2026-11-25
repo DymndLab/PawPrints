@@ -38,6 +38,20 @@ static class SelectionChecks
             Call("CancelPlacement");
             check(Value("selectedHeight") == -1 && Value("selectedCanvasView") == -1,
                 "Canceling the workspace clears dimension and view selection");
+
+            var placeTool = modType.GetField("activePlaceTool", flags)!.FieldType;
+            foreach (string tool in new[] { "Label", "Flagnote" })
+            {
+                var active = Enum.Parse(placeTool, tool);
+                Set("activePlaceTool", active);
+                Call("FinishLabelPlacement");
+                check(Equals(Get("activePlaceTool"), active), tool + " stays armed after a completed placement");
+                Set("pickingPartTool", true);
+                Call("SelectLabel", 9);
+                Call("LeavePlaceTab");
+                check(Get("activePlaceTool")!.ToString() == "None" && Get("pickingPartTool") is false
+                    && Value("selectedLabel") == 9, "Leaving Place disarms " + tool + " and keeps the selected label");
+            }
         }
         finally
         {

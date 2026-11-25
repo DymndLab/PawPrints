@@ -12,12 +12,12 @@ static class FuelHoseGeometry
     public const int RadialSegments = 16;
     public const int MaximumSamples = 256;
 
-    public static Mesh? Build(HoseSample[] samples, uint endpointA, uint endpointB, int vertexBudget)
+    public static int Measure(HoseSample[] samples)
     {
         if (samples.Length < 2)
-            return null;
-        if (samples.Length > MaximumSamples || checked(samples.Length * RadialSegments) > vertexBudget)
-            throw new InvalidOperationException("Fuel hoses exceed the craft export geometry budget.");
+            return 0;
+        if (samples.Length > MaximumSamples)
+            throw new InvalidOperationException($"Fuel hose requires {samples.Length:N0} route samples (limit: {MaximumSamples:N0}).");
         float length = 0;
         for (int i = 0; i < samples.Length; i++)
         {
@@ -30,9 +30,15 @@ static class FuelHoseGeometry
         }
         if (!float.IsFinite(length))
             throw new InvalidDataException("Invalid fuel hose route length.");
-        if (length < .0001f)
-            return null;
-        int count = samples.Length * RadialSegments;
+        return length < .0001f ? 0 : checked(samples.Length * RadialSegments);
+    }
+
+    public static Mesh? Build(HoseSample[] samples, uint endpointA, uint endpointB, int vertexBudget)
+    {
+        int count = Measure(samples);
+        if (count == 0) return null;
+        if (count > vertexBudget)
+            throw new InvalidOperationException($"Fuel hose exceeds the craft export geometry budget: {count:N0} vertices (remaining limit: {vertexBudget:N0}).");
         var positions = new double[count][];
         var normals = new double[count][];
         var uv = new double[count][];

@@ -17,6 +17,7 @@ public sealed partial class BlueprintMod
     static HashSet<uint> scopeIncluded = [];
     static PreviewTexture? scopeTexture;
     static string? scopeHint;
+    static uint? scopeRootTarget;
     static int scopeDeleteId = -1;
 
     static void ClearScope()
@@ -35,6 +36,7 @@ public sealed partial class BlueprintMod
         scopePreview = null;
         scopeDraft = null;
         scopeSource = null;
+        scopeRootTarget = null;
         scopeDeleteId = -1;
         scopeIncluded = [];
         if (scopeTexture != null)
@@ -46,7 +48,9 @@ public sealed partial class BlueprintMod
         scopeRedo.Clear();
     }
 
-    static void BeginDetail(uint? seed, int editing = -1)
+    static void BeginDetail(uint? seed, int editing = -1) => BeginDetailScope(seed, editing, replaceRoot: false);
+
+    static void BeginDetailScope(uint? seed, int editing, bool replaceRoot)
     {
         var source = basePrint?.DetailSource;
         if (source?.Assembly.Topology == null || seed == null)
@@ -59,10 +63,18 @@ public sealed partial class BlueprintMod
             ReportFailure($"Up to {ExplodedPainting.Limit} exploded details per sheet.");
             return;
         }
+        var old = document!.Details.FirstOrDefault(d => d.Id == editing);
+        if (!replaceRoot && old?.SourceIssue is DetailSourceIssue.MissingRoot or DetailSourceIssue.ChangedScope)
+        {
+            ShowActivityInPreferences();
+            return;
+        }
         CancelPlacement();
         uint root = AssemblyGraph.WholePart(source.Assembly, seed.Value);
-        var old = document!.Details.FirstOrDefault(d => d.Id == editing);
         var draft = old ?? NewDetail(root, root, source.Assembly.Nodes.First(n => n.Id == root).Name);
+        if (replaceRoot)
+            draft = draft with { Scope = root, Seed = root, Selection = new(root, [], []),
+                Expanded = null, Groups = null, Camera = null, Sizing = null, SourceIssue = DetailSourceIssue.None };
         scopeSource = source;
         try { SetScope(draft with { Selection = draft.Selection ?? (old != null
             ? AssemblyGraph.LegacyScope(source.Assembly, draft.Scope) : new(draft.Scope, [], [])) }); }
@@ -86,7 +98,7 @@ public sealed partial class BlueprintMod
             Separation = Math.Max(1, scopeDraft.Separation),
             Groups = scopeDraft.Groups?.Select(group => group with { Hidden = false }).ToArray()
         };
-        scopeTask = Task.Run(() => BuildScopePreview(source, previewDetail, token), token);
+        scopeTask = Task.Run(() => RenderMemory.InSlot(() => BuildScopePreview(source, previewDetail, token), token), token);
     }
 
     static ScopePreview BuildScopePreview(ExplodedSource source, ExplodedDetail detail, CancellationToken token)
@@ -175,7 +187,7 @@ public sealed partial class BlueprintMod
             else if (ImGui.IsKeyPressed(ImGuiKey.Y)) UndoScope(true);
             draft = scopeDraft!;
         }
-        if (ImGui.Button("Cancel"u8) || ImGui.IsWindowHovered() && ImGui.IsMouseClicked(ImGuiMouseButton.Right))
+        if (ImGui.Button("Cancel"u8) || editing && ImGui.IsWindowHovered() && ImGui.IsMouseClicked(ImGuiMouseButton.Right))
         {
             CancelDetailGesture();
             ImGui.CloseCurrentPopup();
@@ -245,7 +257,9 @@ public sealed partial class BlueprintMod
         }
 
         var root = source.Assembly.Nodes.First(n => n.Id == draft.Scope);
-        PrintUiText.Wrapped(scopeHint ?? $"Root: {root.Name}. Click a part to toggle its branch.");
+        string help = editing ? "Click a part to toggle its branch." :
+            "Click a part to toggle its branch. Right-click a part to set a new root.";
+        PrintUiText.Wrapped(scopeHint ?? $"Root: {root.Name}. {help}");
 
         int width = scene.Pixels.Width, height = scene.Pixels.Height;
         var available = ImGui.GetContentRegionAvail();
@@ -266,23 +280,48 @@ public sealed partial class BlueprintMod
             draw.AddRectFilled(origin + new float2(run.X * factor, run.Y * factor),
                 origin + new float2((run.X + run.Length) * factor, (run.Y + 1) * factor), color);
         }
-        if (!ImGui.IsItemHovered()) return;
-        var mouse = ImGui.GetMousePos();
-        int px = (int)((mouse.X - origin.X) / factor), py = (int)((mouse.Y - origin.Y) / factor);
-        if (px < 0 || py < 0 || px >= width || py >= height) return;
-        int mesh = scene.Pixels.MeshOwners[py * width + px];
+        if (ImGui.IsItemHovered())
+            HandleScopePart(scene, source.Assembly, draft, (ImGui.GetMousePos() - origin) / factor, editing);
+        if (!editing)
+            DrawScopeRootActions(source.Assembly);
+    }
+
+    static void HandleScopePart(ScopePreview scene, AssemblyCapture assembly, ExplodedDetail draft, float2 point, bool editing)
+    {
+        int x = (int)point.X, y = (int)point.Y;
+        int width = scene.Pixels.Width, height = scene.Pixels.Height;
+        if (point.X < 0 || point.Y < 0 || x >= width || y >= height) return;
+        int mesh = scene.Pixels.MeshOwners[y * width + x];
         if (mesh < 0) return;
         uint part = scene.Groups[mesh];
-        var node = source.Assembly.Nodes.First(n => n.Id == part);
+        var node = assembly.Nodes.First(n => n.Id == part);
+        if (!editing && part != draft.Scope && ImGui.IsMouseClicked(ImGuiMouseButton.Right))
+        {
+            scopeRootTarget = part;
+            ImGui.OpenPopup("##scope root actions"u8);
+            return;
+        }
+
         string action = part == draft.Scope ? "Root" : scopeIncluded.Contains(part) ? "Exclude branch" : "Restore branch";
         PrintUiText.Tooltip($"{node.Name} ? {action}");
-        if (part != draft.Scope && ImGui.IsMouseClicked(ImGuiMouseButton.Left))
-        {
-            var next = AssemblyGraph.ToggleBranch(source.Assembly, draft, part);
-            if (next != draft) ChangeScope(next);
-            else scopeHint = "Restore its excluded parent branch or choose Include all.";
+        if (part == draft.Scope || !ImGui.IsMouseClicked(ImGuiMouseButton.Left)) return;
+        var next = AssemblyGraph.ToggleBranch(assembly, draft, part);
+        if (next != draft) ChangeScope(next);
+        else scopeHint = "Restore a connecting branch or choose Include all.";
+    }
 
+    static void DrawScopeRootActions(AssemblyCapture assembly)
+    {
+        if (!ImGui.BeginPopup("##scope root actions"u8)) return;
+        try
+        {
+            if (scopeRootTarget is { } part && ImGui.MenuItem("Set as root"u8))
+            {
+                var next = AssemblyGraph.RootSubassembly(assembly, scopeDraft!, part);
+                if (next != scopeDraft) ChangeScope(next);
+            }
         }
+        finally { ImGui.EndPopup(); }
     }
 
     static (ExplodedDetail Detail, uint Part, bool Branch)? removalPreview;

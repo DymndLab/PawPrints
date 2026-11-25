@@ -58,6 +58,16 @@ static class DrawingPlacementChecks
         check(right.Camera == 1 && right.Alignment == 2 && above.Camera == 3 && above.Alignment == 1, "Third-angle side projections roll to Front on the right and Top above, never Bottom on the right");
         check(DrawingPlacements.Roll(draft, side, 1, 1).Camera == 7 && DrawingPlacements.Roll(draft, side, 0, 1).Camera == 5, "First-angle reverses the rolled faces: Bottom above and Rear to the right of Side");
         check(above.Axes!.Right == Vector3.UnitX && above.Axes.Up == Vector3.UnitY, "Rolling preserves the parent horizontal axis instead of resetting Top to its canonical rotation");
+        var third = new DrawingPlacement(100, [side, right, above with { Id = 102 }, new(103, 4, .8f, .1f)]);
+        var firstAngle = DrawingPlacements.Reproject(third, new(3000, 1688), 1);
+        check(firstAngle.Views[1].Camera == 5 && firstAngle.Views[2].Camera == 7 &&
+            firstAngle.Views.Select(v => (v.Id, v.X, v.Y, v.Parent)).SequenceEqual(third.Views.Select(v => (v.Id, v.X, v.Y, v.Parent))) &&
+            firstAngle.Views[3] == third.Views[3], "Changing the angle updates linked views in place and preserves the independent isometric view");
+        check(DrawingPlacements.Reproject(firstAngle, new(3000, 1688), 3).Views.SequenceEqual(third.Views),
+            "Switching back restores the same projected faces and axes");
+        var legacy = third with { Views = [side, right with { RollDirection = -1, Axes = null }, above with { Id = 102, RollDirection = -1, Axes = null, Y = .3f }] };
+        check(DrawingPlacements.Reproject(legacy, new(3000, 1688), 1).Views.Select(v => v.Camera).SequenceEqual(new[] { 2, 5, 7 }),
+            "The projection preference also updates aligned views created before roll directions were saved");
         foreach (int camera in Enumerable.Range(0, 8))
             foreach (int angle in new[] { 1, 3 })
             {

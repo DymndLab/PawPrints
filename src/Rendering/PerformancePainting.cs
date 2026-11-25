@@ -96,7 +96,8 @@ static class PerformancePainting
                 throw new InvalidOperationException("Enlarge the specification block or hide some fields to fit its content.");
             if (!scene.Options.FreeLayout && (scene.Specs.Any(o => o.Id != b.Id && o.Bounds.Overlaps(b.Bounds)) || scene.Details.Any(d => d.Definition.Bounds.Overlaps(b.Bounds)) || PrintTables.Panels(scene, labels).Any(t => t.Bounds.Overlaps(b.Bounds))))
                 throw new InvalidOperationException("Keep specification blocks, tables and details clear of each other.");
-            if (b.Leader && !b.Vehicle && !scene.Parts.Any(p => p.NodeId == b.EnginePart && scene.Visible.ContainsKey((b.ViewId, p.Id))))
+            if (b.Leader && !b.Vehicle && !scene.Options.FreeLayout &&
+                !scene.Parts.Any(p => p.NodeId == b.EnginePart && scene.Visible.ContainsKey((b.ViewId, p.Id))))
                 throw new InvalidOperationException("The engine leader target is not visible in its view. Restore that view or disable the block leader before generating.");
             if (b.Stage >= 0 && !data.Stages.Any(s => s.Number == b.Stage))
                 throw new InvalidOperationException("The selected performance stage is unavailable. Choose another scope.");

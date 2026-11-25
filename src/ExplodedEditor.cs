@@ -73,6 +73,10 @@ public sealed partial class BlueprintMod
         selectedDetail = id;
         selectedLabel = -1;
         detailEdit = document?.Details.FirstOrDefault(d => d.Id == id);
+        if (detailEdit != null)
+            listedObject = new(DrawingObjectKind.View, detailEdit.ViewId);
+        else if (listedObject is { Kind: DrawingObjectKind.View, Id: >= 1000 })
+            listedObject = null;
         detailCaption.SetValue((detailEdit?.Caption ?? "").AsSpan());
         selectedGroup = null;
     }
@@ -151,11 +155,18 @@ public sealed partial class BlueprintMod
     }
 
 
-    static void DeleteDetail(int? requested = null)
+    static void DeleteDetail(int? requested = null) => DeleteDetailCore(requested, confirmed: false);
+
+    static void DeleteDetailCore(int? requested, bool confirmed)
     {
         int id = requested ?? selectedDetail;
         if (!CanEditAnnotations || id < 0)
             return;
+        if (!confirmed && document!.Details.Any(d => d.Id == id && d.SourceIssue != DetailSourceIssue.None))
+        {
+            missingDetailDelete = id;
+            return;
+        }
         QueueDetails(document!.Details.Where(d => d.Id != id).ToArray());
         selectedDetail = -1;
         detailEdit = null;
@@ -180,6 +191,11 @@ public sealed partial class BlueprintMod
             SelectDetail(index == 0 ? -1 : document.Details[index - 1].Id);
         if (detailEdit == null)
             return;
+        if (detailEdit.SourceIssue != DetailSourceIssue.None)
+        {
+            DrawUnresolvedDetail(detailEdit);
+            return;
+        }
         ImGui.BeginDisabled(ControlsLocked || sheet?.Options != Options);
         try
         {
@@ -570,7 +586,7 @@ public sealed partial class BlueprintMod
         selectedGroup = groupId;
         if (anchored)
         {
-            status = "The assembly base stays fixed. Drag the caption to move the whole view.";
+            AddActivity("detail.root.fixed", "The assembly base stays fixed. Drag the caption to move the whole view.", notify: true);
             return true;
         }
         groupDragModes.Clear();

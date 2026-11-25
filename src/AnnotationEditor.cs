@@ -13,7 +13,7 @@ public sealed partial class BlueprintMod
     static readonly string[] TipNames = ["Dot", "Filled triangle", "Outline triangle", "None"];
     static readonly string[] LineNames = ["Dotted", "Dashed", "Solid"];
     static readonly string[] FitNames = ["Fit page", "Fit width", "Actual pixels"];
-    static int defaultLine, defaultTip, placeKind, previewFit, pageOrientation, pageAspect, brand = 2;
+    static int defaultLine, defaultTip, placeKind, previewFit, pageOrientation = 3, pageAspect, brand = 2;
     static readonly ImInputString noteText = new(512);
     static int selectedLabel = -1;
     static bool pickingPartTool;
@@ -29,6 +29,8 @@ public sealed partial class BlueprintMod
 
     static void CancelPlacement()
     {
+        activePlaceTool = PlaceTool.None;
+        referenceViewPick = null;
         pickingPartTool = false;
         choosingProjectionSource = false;
         groupDrag = null;
@@ -36,7 +38,6 @@ public sealed partial class BlueprintMod
         selectedCanvasView = selectedHeight = -1;
         placingText = false;
         textBoxStart = null;
-        warningNotice = null;
         newDrawingDialog = false;
         CancelTextPreview();
         textDraft = null;
@@ -142,15 +143,12 @@ public sealed partial class BlueprintMod
         else
             ReportFailure(reason);
     }
-    static bool ControlsLocked => choosingProjectionSource || groupDrag != null || pendingPrimaryDelete >= 0 || newDrawingDialog || placingText || exportSetupOpen || warningNotice != null || viewSizeDialog || textDraft != null || dragText != null || GhostActive || viewDraft != null || dragView != null || specDraft != null || dragSpec != null || poseDialog || busy || dragKitten != null || dragHeight != null || dragLabel != null || pendingLabel != null || flagnotePlacement != null || DetailGesture;
+    static bool ControlsLocked => reviewExport || choosingProjectionSource || referenceViewPick != null || groupDrag != null || pendingPrimaryDelete >= 0 || newDrawingDialog || projectsToOpen != null || placingText || exportSetupOpen || viewSizeDialog || textDraft != null || dragText != null || GhostActive || viewDraft != null || dragView != null || specDraft != null || dragSpec != null || poseDialog || busy || dragKitten != null || dragHeight != null || dragLabel != null || pendingLabel != null || flagnotePlacement != null || DetailGesture;
 
 
-    static void DrawControls(VehicleEditor editor)
+    static void DrawControls()
     {
-        // Reserve a small status area; primary actions stay in the workspace header.
-        float footer = Math.Min(175, ImGui.GetContentRegionAvail().Y * .22f);
-        float content = Math.Max(80, ImGui.GetContentRegionAvail().Y - footer);
-        ImGui.BeginChild("Settings region"u8, new float2(0, content), ImGuiChildFlags.None, ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse);
+        ImGui.BeginChild("Settings region"u8, new float2(0, 0), ImGuiChildFlags.None, ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse);
         try
         {
             PrintUiStyle.PushTabs();
@@ -171,8 +169,6 @@ public sealed partial class BlueprintMod
             finally { PrintUiStyle.PopTabs(); }
         }
         finally { ImGui.EndChild(); }
-        ImGui.Separator();
-        DrawPrintActions(editor);
     }
 
 
@@ -185,6 +181,8 @@ public sealed partial class BlueprintMod
             requestedSettingsTab = null;
         if (!ImGui.BeginTabItem(name, requested ? ImGuiTabItemFlags.SetSelected : ImGuiTabItemFlags.None))
             return;
+        if (name != "Place")
+            LeavePlaceTab();
         PrintDiagnostics.State("settings.tab", name);
         try
         {
@@ -202,17 +200,7 @@ public sealed partial class BlueprintMod
     static void DrawSheetControls()
     {
         ImGui.BeginDisabled(ControlsLocked);
-        ImGui.Text("Layout");
-        ImGui.SetNextItemWidth(-1);
-        ImGui.Combo("##Shape"u8, ref pageOrientation, PageSize.Shapes, PageSize.Shapes.Length);
-        if (pageOrientation == 3)
-            DrawDesktopSize();
-        else if (pageOrientation != 1)
-        {
-            ImGui.Text("Aspect ratio");
-            ImGui.SetNextItemWidth(-1);
-            ImGui.Combo("##Aspect"u8, ref pageAspect, pageOrientation == 2 ? PageSize.WideRatios : PageSize.Ratios, PageSize.Ratios.Length);
-        }
+        DrawOutputControls();
         if (ImGui.Button("Use Template"u8))
             OpenTemplates();
         DrawSaveTemplate();
@@ -313,7 +301,7 @@ public sealed partial class BlueprintMod
                     {
                         string clean = AnnotationText.Clean(labelText.ToString());
                         if (clean.Length == 0)
-                            status = "Enter a label name.";
+                            ReportFailure("Enter a label name.");
                         else
                             ChangeLabel(selected with
                             {
@@ -359,35 +347,6 @@ public sealed partial class BlueprintMod
             }
             ImGui.EndDisabled();
         }
-    }
-
-
-    static void DrawPrintActions(VehicleEditor editor)
-    {
-        bool current = sheet != null && PrintIsCurrent;
-        ImGui.BeginChild("Print status"u8, new float2(0, 0));
-        try
-        {
-            if (DateTime.UtcNow < clippingNoticeUntil)
-                PrintUiText.Wrapped("Part of the drawing is outside the image. Use Objects to reveal it.");
-            if (!placingText && warningNotice == null && GenerationBlock(editor) is { } generationBlock)
-                PrintUiStyle.Warning(generationBlock);
-            if (renderTask != null)
-            {
-                PrintUiText.Wrapped(activeProgress?.Latest.Label ?? progress);
-                if (!composingLabels && ImGui.Button("Cancel"u8))
-                    cancellation?.Cancel();
-            }
-            if (!FailureStatus(status))
-                PrintUiText.Wrapped(status.StartsWith("Saved: ", StringComparison.Ordinal) ? "PNG saved. Select View exported drawings to open its folder." : status);
-            if (sheet != null && !current)
-                PrintUiText.Wrapped(livePreviewUpdates ? "Live preview will apply settled settings." : "Generate PawPrint to apply the changed settings.");
-            if (sheet != null && sheet.Warnings.Length > 0 && ImGui.CollapsingHeader("Capture warnings"u8))
-                foreach (var warning in sheet.Warnings)
-                    PrintUiStyle.Warning(warning);
-
-        }
-        finally { ImGui.EndChild(); }
     }
 
 
@@ -503,7 +462,10 @@ public sealed partial class BlueprintMod
             status = "Placement cancelled.";
             return;
         }
-        if (DrawProjectionSource(point, factor, origin, hovered, editable))
+        if (DrawWearPlacement(point, factor, origin, hovered, editable))
+            return;
+        if (DrawProjectionSource(point, factor, origin, hovered, editable) ||
+            DrawReferenceSource(point, factor, origin, hovered, editable))
             return;
         bool canvasPaneHovered = ImGui.IsWindowHovered();
         if (DrawGroupResize(point, factor, origin, hovered || canvasPaneHovered, editable))
@@ -523,6 +485,8 @@ public sealed partial class BlueprintMod
         if (UpdateDetailSelection(point, factor, hovered))
             return;
         if (DrawGhost(point, factor, origin, hovered))
+            return;
+        if (BeginRepeatedCanvasPlacement(hovered, editable))
             return;
         if (DrawReferenceMenu(editable))
             return;
@@ -646,7 +610,7 @@ public sealed partial class BlueprintMod
                     if (EngineOwner(target.Part) != null)
                         BeginSpec(target.Part, target.View);
                     else
-                        status = "Select an engine to add its specification sheet.";
+                        ReportFailure("Select an engine to add its specification sheet.");
                 }
                 else
                     BeginPartPlacement(target.View, target.Part, placeKind == 1, true, point);
@@ -733,7 +697,7 @@ public sealed partial class BlueprintMod
             {
                 if (valid && document.Apply(labels, out reason))
                 {
-                    CancelPlacement();
+                    FinishLabelPlacement();
                     SelectLabel(proposed.Id);
                     status = "Label placed. Drag either handle to adjust its leader.";
                     Repaint();

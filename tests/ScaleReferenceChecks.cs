@@ -79,7 +79,19 @@ static class ScaleReferenceChecks
         var colors = SheetLayout.Colors(options.Theme);
         var canvas = new Canvas(2400, 3000, colors.Paper, colors.Ink, options);
         var scene = new RenderScene(canvas.Pixels, Enumerable.Repeat(-1, 2400 * 3000).ToArray(), [],
-            [new(1, "FRONT", new(900, 500, 200, 400), new(200, 400, 1000, Vector3.Zero, Vector3.UnitX, Vector3.UnitZ, -Vector3.UnitY))], options: options);
+            [new(1, "FRONT", new(900, 500, 200, 400), new(200, 400, 1000, Vector3.Zero, Vector3.UnitX, Vector3.UnitZ, -Vector3.UnitY)),
+             new(9, "ROLLED", new(1500, 500, 200, 400), new(200, 400, 500, Vector3.Zero, Vector3.UnitZ, -Vector3.UnitX, -Vector3.UnitY), 2)], options: options);
+        foreach (var kind in Enum.GetValues<ScaleReferenceKind>())
+        {
+            var matched = KittenReferences.FromView(scene, 1, 9, outline: false, kind);
+            check(matched.Kind == kind && matched.SourceView == 9 && matched.View == 2 && !matched.Outline &&
+                matched.Axes == new ViewAxes(Vector3.UnitZ, -Vector3.UnitX, -Vector3.UnitY) &&
+                KittenReferences.Scale(scene, matched) == 500,
+                $"{kind} can inherit an independently scaled view's rolled orientation and preserve its style");
+        }
+        var linked = KittenReferences.FromView(scene, 5, 9, kind: ScaleReferenceKind.Banana);
+        check(KittenReferences.Bounds(scene, linked) is { Width: > 200, Height: < 100 },
+            "The placed banana's ink follows the picked view's axes and scale");
         KittenReference[] references = [new(1, 2, 250, 350, true, ScaleReferenceKind.Banana, FlipHorizontal: true),
             new(2, 4, 700, 350, true, ScaleReferenceKind.Banana),
             new(3, 2, 250, 850, false, ScaleReferenceKind.Banana),

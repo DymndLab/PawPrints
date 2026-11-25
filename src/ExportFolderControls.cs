@@ -82,8 +82,6 @@ public sealed partial class BlueprintMod
             }
             return;
         }
-        if (warningNotice != null)
-            return;
         if (!ImGui.IsPopupOpen(name))
         {
             exportFolderPath.SetValue((exportFolder ?? "").AsSpan());
@@ -138,16 +136,16 @@ public sealed partial class BlueprintMod
         ImGui.EndDisabled();
         ImGui.EndDisabled();
     }
-    static void OpenDesktopFolder(string folder)
+    static void OpenDesktopPath(string path)
     {
         if (!OperatingSystem.IsLinux())
         {
-            using var process = Process.Start(new ProcessStartInfo(folder) { UseShellExecute = true });
+            using var process = Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
             return;
         }
 
         var start = new ProcessStartInfo("xdg-open") { UseShellExecute = false };
-        start.ArgumentList.Add(Path.GetFullPath(folder));
+        start.ArgumentList.Add(Path.GetFullPath(path));
         using var opener = Process.Start(start);
     }
 
@@ -156,7 +154,7 @@ public sealed partial class BlueprintMod
         try
         {
             ExportPreferences.RequireExistingFolder(exportFolder!);
-            OpenDesktopFolder(exportFolder!);
+            OpenDesktopPath(exportFolder!);
         }
         catch (Exception error) { ReportFailure("Save failed: " + error.Message); }
     }

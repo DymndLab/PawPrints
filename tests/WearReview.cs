@@ -14,7 +14,7 @@ static class WearReview
                 bool fullSize = theme == 2 && level is 0 or 5;
                 var options = new PrintOptions(Theme: theme, Archive: level > 0, WearLevel: level, Orientation: 3,
                     CustomWidth: fullSize ? 3840 : 1280, CustomHeight: fullSize ? 2160 : 720,
-                    TitleBlock: new(CreatorInitials: "YN", Title: "S04 PAPER SAMPLE"));
+                    WearSeed: 29, TitleBlock: new(CreatorInitials: "YN", Title: "S04 PAPER SAMPLE"));
                 var page = options.Page;
                 var colors = SheetLayout.Colors(theme);
                 var canvas = new Canvas(page.Width, page.Height, colors.Paper, colors.Ink, options);
@@ -29,6 +29,9 @@ static class WearReview
                 canvas.Line(x - w, y + h, x + w, y - h, .7f);
                 canvas.Text("WEAR " + level, 100, 105, page.Width / 48, 1);
                 NativeText.Apply(canvas.Pixels, page.Width, page.Height, canvas.Runs);
+                var anchors = WearPlacement.Lettering(canvas.Runs, page);
+                var wear = WearPlacement.Resolve(options, "Paper sample", anchors, []);
+                WearPainting.Apply(canvas.Pixels, page.Width, page.Height, theme, wear, default);
                 if (fullSize)
                     Png.Write(Path.Combine(output, $"cream-{level}-4k.png"), page.Width, page.Height, canvas.Pixels);
                 var tile = ImageResampling.ResizeRgb(canvas.Pixels, page.Width, page.Height, cellWidth, cellHeight);

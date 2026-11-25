@@ -6,7 +6,8 @@ static class RenderBoundaryChecks
     public static void Run(Type modType, Assembly mod, Action<bool, string> check)
     {
         const BindingFlags flags = BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance;
-        string[] names = ["document", "sourceEditor", "renderTask", "cancellation", "sourceEpoch", "renderSourceTree",
+        string[] names = ["document", "sourceEditor", "renderTask", "cancellation", "sourceEpoch", "capturedCraft",
+            "creatingBlank", "captureForView", "captureForDetail", "detailCommitQueued",
             "renderPolicy", "renderKeepsDocument", "renderAdoptsHistory", "renderAppliesSettings", "selectedTable", "selectedCanvasView", "selectedHeight", "selectedText", "selectedSpec", "selectedLabel", "selectedKitten", "hoveredLabel", "requestedEdit", "requestedDelete", "requestedViewDelete", "requestedHeightDelete", "requestedTableDelete", "requestedReference", "requestedDetailDelete", "selectedDetail", "listedObject", "detailEdit", "selectedGroup"];
         var fields = names.Select(n => modType.GetField(n, flags)!).ToArray();
         var before = fields.Select(f => f.GetValue(null)).ToArray();
@@ -55,6 +56,17 @@ static class RenderBoundaryChecks
             modType.GetMethod("CancelGhost", flags)!.Invoke(null, null);
             check(Get("ghostPixels") == null && Get("ghostLastBox") == null && Get("ghostCommit") == null,
                 "Right-click ghost cancellation clears retained preview and pending confirmation target");
+            modType.GetMethod("StartGhost", flags)!.Invoke(null, ["primary view", prepare, commit, null, null, false, false]);
+            var viewType = mod.GetType("Blueprint.Rendering.DrawingView", true)!;
+            Set("viewDraft", Activator.CreateInstance(viewType, [100, 0, .5f, .5f, null, 0, null, -1, 3, null]));
+            var confirm = modType.GetMethod("RequestViewConfirmation", flags)!;
+            check((bool)confirm.Invoke(null, null)! && Get("ghostConfirmRequested") is true
+                && Get("ghostLastBox") == null && Get("ghostPress") == null,
+                "A primary view accepts keyboard confirmation before any canvas interaction or preview upload");
+            ((Task)Get("ghostTask")!).GetAwaiter().GetResult();
+            modType.GetMethod("CancelGhost", flags)!.Invoke(null, null);
+            check(Get("ghostConfirmRequested") is false && !(bool)confirm.Invoke(null, null)!,
+                "Canceling the draft clears its queued confirmation");
             Set("document", null);
             Set("sourceEditor", null);
             Set("renderKeepsDocument", true);

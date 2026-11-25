@@ -1,5 +1,4 @@
 using Blueprint.Rendering;
-using KSA;
 
 namespace Blueprint;
 
@@ -11,7 +10,6 @@ public sealed partial class BlueprintMod
     static RenderProgress? activeProgress;
     static long renderStarted;
     static long sourceEpoch;
-    static PartTree? renderSourceTree;
     static AnnotationDocument? acceptedDocument;
     static DrawingDefinition? acceptedDefinition;
     static readonly DrawingNotices drawingNotices = new();
@@ -19,11 +17,11 @@ public sealed partial class BlueprintMod
 
     static void StartRender(Func<CancellationToken, Sheet> render)
     {
-        renderSourceTree = sourceEditor?.EditingSpace.Parts;
         renderPolicy = new(renderKeepsDocument, renderAdoptsHistory, renderAppliesSettings);
         var reporter = new RenderProgress(progress);
         renderStarted = System.Diagnostics.Stopwatch.GetTimestamp();
-        var job = renderJobs.Start(CurrentRenderRevision, token => reporter.Run(() => render(token)));
+        long retained = RenderMemory.Retained(sheet, basePrint);
+        var job = renderJobs.Start(CurrentRenderRevision, token => RenderMemory.InSlot(() => reporter.Run(() => render(token)), token, retained));
         activeProgress = reporter;
         cancellation = job.Cancellation;
         renderTask = job.Task;
@@ -31,13 +29,17 @@ public sealed partial class BlueprintMod
 
     static void InvalidateRendering()
     {
+        ResetFinalExport();
         sourceEpoch = checked(sourceEpoch + 1);
         renderJobs.Clear();
         cancellation = null;
         renderTask = null;
+        capturedCraft = null;
+        pendingProjectOpen = pendingProjectLogo = null;
+        projectsToOpen = null;
         renderPolicy = null;
         renderAppliesSettings = renderAdoptsHistory = false;
-        captureForDetail = false;
+        creatingBlank = captureForView = captureForDetail = detailCommitQueued = false;
     }
 
     static void RememberAcceptedDocument()

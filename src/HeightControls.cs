@@ -13,7 +13,7 @@ public sealed partial class BlueprintMod
         var views = document.Scene.Views.Where(HeightDimensions.Eligible).ToArray();
         if (views.Length == 0)
         {
-            status = "Add a front, side or isometric view for a height dimension.";
+            ReportFailure("Add a front, side or isometric view for a height dimension.");
             return;
         }
         int id = views.FirstOrDefault(v => v.Id == selectedCanvasView)?.Id ?? views[Math.Clamp(heightViewIndex, 0, views.Length - 1)].Id;

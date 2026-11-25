@@ -5,8 +5,8 @@ namespace Blueprint.Storage;
 
 sealed class LayoutTemplateStore(ProfileStorage profile)
 {
-    const int Limit = 64;
-    string Folder => Path.Combine(profile.Root, "PawPrints", "Templates");
+    internal const int Limit = 64;
+    internal string Folder => Path.Combine(profile.Root, "PawPrints", "Templates");
 
     public IReadOnlyList<(string Name, LayoutTemplate Template)> ReadAll()
     {
@@ -28,7 +28,7 @@ sealed class LayoutTemplateStore(ProfileStorage profile)
         return entries.OrderBy(e => e.Item1, StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
-    public void Save(string name, LayoutTemplate template)
+    public string Save(string name, LayoutTemplate template)
     {
         name = ValidName(name.Trim());
         RequireSupported(template);
@@ -50,7 +50,9 @@ sealed class LayoutTemplateStore(ProfileStorage profile)
         {
             using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write))
                 stream.Write(bytes);
-            File.Move(temporary, Path.Combine(Folder, key + ".json"));
+            var destination = Path.Combine(Folder, key + ".json");
+            File.Move(temporary, destination);
+            return destination;
         }
         finally
         {
@@ -58,14 +60,14 @@ sealed class LayoutTemplateStore(ProfileStorage profile)
         }
     }
 
-    static string ValidName(string name)
+    internal static string ValidName(string name)
     {
         if (string.IsNullOrWhiteSpace(name) || name.Length > 64 || name.Any(char.IsControl))
             throw new InvalidDataException("Enter a template name up to 64 characters.");
         return name;
     }
 
-    static void RequireSupported(LayoutTemplate template)
+    internal static void RequireSupported(LayoutTemplate template)
     {
         var views = template.Layout.Views;
         if (views.IsDefault || views.Count(v => !v.Exploded) > DrawingPlacements.Limit ||

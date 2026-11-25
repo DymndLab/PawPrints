@@ -6,24 +6,28 @@ namespace Blueprint.Rendering;
 sealed class CurvatureLines
 {
     readonly HashSet<(int Mesh, int A, int B)> suppress = [];
-    readonly Dictionary<(int Mesh, int Triangle), int> patches = [];
+    readonly int[][] patches;
+    long patchCount;
+    CurvatureLines(int meshCount) => patches = new int[meshCount][];
     internal int SuppressedEdges => suppress.Count;
     // Count capacity, including spare slots, with room for buckets and entries.
     internal long EstimatedRetainedBytes => 64L * ((long)suppress.EnsureCapacity(0) +
-        patches.EnsureCapacity(0) + smoothCorners.EnsureCapacity(0));
+        smoothCorners.EnsureCapacity(0)) + 4 * patchCount + 32L * patches.Length;
     readonly Dictionary<(int Mesh, int A, int B), float> smoothCorners = [];
     public bool Smooth(int mesh, int a, int b, float creaseCosine = 1)
     {
-        a = patches.GetValueOrDefault((mesh, a), a);
-        b = patches.GetValueOrDefault((mesh, b), b);
+        int[] group = patches[mesh];
+        a = group[a];
+        b = group[b];
         var key = (mesh, Math.Min(a, b), Math.Max(a, b));
         return suppress.Contains(key) || smoothCorners.TryGetValue(key, out var cosine) && cosine >= creaseCosine;
     }
     public static CurvatureLines Build(Capture capture, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
-        var result = new CurvatureLines();
+        var result = new CurvatureLines(capture.Meshes.Length);
         long total = capture.Meshes.Sum(m => (long)(m.Indices.Length / 3)), completed = 0;
+        bool large = total >= NormalLinework.LargeScopeTriangles;
         int reported = -1;
         for (int mi = 0; mi < capture.Meshes.Length; mi++)
         {
@@ -35,22 +39,34 @@ sealed class CurvatureLines
                 reported = percent;
             }
             var mesh = capture.Meshes[mi];
-            result.ClassifyMesh(mesh, mi, token);
+            if (!mesh.FeatureInk)
+            {
+                if (large)
+                    RenderMemory.RequireGeometry(checked(result.EstimatedRetainedBytes +
+                        RenderMemory.CurvatureScratch(mesh.VertexCount, mesh.Indices.Length / 3)));
+                result.ClassifyMesh(mesh, mi, token, large);
+            }
             completed += mesh.Indices.Length / 3;
         }
         return result;
     }
 
-    void ClassifyMesh(Mesh m, int mi, CancellationToken token)
+    void ClassifyMesh(Mesh m, int mi, CancellationToken token, bool large)
     {
         int n = m.Indices.Length / 3;
-        var points = m.Vertices.Select(v => new Vector3((float)v[0], (float)v[1], (float)v[2])).ToArray();
+        long scratch = large ? RenderMemory.CurvatureScratch(m.VertexCount, n) : 0;
+        void CheckGrowth(int count)
+        {
+            if (large && (count & 4095) == 0)
+                RenderMemory.RequireGeometry(checked(EstimatedRetainedBytes + scratch));
+        }
+        var points = new Vector3[m.VertexCount];
         var weld = new Dictionary<(long, long, long), int>();
         var ids = new int[points.Length];
         for (int i = 0; i < points.Length; i++)
         {
             if ((i & 4095) == 0) token.ThrowIfCancellationRequested();
-            var p = points[i];
+            var p = points[i] = m.PointAt(i).Native;
             var key = ((long)Math.Round(p.X * 100000), (long)Math.Round(p.Y * 100000), (long)Math.Round(p.Z * 100000));
             if (!weld.TryGetValue(key, out int id))
                 weld[key] = id = weld.Count;
@@ -92,8 +108,11 @@ sealed class CurvatureLines
         foreach (var e in edges.Values.Where(e => e.Count == 2))
             if (Vector3.Dot(normals[e.First], normals[e.Second]) > .9999f)
                 parent[Find(e.First)] = Find(e.Second);
+        // Triangle indices are dense within a captured primitive.
         for (int i = 0; i < n; i++)
-            patches[(mi, i)] = Find(i);
+            parent[i] = Find(i);
+        patches[mi] = parent;
+        patchCount += n;
         var areas = new Dictionary<int, float>();
         var ns = new Dictionary<int, Vector3>();
         var graph = new Dictionary<int, HashSet<int>>();
@@ -177,7 +196,8 @@ sealed class CurvatureLines
                 if (minimumSpan > 0 && (seen.Max(p => areas[p]) / Math.Max(1e-12f, seen.Min(p => areas[p])) > 2
                     || !seen.Any(u => seen.Any(v => Angle(u, v) >= minimumSpan))))
                     continue;
-                suppress.Add((mi, Math.Min(a, b), Math.Max(a, b)));
+                if (suppress.Add((mi, Math.Min(a, b), Math.Max(a, b))))
+                    CheckGrowth(suppress.Count);
             }
         }
         // Neighboring pixels can fall on diagonally opposite patches at a
@@ -212,7 +232,13 @@ sealed class CurvatureLines
                     if (cosine < .94f)
                         continue;
                     var diagonal = (mi, Math.Min(a, b), Math.Max(a, b));
-                    smoothCorners[diagonal] = Math.Max(smoothCorners.GetValueOrDefault(diagonal), cosine);
+                    if (smoothCorners.TryGetValue(diagonal, out var prior))
+                        smoothCorners[diagonal] = Math.Max(prior, cosine);
+                    else
+                    {
+                        smoothCorners.Add(diagonal, cosine);
+                        CheckGrowth(smoothCorners.Count);
+                    }
                 }
             }
         }

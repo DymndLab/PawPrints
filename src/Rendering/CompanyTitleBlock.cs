@@ -136,6 +136,51 @@ static class CompanyTitleBlock
     }
 
 
+    // With the end view on the right, the adjacent end is wide in first angle.
+    internal static void Conventions(Canvas c, int angle, int x, int y, int width)
+    {
+        int projectionWidth = Math.Min(140, width * 38 / 100);
+        int axis = y + 33, radius = Math.Min(23, projectionWidth / 6);
+        int left = x + (projectionWidth - 5 * radius) / 2;
+        int right = left + 2 * radius, center = right + 2 * radius;
+        int a = angle == 1 ? radius / 2 : radius, b = angle == 1 ? radius : radius / 2;
+        void Outline(int x1, int y1, int x2, int y2)
+        {
+            c.Line(x1, y1, x2, y2, 1);
+            if (Math.Abs(x2 - x1) >= Math.Abs(y2 - y1)) c.Line(x1, y1 + 1, x2, y2 + 1, .85f);
+            else c.Line(x1 + 1, y1, x2 + 1, y2, .85f);
+        }
+        Outline(left, axis - a, right, axis - b);
+        Outline(right, axis - b, right, axis + b);
+        Outline(right, axis + b, left, axis + a);
+        Outline(left, axis + a, left, axis - a);
+        for (int dy = -radius - 1; dy <= radius + 1; dy++)
+            for (int dx = -radius - 1; dx <= radius + 1; dx++)
+            {
+                double distance = Math.Sqrt(dx * dx + dy * dy);
+                double edge = Math.Min(Math.Abs(distance - radius), Math.Abs(distance - radius / 2));
+                if (edge < 1.5) c.Ink(center + dx, axis + dy, (float)Math.Min(1, 1.5 - edge));
+            }
+        for (int i = left - 5; i <= center + radius + 5; i += 17)
+        {
+            c.Line(i, axis, Math.Min(i + 9, center + radius + 5), axis, .65f);
+            if (i + 13 <= center + radius + 5) c.Ink(i + 13, axis, .65f);
+        }
+        for (int i = axis - radius - 5; i <= axis + radius + 5; i += 17)
+        {
+            c.Line(center, i, center, Math.Min(i + 9, axis + radius + 5), .65f);
+            if (i + 13 <= axis + radius + 5) c.Ink(center, i + 13, .65f);
+        }
+        string name = angle == 1 ? "FIRST ANGLE" : "THIRD ANGLE";
+        int font = Math.Min(17, (int)(projectionWidth / (name.Length * .63f)));
+        c.Text(name, x + (int)((projectionWidth - name.Length * NativeText.MonoWidth(font)) / 2), y + 60, font, 1);
+        int tx = x + projectionWidth + 10, tw = width - projectionWidth - 18;
+        Text(c, "GENERAL TOLERANCES", tx, y + 3, tw, 18);
+        Text(c, "DECIMAL  ±.0001", tx, y + 26, tw, 24);
+        Text(c, "ANGLES   ±1°", tx, y + 54, tw, 24);
+    }
+
+
     // Compact layout: title/branding share the top band; the generation credit
     // occupies only the lower-left cell beside the signing block.
     public static void DrawCompact(Canvas c, string title, PrintOptions options, string? exported = null, Action<Canvas, Box>? maker = null, int? makerWidth = null, int topBand = 210, Action<Canvas, string, Box>? initials = null, string? calculatedScale = null)
@@ -156,10 +201,14 @@ static class CompanyTitleBlock
         int textLeft = TitleLeft(options), textWidth = split - textLeft - 30;
         Text(c, PrintScale.Title(title, data), textLeft, top + 14, textWidth, 68, true);
         Text(c, data.Subtitle, textLeft, top + 94, textWidth, 27);
-        Text(c, SheetLayout.ViewSummary(options), textLeft, middle + 10, textWidth, 21);
+        int conventionWidth = Math.Min(385, (split - textLeft) / 2), divider = split - conventionWidth;
+        Line(divider, middle, divider, middle + 2 * SignoffRowHeight - 1);
+        Conventions(c, options.DrawingAngle, divider + 4, middle, conventionWidth - 4);
+        int metadataWidth = divider - textLeft - 12;
+        Text(c, SheetLayout.ViewSummary(options), textLeft, middle + 10, metadataWidth, 21);
         string scaleText = PrintScale.Text(data, calculatedScale);
         if (scaleText.Length > 0)
-            Text(c, "SCALE   " + scaleText + "   /   " + PrintScale.Paper(options).ToUpperInvariant(), textLeft, middle + 50, textWidth, 24);
+            Text(c, "SCALE   " + scaleText + "   /   " + PrintScale.Paper(options).ToUpperInvariant(), textLeft, middle + 50, metadataWidth, 24);
         ExportDate(c, options, exported ?? LocalDate());
         Text(c, data.Company, split + 20, top + 8, logoSplit - split - 40, 26, true);
         if (data.Logo != null)
@@ -237,7 +286,7 @@ static class CompanyTitleBlock
     }
 
 
-    public static byte[] StampExportDate(Sheet sheet, string date)
+    public static byte[] StampExportDate(Sheet sheet, string date, CancellationToken token = default)
     {
         if (!sheet.Options.TitleBlockVisible || sheet.Options.TitleBlock == null)
             return sheet.Rgb;
@@ -250,6 +299,7 @@ static class CompanyTitleBlock
         var c = new Canvas(output, sheet.PixelWidth, sheet.PixelHeight, colors.Ink);
         ExportDate(c, sheet.Options, date);
         NativeText.Apply(output, sheet.PixelWidth, sheet.PixelHeight, c.Runs);
+        WearPainting.Apply(output, sheet.PixelWidth, sheet.PixelHeight, sheet.Options.Theme, sheet.AppliedWear, token, b);
         return output;
     }
 }

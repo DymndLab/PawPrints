@@ -5,6 +5,7 @@ static class ExplodedPainting
 {
     public const int Limit = 4;
     public const int CaptionSpace = 144;
+    static readonly ViewPixels emptyTile = new(1, 1, [0], []);
 
     public static uint? WholeCraftRoot(AssemblyCapture assembly)
     {
@@ -19,7 +20,9 @@ static class ExplodedPainting
     }
 
 
-    public static Sheet Compose(Sheet original, Sheet displayed, ExplodedDetail[] details, PartLabel[] labels, CancellationToken token, bool moveLabels = false, TableLayout? tables = null, ViewCaptionMark[]? captions = null)
+    public static Sheet Compose(Sheet original, Sheet displayed, ExplodedDetail[] details, PartLabel[] labels, CancellationToken token,
+        bool moveLabels = false, TableLayout? tables = null, ViewCaptionMark[]? captions = null, bool reuseTiles = true,
+        bool preserveDisplayedContent = true)
     {
         if (details.Length > Limit)
             throw new InvalidOperationException($"Up to {Limit} exploded details per sheet.");
@@ -48,13 +51,25 @@ static class ExplodedPainting
         {
             token.ThrowIfCancellationRequested();
             CanvasBounds.Require(detail.Bounds);
+            var previousTile = displayed.Scene?.Details.FirstOrDefault(d => d.Definition.Id == detail.Id);
+            if (detail.SourceIssue != DetailSourceIssue.None)
+            {
+                var unresolved = PaintUnresolved(canvas, detail, previousTile, token);
+                remainingPixels -= (long)unresolved.Pixels.Width * unresolved.Pixels.Height;
+                if (original.Options.FreeLayout && remainingPixels < 0)
+                    throw new InvalidOperationException("View layers exceed the retained-pixel memory budget (16,777,216 pixels). Reduce view sizes.");
+                rendered.Add(unresolved);
+                views.Add(new(detail.ViewId, SheetLayout.ViewName(detail.ViewId), detail.Bounds, unresolved.Frame));
+                reserved.Add(unresolved.CaptionBounds);
+                continue;
+            }
             if (detail.Bounds.Width < (original.Options.FreeLayout ? 64 : 200) || detail.Bounds.Height < 180 ||
                 (double)(detail.Bounds.Width - 24) * (detail.Bounds.Height - CaptionSpace) > (long)w * h)
                 throw new InvalidOperationException("Exploded view exceeds the render tile size budget.");
             // Movement reuses the exact tile; geometry edits/resize rerender only this detail.
             var poses = baseline.Poses;
             bool samePose = displayed.Scene != null && !displayed.Scene.detailsCacheInvalid && displayed.Scene.Poses.SequenceEqual(poses);
-            var prior = samePose ? displayed.Scene?.Details.FirstOrDefault(d => d.Definition.Id == detail.Id) : null;
+            var prior = reuseTiles && samePose && previousTile?.Definition.SourceIssue == DetailSourceIssue.None ? previousTile : null;
             // Moving a fitted detail pins its existing camera. That is still the
             // same projection and can reuse the cached geometry pixels.
             bool sameCamera = prior != null && (detail.Camera == prior.Definition.Camera || detail.Camera == prior.Frame);
@@ -134,6 +149,7 @@ static class ExplodedPainting
         NativeText.Apply(canvas.Pixels, w, h, canvas.Runs);
         var scene = new RenderScene(canvas.Pixels, owners, parts, views.ToArray(), reserved.ToArray(), original.Options, viewOwners)
         {
+            BaseLettering = baseline.BaseLettering,
             PickingInk = baseline.PickingInk,
             MeshOwners = meshOwners,
             MeshNodes = source.Assembly.MeshNodes,
@@ -141,16 +157,19 @@ static class ExplodedPainting
             CraftHeight = baseline.CraftHeight,
             ViewHeights = baseline.ViewHeights
         };
-        scene = scene.WithTables(tables ?? displayed.Scene?.Tables ?? new()).WithCaptions(captions ?? displayed.Scene?.Captions ?? baseline.Captions);
-        scene = scene.WithDimensions(displayed.Scene?.Dimensions ?? []).WithFreeText(displayed.Scene?.FreeText ?? []);
-        scene = scene.WithKittens(displayed.Scene?.Kittens ?? [], displayed.Scene?.KittenModel);
-        scene = scene.WithPoses(baseline.Poses).WithPerformance(baseline.Performance).WithSpecs(displayed.Scene?.Specs ?? []).WithDrawing(baseline.Drawing);
+        var content = preserveDisplayedContent ? displayed.Scene : null;
+        scene = scene.WithWear(content?.WearMarks ?? []).WithTables(tables ?? content?.Tables ?? new()).WithCaptions(captions ?? content?.Captions ?? baseline.Captions);
+        scene = scene.WithDimensions(content?.Dimensions ?? []).WithFreeText(content?.FreeText ?? []);
+        var references = content?.Kittens.Where(k => k.SourceView is not (>= 1000) || details.Any(d => d.ViewId == k.SourceView));
+        scene = scene.WithKittens(references?.ToArray() ?? [], content?.KittenModel);
+        scene = scene.WithPoses(baseline.Poses).WithPerformance(baseline.Performance).WithSpecs(content?.Specs ?? []).WithDrawing(baseline.Drawing);
         // A frame may cover the main drawing, but must not destroy its label anchors.
         foreach (var pair in fullVisuals)
             scene.Visible[pair.Key] = pair.Value;
         foreach (var item in baseline.Visible)
             scene.Visible[item.Key] = item.Value;
-        var adjusted = labels.Where(l => l.ViewId < 1000 || scene.Visible.ContainsKey((l.ViewId, l.PartId))).Select(label =>
+        var adjusted = labels.Where(l => l.ViewId < 1000 || scene.Visible.ContainsKey((l.ViewId, l.PartId)) ||
+            details.Any(d => d.ViewId == l.ViewId && d.SourceIssue != DetailSourceIssue.None)).Select(label =>
         {
             if (!moveLabels)
                 return label;
@@ -187,5 +206,52 @@ static class ExplodedPainting
             Details = rendered.Select(d => d.Definition).ToArray(),
             PoseMain = original
         }, adjusted, token);
+    }
+
+    static RenderedDetail PaintUnresolved(Canvas canvas, ExplodedDetail detail, RenderedDetail? previous, CancellationToken token)
+    {
+        // Reuse only the small view tile. Keep the former ink as dim context
+        // without inserting its owner IDs into the current capture.
+        var pixels = previous?.Pixels ?? emptyTile;
+        if (pixels.MeshOwners.Length > 0) pixels = pixels with { MeshOwners = [] };
+        var frame = previous?.Frame ?? new ProjectionFrame(1, 1, 1, Vector3.Zero, Vector3.UnitX, Vector3.UnitY, Vector3.UnitZ);
+        var b = detail.Bounds;
+        int width = (int)Math.Max(1, Math.Min(b.Width - 24, pixels.Width));
+        int height = (int)Math.Max(1, Math.Min(b.Height - CaptionSpace, pixels.Height));
+        int left = (int)(b.Center.X - width / 2f), top = (int)b.Y + 12;
+        int rightInk = -1, bottomInk = -1, leftInk = width, topInk = height;
+        for (int y = 0; y < height; y++)
+        {
+            token.ThrowIfCancellationRequested();
+            int row = y * pixels.Height / height * pixels.Width;
+            for (int x = 0; x < width; x++)
+            {
+                byte ink = pixels.Ink[row + x * pixels.Width / width];
+                if (ink == 0) continue;
+                canvas.Ink(left + x, top + y, ink / 560f);
+                leftInk = Math.Min(leftInk, x);
+                rightInk = Math.Max(rightInk, x);
+                topInk = Math.Min(topInk, y);
+                bottomInk = Math.Max(bottomInk, y);
+            }
+        }
+        string title = SheetLayout.ViewName(detail.ViewId) + " / " + AnnotationText.Clean(detail.Caption, 60);
+        string warning = detail.SourceIssue == DetailSourceIssue.MissingRoot ? "ROOT PART DELETED" : "ASSEMBLY CONNECTION CHANGED";
+        const int font = 28;
+        var color = new Vector3(220, 156, 44);
+        int yText = top + Math.Max(16, bottomInk) + 18;
+        float textWidth = Math.Max(title.Length, warning.Length) * NativeText.MonoWidth(font);
+        void Line(string text, int y) => canvas.Runs.Add(new(text,
+            (int)(b.Center.X - text.Length * NativeText.MonoWidth(font) / 2), y, font, color));
+        Line(title, yText);
+        Line(warning, yText + font + 4);
+        var geometry = rightInk < 0 ? new Box(left, top, 0, 0)
+            : new(left + leftInk, top + topInk, rightInk - leftInk + 1, bottomInk - topInk + 1);
+        return new(detail, frame, [], [], pixels)
+        {
+            CaptionBounds = new(b.Center.X - textWidth / 2, yText, textWidth, 2 * font + 4),
+            CaptionFont = font,
+            GeometryBounds = geometry
+        };
     }
 }

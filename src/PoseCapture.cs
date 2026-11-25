@@ -27,6 +27,8 @@ static class PoseCapture
     public static PoseControl[] Take(PartTree tree, AssemblyCapture assembly, PartSupport support)
     {
         var result = new List<PoseControl>();
+        Dictionary<uint, AssemblyNode>? nodes = null;
+        ILookup<uint, AssemblyNode>? children = null;
         int trackCount = 0;
         foreach (var module in tree.Modules.Get<KeyframeAnimationModule>())
         {
@@ -52,7 +54,10 @@ static class PoseCapture
                     if (!float.IsFinite(deltas[i].GetDeterminant()))
                         throw new InvalidDataException("Invalid animation transform.");
                 }
-                tracks.Add(new(child.InstanceId, AssemblyGraph.Ancestors(assembly, child.InstanceId).Length, AssemblyGraph.Subtree(assembly, child.InstanceId).ToArray(), deltas));
+                nodes ??= assembly.Nodes.ToDictionary(n => n.Id);
+                children ??= assembly.Nodes.Where(n => n.Parent.HasValue).ToLookup(n => n.Parent!.Value);
+                tracks.Add(new(child.InstanceId, AssemblyGraph.Ancestors(nodes, child.InstanceId).Length,
+                    AssemblyGraph.Subtree(children, child.InstanceId).ToArray(), deltas));
             }
             if (tracks.Count == 0 || !tracks.Any(t => t.Deltas.Any(d => d != t.Deltas[0])))
                 continue;

@@ -4,8 +4,12 @@ namespace Blueprint.Rendering;
 
 sealed record LogoImage(int Width, int Height, byte[] Rgba, bool? UseThemeInk = null);
 sealed record TitleBlockData(string Company = "", string Creator = "", string CreatorInitials = "", string DrawingDate = "",
-    string Approver = "Dymnd H. K.", string ApproverInitials = "DHK", string ApprovalDate = "", int Paws = 4, LogoImage? Logo = null, string InitialsStyle = InitialsFont.Face, string ApproverInitialsStyle = InitialsFont.ApproverFace,
-    string Title = "", string Subtitle = "GENERAL ARRANGEMENT", string Revision = "0", string Scale = "", int CreatorInitialsSize = 100, int ApproverInitialsSize = 92);
+    string Approver = TitleBlockData.DefaultApprover, string ApproverInitials = TitleBlockData.DefaultApproverInitials, string ApprovalDate = "", int Paws = 4, LogoImage? Logo = null, string InitialsStyle = InitialsFont.Face, string ApproverInitialsStyle = InitialsFont.ApproverFace,
+    string Title = "", string Subtitle = "GENERAL ARRANGEMENT", string Revision = "0", string Scale = "", int CreatorInitialsSize = 100, int ApproverInitialsSize = 92)
+{
+    public const string DefaultApprover = "Lou Brickant";
+    public const string DefaultApproverInitials = "LOB";
+}
 
 static class CompanyLogo
 {
@@ -37,7 +41,7 @@ static class CompanyLogo
         => Decode(Read(path));
 
 
-    static byte[] Read(string path)
+    internal static byte[] Read(string path)
     {
         if (!Supported(path))
             throw new InvalidDataException("Choose a PNG logo.");
@@ -50,8 +54,9 @@ static class CompanyLogo
     }
 
 
-    static LogoImage Decode(byte[] bytes)
+    internal static LogoImage Decode(byte[] bytes)
     {
+        if (bytes.Length is 0 or > MaxFileBytes) throw new InvalidDataException("Logo must be 16 MB or smaller.");
 #if PAWPRINTS_PORTABLE_RENDERING
         var decoded = PortableRendering.Active ? PortableRendering.DecodePng(bytes) : WindowsPngDecoder.Decode(bytes);
 #else

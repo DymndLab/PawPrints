@@ -29,8 +29,8 @@ static class PreviewUpdates
 {
     public static Sheet RenderBlank(Sheet previous, PrintOptions options, CancellationToken token)
     {
-        var fresh = BlankDrawing.Create(previous.Title, options, token);
-        var scene = previous.Scene!.WithBase(fresh.Rgb, fresh.Options);
+        var fresh = BlankDrawing.Create(previous.Title, options, token, composeWear: false);
+        var scene = previous.Scene!.WithBase(fresh.Rgb, fresh.Options, fresh.Scene!.BaseLettering);
         return AnnotationPainting.Compose(fresh with { Scene = scene }, previous.Labels, token);
     }
 
@@ -48,6 +48,7 @@ static class PreviewUpdates
                 Zones = old.Zones,
                 TitleBlock = old.TitleBlock,
                 TitleBlockVisible = old.TitleBlockVisible,
+                ProjectionAngle = old.ProjectionAngle,
                 Brand = old.Brand,
                 PartsTable = old.PartsTable,
                 FlagTable = old.FlagTable
@@ -79,7 +80,7 @@ static class PreviewUpdates
             Options = options,
             Rgb = canvas.Pixels,
             PreviewRgba = Sheet.MakePreview(canvas.Pixels),
-            Scene = scene.WithBase(canvas.Pixels, options),
+            Scene = scene.WithBase(canvas.Pixels, options, WearPlacement.Lettering(canvas.Runs, options.Page)),
             Labels = [],
             Details = []
         };
