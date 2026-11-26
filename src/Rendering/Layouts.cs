@@ -41,6 +41,9 @@ sealed class RenderScene
         copy.WearMarks = marks;
         return copy;
     }
+    public RenderScene WithoutWearMark(int index) =>
+        WithWear([.. WearMarks.AsSpan(0, index), .. WearMarks.AsSpan(index + 1)]);
+
     public RenderScene WithBase(byte[] rgb, PrintOptions options, Vector2[]? lettering = null)
     {
         var copy = (RenderScene)MemberwiseClone();

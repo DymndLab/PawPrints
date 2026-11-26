@@ -19,7 +19,37 @@ static class PrintTables
         return result;
     }
 
-    public static string PartKey(RenderScene scene, int part) => Catalog(scene).Single(r => r.PartIds.Contains(part)).Key;
+    static Dictionary<int, string> LabelKeys(RenderScene scene)
+    {
+        var keys = Catalog(scene).SelectMany(row => row.PartIds.Select(part => (Part: part, row.Key))).ToDictionary(p => p.Part, p => p.Key);
+        // An exploded pick ID aliases the physical part through its assembly
+        // node. It can reference the existing row without adding quantity.
+        if (scene.Details.Length > 0)
+        {
+            var physicalParts = scene.Parts.Where(p => !p.DetailOnly && p.NodeId.HasValue).ToLookup(p => p.NodeId);
+            foreach (var alias in scene.Parts.Where(p => p.DetailOnly && p.NodeId.HasValue))
+            {
+                var matches = physicalParts[alias.NodeId];
+                if (matches.Count() == 1)
+                    keys.Add(alias.Id, keys[matches.Single().Id]);
+            }
+        }
+        return keys;
+    }
+
+    public static string? PartKey(RenderScene scene, int part) => LabelKeys(scene).GetValueOrDefault(part);
+
+    public static PartLabel[] ResolveLabelKeys(RenderScene scene, IReadOnlyList<PartLabel> labels)
+    {
+        var normalized = FlagnoteNumbers.Normalize(labels, scene.Options.FlagTable);
+        Dictionary<int, string>? keys = null;
+        if (scene.Options.PartsTable && normalized.Any(l => !l.FlagNote && !l.FullText))
+            keys = LabelKeys(scene);
+        return normalized.Select(l => l.FlagNote ? l : l with
+        {
+            Key = l.FullText ? null : keys?.GetValueOrDefault(l.PartId)
+        }).ToArray();
+    }
 
     public static (string Key, string Text, string? Quantity)[] Rows(RenderScene scene, IReadOnlyList<PartLabel> labels, int id) => id == 0
         ? Catalog(scene).Select(r => (r.Key, r.Name, (string?)r.Quantity.ToString())).ToArray()

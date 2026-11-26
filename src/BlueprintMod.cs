@@ -22,6 +22,7 @@ public sealed partial class BlueprintMod
     static readonly string[] GridWeights = ["Uniform", "Every 5 squares", "Every 5 and 10 squares"];
     Harmony? harmony;
     static bool enabled, open;
+    static VehicleEditor? workspaceEditor;
     static readonly PrintWorkspaceFocus workspaceFocus = new();
     static int view = 0, theme, emphasis = 2;
     static bool grid = true;
@@ -41,17 +42,19 @@ public sealed partial class BlueprintMod
     }
 
 
-    static bool HasEditorVehicle => KSA.Program.Editor?.EditingSpace.Parts is { } tree && tree.Parts.Length > 0;
-    static bool CanOpenWorkspace => HasEditorVehicle || sheet != null && KSA.Program.Editor is { } editor &&
-        ReferenceEquals(editor, sourceEditor) && sourceCraft == editor.EditingSpace.Id;
+    static bool CanOpenWorkspace => KSA.Program.Editor is { } editor && CanOpenWorkspaceFor(editor);
+    static bool CanOpenWorkspaceFor(VehicleEditor editor) =>
+        editor.EditingSpace.Parts is { } tree && tree.Parts.Length > 0 ||
+        sheet != null && ReferenceEquals(editor, sourceEditor) && sourceCraft == editor.EditingSpace.Id;
     static bool NativeDialogOpen => GameSettings.Show || GameSaves.IsOpen || VehicleSaves.IsOpen;
 
     internal static void OpenExport()
     {
-        if (!enabled || !CanOpenWorkspace)
+        if (!enabled || KSA.Program.Editor is not { } editor || !CanOpenWorkspaceFor(editor))
             return;
         if (!open)
             fallbackReopen++;
+        workspaceEditor = editor;
         open = true;
         workspaceFocus.Request();
     }
@@ -111,6 +114,7 @@ public sealed partial class BlueprintMod
         ReleaseSetupPaper();
         enabled = false;
         open = false;
+        workspaceEditor = null;
         InvalidateRendering();
         CancelTextPreview();
         CancelGhost();
@@ -155,6 +159,7 @@ public sealed partial class BlueprintMod
             ReleasePrecisionCursor();
             enabled = false;
             open = false;
+            workspaceEditor = null;
             InvalidateRendering();
             CancelTextPreview();
             CancelGhost();
@@ -182,6 +187,9 @@ public sealed partial class BlueprintMod
 
         static void Prefix(VehicleEditor __instance)
         {
+            // New Drawing owns the workspace before it has a rendered sheet.
+            if (ReferenceEquals(workspaceEditor, __instance))
+                CloseExport();
             if (!ReferenceEquals(sourceEditor, __instance))
                 return;
             InvalidateRendering();
@@ -508,6 +516,8 @@ public sealed partial class BlueprintMod
     {
         if (!enabled)
             return;
+        if (open && !ReferenceEquals(workspaceEditor, editor))
+            CloseExport();
         PrintDiagnostics.State("editor", open ? "open" : "closed");
         EnsureDrawingTitle(editor);
         if (sourceEditor != null && (!ReferenceEquals(sourceEditor, editor) || sourceCraft != editor.EditingSpace.Id))
@@ -662,7 +672,11 @@ public sealed partial class BlueprintMod
             if (open)
                 CloseExport();
             else
+            {
                 OpenExport();
+                if (open)
+                    PrintDiagnostics.Record("workspace.open.shortcut");
+            }
             Console.WriteLine("[Paw Prints] Export shortcut received; workspace " + (open ? "opened." : "closed."));
             return false; // Only the accepted press is consumed; other input remains native.
         }
@@ -696,7 +710,11 @@ public sealed partial class BlueprintMod
                 try
                 {
                     if (ImGui.MenuItem("Open PawPrint Editor"u8, "Ctrl+Alt+P"u8, false, CanOpenWorkspace))
+                    {
                         OpenExport();
+                        if (open)
+                            PrintDiagnostics.Record("workspace.open.menu");
+                    }
                     if (!CanOpenWorkspace)
                         PrintUiStyle.Help("No vehicle loaded");
                 }

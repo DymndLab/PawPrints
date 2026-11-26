@@ -43,6 +43,7 @@ public sealed partial class BlueprintMod
 
     static void SelectCanvasObject(DrawingObject? item)
     {
+        selectedPlacedWear = null;
         listedObject = item;
         SelectLabel(-1);
         SelectDetail(-1);

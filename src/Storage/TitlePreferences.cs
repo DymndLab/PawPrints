@@ -5,7 +5,8 @@ namespace Blueprint.Storage;
 
 sealed record TitlePreferences(TitleBlockData Data, string LogoFile, bool LivePreviewUpdates = false,
     bool TitleBlockVisible = true, int InitialsSizeVersion = 0, int ProjectionAngle = 3, bool DetailedExport = false,
-    NewDrawingDefaults? Drawing = null, bool SnapPanels = true, LeaderLine Leader = LeaderLine.Dotted, LeaderTip Endpoint = LeaderTip.Dot);
+    NewDrawingDefaults? Drawing = null, bool SnapPanels = true, LeaderLine Leader = LeaderLine.Dotted, LeaderTip Endpoint = LeaderTip.Dot,
+    bool RoundPartLabels = false, bool PicketFlagnotes = false);
 
 sealed record NewDrawingDefaults(DrawingOutput Output, int Width, int Height, int Theme = 0,
     bool Grid = true, bool Zones = true, int Wear = 0)

@@ -9,6 +9,7 @@ public sealed partial class BlueprintMod
     {
         ClearSetupGesture();
         ReleaseSetupSketch();
+        ReleaseSetupPaper();
         ResetFinalExport();
         cancellation?.Cancel();
         if (setupStage != SetupStage.Editing)
@@ -16,7 +17,11 @@ public sealed partial class BlueprintMod
             DiscardDrawingDraft();
             setupStage = sheet == null ? SetupStage.Choose : SetupStage.Editing;
         }
+        if (open)
+            PrintDiagnostics.State("editor", "closed");
         open = false;
+        workspaceEditor = null;
+        annotationKeysActive = spaceHeld = panning = false;
         viewSizeDialog = false;
         exportSetupOpen = false;
         projectsToOpen = null;

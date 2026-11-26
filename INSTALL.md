@@ -1,11 +1,11 @@
 # Installation
 
-PawPrints **0.6.1** requires **Windows x64**, **KSA 2026.11.25.5949** and **StarMap 0.5.4**. In Borea, choose PawPrints in the Stable channel for an instance with those versions. Native Linux testing is pending.
+PawPrints **0.6.2** requires **Windows x64**, **KSA 2026.11.25.5949** and **StarMap 0.5.4**. In Borea, choose PawPrints in the Stable channel for an instance with those versions. Native Linux testing is pending.
 
 ## Install with StarMap
 
 1. Close KSA.
-2. Download `PawPrints-0.6.1.zip` from [Releases](https://github.com/DymndLab/PawPrints/releases). Use the mod ZIP; GitHub's source archives contain development files.
+2. Download `PawPrints-0.6.2.zip` from [Releases](https://github.com/DymndLab/PawPrints/releases). Use the mod ZIP; GitHub's source archives contain development files.
 3. Extract its `PawPrints` folder into your StarMap profile's `mods` directory. Keep the packaged libraries and licenses together.
 4. Enable `PawPrints` in that profile's `manifest.toml`, updating an existing entry if present:
 

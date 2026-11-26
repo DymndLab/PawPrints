@@ -552,6 +552,7 @@ static class ExplodedChecks
                             outsideSame = false;
         check(outsideSame, "Detail frame leaves all underlying print pixels outside its rectangle unchanged");
         check(PrintTables.Catalog(initial.Scene).Sum(p => p.Quantity) == parts.Length, "Detail instances do not inflate parts-table quantities");
+        CheckTableLabels(check, initial, detail.ViewId, parts.Length, tableLayout);
         var target = initial.Scene.Visible.First(p => p.Key.View == detail.ViewId);
         var document = new AnnotationDocument(original.Scene);
         document.Rebind(initial.Scene, [], [detail]);
@@ -670,6 +671,53 @@ static class ExplodedChecks
         Png.Write(Path.Combine(folder, "guides-dotted.png"), notedDetail.PixelWidth, notedDetail.PixelHeight, notedDetail.Rgb);
         Png.Write(Path.Combine(folder, "guides-solid.png"), styledDetail.PixelWidth, styledDetail.PixelHeight, styledDetail.Rgb);
     }
+    static void CheckTableLabels(Action<bool, string> check, Sheet exploded, int viewId, int physicalPartCount, TableLayout tables)
+    {
+        var options = exploded.Options with { PartsTable = true, FlagTable = true, FreeLayout = true };
+        var scene = exploded.Scene!.WithOptions(options).WithTables(tables);
+        var target = scene.Visible.First(p => p.Key.View == viewId && PrintTables.PartKey(scene, p.Key.Part) != null);
+        var alias = scene.Parts.Single(p => p.Id == target.Key.Part);
+        var physical = scene.Parts.Single(p => !p.DetailOnly && p.NodeId == alias.NodeId);
+        var doc = new AnnotationDocument(scene);
+        var circle = doc.Draft(viewId, alias.Id, out _, symbol: LabelSymbol.Circle)! with { X = 240, Y = 320 };
+        check(alias.DetailOnly && circle.Key != null && circle.Key == PrintTables.PartKey(scene, physical.Id) &&
+            PrintTables.Catalog(scene).Sum(row => row.Quantity) == physicalPartCount,
+            "Exploded labels use the matching craft part's table symbol without adding quantity");
+        var flag = doc.Draft(viewId, alias.Id, out _, LeaderLine.Solid, LeaderTip.None, "Safety check", LabelSymbol.Flag)! with { Id = 2, X = 360, Y = 420 };
+        check(doc.Apply([circle, flag], out _), "The drawing accepts a circular part symbol and a picket flagnote together");
+        var image = AnnotationPainting.Compose(exploded with { Scene = scene, Options = options }, doc.Labels, default);
+        var circleRoute = doc.Routes.Single(r => r.Label.Id == circle.Id);
+        var circleBox = circleRoute.TextBox;
+        check(circleBox.Width == circleBox.Height && Math.Abs(Vector2.Distance(circleBox.Center, circleRoute.Start) - circleBox.Width / 2) < .001f &&
+            image.ObjectHits![new(DrawingObjectKind.Label, circle.Id)].Hit(new(circleBox.Center.X, circleBox.Y), 2),
+            "The circle leader meets the round outline, and the exported outline is selectable");
+        var flagRoute = doc.Routes.Single(r => r.Label.Id == flag.Id);
+        var flagBox = flagRoute.TextBox;
+        foreach (var anchor in new[] { new Vector2(flagBox.X - 50, flagBox.Y), new Vector2(flagBox.Right + 50, flagBox.Y) })
+        {
+            var outline = AnnotationText.SymbolOutline(LabelSymbol.Flag, flagBox, anchor);
+            check(outline.Length == 5 && outline[0] == LeaderRouting.TextSocket(flagRoute.Label, flagBox, anchor) &&
+                outline[0].X == (anchor.X < flagBox.X ? flagBox.X : flagBox.Right),
+                "The flag's leader connects at the picket tip on the side facing the part");
+        }
+
+        check(doc.Change(circle with { FullText = true }, out _) && doc.Labels[0].Key == null &&
+            string.Join(" ", doc.Routes.Single(r => r.Label.Id == circle.Id).Lines) == circle.Text &&
+            PrintTables.Rows(scene, doc.Labels, 0).Any(row => row.Key == circle.Key),
+            "Converting a bubble displays the label text and keeps its parts-table row");
+        doc.Undo();
+        check(doc.Labels[0] == circle, "Undo restores the circle and table letter");
+        doc.Redo();
+        var withoutTable = scene.WithOptions(options with { PartsTable = false });
+        var restored = new AnnotationDocument(scene, PrintTables.ResolveLabelKeys(withoutTable, doc.Labels));
+        check(restored.Labels[0] is { FullText: true, Key: null, Symbol: LabelSymbol.Circle } &&
+            restored.Change(restored.Labels[0] with { FullText = false }, out _) && restored.Labels[0] == circle,
+            "The full-label override survives table toggles and can be switched back to the original symbol");
+        var oldLabel = circle with { Key = null, Symbol = LabelSymbol.Square };
+        check(new AnnotationDocument(scene, [oldLabel]).Labels.Single().Key == circle.Key,
+            "Existing exploded labels acquire their catalog letter when reopened with a parts table");
+    }
+
     static void CheckRootedScope(Action<bool, string> check)
     {
         static JointKey Joint(uint a, uint b) => JointKey.Between(new(a, "end"), new(b, "end"));

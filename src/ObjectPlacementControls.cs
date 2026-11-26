@@ -46,7 +46,7 @@ public sealed partial class BlueprintMod
         var scene = document.Scene.WithOptions(options);
         if (bounds is { } b)
             scene = scene.WithTables(scene.Tables.Set(id, b));
-        var labels = FlagnoteNumbers.Normalize(document.Labels, options.FlagTable).Select(l => l with { ManualPlacement = true, Key = l.FlagNote ? l.Key : options.PartsTable && !scene.Parts.Single(p => p.Id == l.PartId).DetailOnly ? PrintTables.PartKey(scene, l.PartId) : null }).ToArray();
+        var labels = document.Labels.Select(l => l with { ManualPlacement = true }).ToArray();
         var current = sheet with
         {
             Options = options,

@@ -14,6 +14,7 @@ public sealed partial class BlueprintMod
     static (int Theme, uint Seed)? wearPaletteKey;
     static (int Theme, WearMark Shape)? wearGhostKey;
     static Box wearGhostBounds;
+    static (WearMark[] Marks, int Index)? selectedPlacedWear;
 
     static void DisposeWearTextures()
     {
@@ -67,6 +68,56 @@ public sealed partial class BlueprintMod
         PrintUiText.Wrapped("Click to place. Right-click finishes. Ctrl+Z undoes a placement.");
     }
 
+    static void DrawPlacedWearControls()
+    {
+        if (document?.Scene is not { WearMarks.Length: > 0 } scene)
+            return;
+        var marks = scene.WearMarks;
+        int current = selectedPlacedWear is { } selected && ReferenceEquals(marks, selected.Marks) ? selected.Index + 1 : 0;
+        string[] choices = ["Choose a mark", .. marks.Select((mark, index) => $"{index + 1}. {WearPlacement.Names[(int)mark.Kind]} ({mark.X:P0}, {mark.Y:P0})")];
+        ImGui.BeginDisabled(!CanEditAnnotations || !PrintIsCurrent);
+        ImGui.Text("Placed wear");
+        ImGui.SetNextItemWidth(-1);
+        if (ImGui.Combo("##Placed wear mark"u8, ref current, choices, choices.Length))
+        {
+            activePlaceTool = PlaceTool.None;
+            pickingPartTool = false;
+            SelectCanvasObject(null);
+            selectedPlacedWear = current > 0 ? (marks, current - 1) : null;
+        }
+        ImGui.BeginDisabled(current == 0);
+        if (ImGui.Button("Remove selected mark"u8))
+        {
+            QueueWear(scene.WithoutWearMark(current - 1), "Removing wear", "Wear removed. Ctrl+Z restores it.");
+        }
+        ImGui.EndDisabled();
+        ImGui.EndDisabled();
+    }
+
+    static void DrawPlacedWearSelection(float2 origin, float2 size, float factor)
+    {
+        if (selectedPlacedWear is not { } selected || document?.Scene is not { } scene ||
+            !ReferenceEquals(selected.Marks, scene.WearMarks) || !PrintIsCurrent)
+            return;
+        var bounds = WearPainting.Bounds(selected.Marks[selected.Index], scene.Options);
+        var draw = ImGui.GetWindowDrawList();
+        draw.PushClipRect(origin, origin + size, true);
+        draw.AddRect(origin + new float2(bounds.X, bounds.Y) * factor,
+            origin + new float2(bounds.Right, bounds.Bottom) * factor, 0xFF44DDFF, 0, ImDrawFlags.None, 2);
+        draw.PopClipRect();
+    }
+
+    static void QueueWear(RenderScene scene, string operation, string notice)
+    {
+        var source = sheet! with { Scene = scene };
+        var labels = document!.Labels;
+        composingLabels = true;
+        renderKeepsDocument = true;
+        renderAdoptsHistory = false;
+        progress = operation;
+        StartRender(token => AnnotationPainting.Compose(source, labels, token) with { Notice = notice });
+    }
+
     static bool DrawWearPlacement(Vec point, float factor, float2 origin, bool hovered, bool editable)
     {
         if (activePlaceTool != PlaceTool.Wear || !hovered || !editable || !CanEditAnnotationState(true) || sheet == null || document == null)
@@ -112,16 +163,7 @@ public sealed partial class BlueprintMod
                 status = $"The sheet has reached its {WearPlacement.Limit} placed wear marks.";
                 return true;
             }
-            var source = sheet with
-            {
-                Scene = document.Scene.WithWear([.. existing, mark])
-            };
-            var labels = document.Labels;
-            composingLabels = true;
-            renderKeepsDocument = true;
-            renderAdoptsHistory = false;
-            progress = "Placing wear";
-            StartRender(token => AnnotationPainting.Compose(source, labels, token) with { Notice = "Wear placed. Ctrl+Z undoes this placement." });
+            QueueWear(document.Scene.WithWear([.. existing, mark]), "Placing wear", "Wear placed. Ctrl+Z undoes this placement.");
             if (WearPlacement.Tear(kind))
                 wearVariation = WearPlacement.NewSeed();
         }
