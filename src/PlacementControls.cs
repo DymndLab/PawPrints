@@ -14,6 +14,7 @@ public sealed partial class BlueprintMod
 
     static void LeavePlaceTab()
     {
+        selectedPlacedWear = null;
         if (activePlaceTool == PlaceTool.None)
             return;
         if (placingText || textDraft != null || pendingLabel != null || flagnotePlacement != null || specDraft != null || GhostActive)
@@ -75,6 +76,7 @@ public sealed partial class BlueprintMod
             {
                 if (placingText) CancelTextPlacement();
                 pickingPartTool = false;
+                selectedPlacedWear = null;
                 activePlaceTool = tool;
             }
             return clicked;
@@ -116,6 +118,7 @@ public sealed partial class BlueprintMod
 
         Button("Place wear", document?.Scene.WearMarks.Length < WearPlacement.Limit, captureRequired: false, tool: PlaceTool.Wear);
         if (activePlaceTool == PlaceTool.Wear) DrawWearControls();
+        DrawPlacedWearControls();
         DrawGroupControls();
         DrawPlacementSettings();
         if (referenceViewPick != null)

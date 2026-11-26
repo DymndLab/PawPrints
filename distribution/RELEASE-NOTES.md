@@ -1,3 +1,12 @@
+# PawPrints 0.6.2
+
+Supports **Windows x64**, **KSA 2026.11.25.5949**, and **StarMap 0.5.4**. Native Linux testing is pending.
+
+- PawPrints closes when you leave the Vehicle Editor, so an unfinished New Drawing screen won’t carry over into the next editor session.
+- Exploded views use the same parts-table letter as other views for the same part. Right-click a part label to switch between its table symbol and full text.
+- Choose circular parts-table symbols or picket-shaped flagnote symbols in Preferences. Right-click an existing symbol to change its shape on the drawing.
+- Remove individual marks under **Place → Placed wear**. **Ctrl+Z** restores the removed mark.
+
 # PawPrints 0.6.1
 
 - Arrange Views now has a visual grid picker. Drag from the X or click a cell to set your grid size.

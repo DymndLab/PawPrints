@@ -211,6 +211,7 @@ Require(editorAfter.Length == editorBefore.Length && editorAfter.Select((i, inde
     "The tool prompt hook replaces only the native foreground text draw");
 PrintRecoveryChecks.Run(modType, mod, Require);
 SelectionChecks.Run(modType, Require);
+WorkspaceLifecycleChecks.Run(modType, editorField.FieldType, Require);
 FuelHoseCaptureChecks.Run(host, mod, Require);
 CraftIdentityChecks.Run(host, mod, Require);
 RenderBoundaryChecks.Run(modType, mod, Require);

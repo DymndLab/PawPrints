@@ -9,12 +9,17 @@ enum LeaderLine
 {
     Dotted, Dashed, Solid
 }
+enum LabelSymbol
+{
+    Square, Circle, Flag
+}
 sealed record LeaderPoint(float X, float Y)
 {
     public Vector2 Vector => new(X, Y);
 }
 sealed record PartLabel(int Id, int ViewId, int PartId, string Text, float X, float Y, bool Visible = true, LeaderTip Tip = LeaderTip.Dot, LeaderLine Line = LeaderLine.Dotted,
-    LeaderPoint? Attachment = null, LeaderPoint? Socket = null, bool ManualPlacement = false, bool FlagNote = false, string? Key = null, bool AttachmentPinned = false, bool ShowQuantity = false, int Quantity = 1, int FlagnoteNumber = 0)
+    LeaderPoint? Attachment = null, LeaderPoint? Socket = null, bool ManualPlacement = false, bool FlagNote = false, string? Key = null, bool AttachmentPinned = false, bool ShowQuantity = false, int Quantity = 1, int FlagnoteNumber = 0,
+    LabelSymbol Symbol = LabelSymbol.Square, bool FullText = false)
 {
 
 
@@ -66,14 +71,55 @@ static class AnnotationText
 
     public static Box Bounds(PartLabel label)
     {
-        if (label.Key != null)
-            return new(label.X, label.Y, Math.Max(54, label.Key.Length * Font * .62f + 20), 50);
+        if (label.Key is { } key)
+        {
+            float width = Math.Max(54, key.Length * Font * .62f + 20);
+            if (label.Symbol == LabelSymbol.Circle)
+            {
+                float diameter = MathF.Ceiling(new Vector2(key.Length * NativeText.MonoWidth(Font), Font).Length() + 14);
+                return new(label.X, label.Y, Math.Max(54, diameter), Math.Max(54, diameter));
+            }
+            return new(label.X, label.Y, width + (label.Symbol == LabelSymbol.Flag ? FlagPointDepth : 0), 50);
+        }
         var lines = Lines(label);
         return new(label.X, label.Y, lines.Max(l => l.Length) * NativeText.MonoWidth(Font) + 6, (lines.Length - 1) * Leading + Font);
     }
 
 
     public static string[] Lines(PartLabel label) => label.Key != null ? [label.Key] : Wrap(label.Text + (!label.FlagNote && label.ShowQuantity && label.Quantity > 1 ? $" (QTY {label.Quantity})" : ""), limit: 100);
+
+    const float FlagPointDepth = 18;
+
+    public static Vector2 FlagPoint(Box box, Vector2 part) => new(part.X < box.Center.X ? box.X : box.Right, box.Center.Y);
+
+    public static Vector2 TextOrigin(PartLabel label, Box box, Vector2 part)
+    {
+        if (label.Key is not { } key)
+            return new(box.X, box.Y);
+        float center = box.Center.X;
+        if (label.Symbol == LabelSymbol.Flag)
+            center += FlagPoint(box, part).X == box.X ? FlagPointDepth / 2 : -FlagPointDepth / 2;
+        return new(center - key.Length * Font * .31f, box.Center.Y - 19);
+    }
+
+    public static Vector2[] SymbolOutline(LabelSymbol symbol, Box box, Vector2 part)
+    {
+        if (symbol == LabelSymbol.Circle)
+            return Enumerable.Range(0, 64).Select(i =>
+            {
+                float angle = MathF.Tau * i / 64;
+                return box.Center + new Vector2(MathF.Cos(angle), MathF.Sin(angle)) * (box.Width / 2);
+            }).ToArray();
+        if (symbol == LabelSymbol.Flag)
+        {
+            var tip = FlagPoint(box, part);
+            bool pointsLeft = tip.X == box.X;
+            float shoulder = tip.X + (pointsLeft ? FlagPointDepth : -FlagPointDepth);
+            float back = pointsLeft ? box.Right : box.X;
+            return [tip, new(shoulder, box.Y), new(back, box.Y), new(back, box.Bottom), new(shoulder, box.Bottom)];
+        }
+        return [new(box.X, box.Y), new(box.Right, box.Y), new(box.Right, box.Bottom), new(box.X, box.Bottom)];
+    }
 }
 
 static class LeaderRouting
@@ -205,6 +251,16 @@ static class LeaderRouting
 
     public static Vector2 TextSocket(PartLabel label, Box box, Vector2 point)
     {
+        if (label.Key != null)
+        {
+            if (label.Symbol == LabelSymbol.Flag)
+                return AnnotationText.FlagPoint(box, point);
+            if (label.Symbol == LabelSymbol.Circle)
+            {
+                var direction = point - box.Center;
+                return box.Center + (direction.LengthSquared() > 0 ? Vector2.Normalize(direction) : Vector2.UnitX) * (box.Width / 2);
+            }
+        }
         Vector2[] sockets = label.Key == null
             ? [new(box.X, box.Center.Y), new(box.Right, box.Center.Y)]
             : [new(box.X,box.Y),new(box.Right,box.Y),new(box.Right,box.Bottom),new(box.X,box.Bottom),
@@ -232,7 +288,8 @@ static class LeaderRouting
         foreach (var candidate in candidates)
         {
             Vector2 start = TextSocket(label, box, candidate);
-            if (Vector2.DistanceSquared(start, candidate) < 1 || box.Contains(start + Vector2.Normalize(candidate - start) * 3))
+            if (Vector2.DistanceSquared(start, candidate) < 1 ||
+                (label.Key != null && label.Symbol == LabelSymbol.Circle ? box.Contains(candidate) : box.Contains(start + Vector2.Normalize(candidate - start) * 3)))
                 continue;
             if (!FirstHit(scene, start, candidate, out var hit, out int owner) || owner != label.PartId)
                 continue;
@@ -447,7 +504,7 @@ sealed class AnnotationDocument
 
     public void Rebind(RenderScene scene, PartLabel[] labels, ExplodedDetail[] details, bool remember = true)
     {
-        labels = FlagnoteNumbers.Normalize(labels, scene.Options.FlagTable);
+        labels = PrintTables.ResolveLabelKeys(scene, labels);
         if (remember && (!Details.SequenceEqual(details) || !Labels.SequenceEqual(labels) || Tables != scene.Tables || !Scene.Captions.SequenceEqual(scene.Captions) || !Scene.Dimensions.SequenceEqual(scene.Dimensions) || !Scene.Kittens.SequenceEqual(scene.Kittens) || !Scene.Poses.SequenceEqual(scene.Poses) || !Scene.Specs.SequenceEqual(scene.Specs) || !Scene.FreeText.SequenceEqual(scene.FreeText) || !Scene.WearMarks.SequenceEqual(scene.WearMarks) || Scene.Drawing != scene.Drawing || Scene.Options != scene.Options))
             Remember();
         Scene = scene;
@@ -480,7 +537,7 @@ sealed class AnnotationDocument
     {
         Scene = scene;
         Tables = scene.Tables;
-        Labels = FlagnoteNumbers.Normalize(initial ?? [], scene.Options.FlagTable);
+        Labels = PrintTables.ResolveLabelKeys(scene, initial ?? []);
         nextId = Labels.Length == 0 ? 1 : Labels.Max(l => l.Id) + 1;
         RefreshRoutes();
     }
@@ -495,7 +552,7 @@ sealed class AnnotationDocument
 
     public bool Apply(PartLabel[] labels, out string reason)
     {
-        labels = FlagnoteNumbers.Normalize(labels, Scene.Options.FlagTable);
+        labels = PrintTables.ResolveLabelKeys(Scene, labels);
         if (labels.Length > Limit)
         {
             reason = $"This sheet supports up to {Limit} annotations.";
@@ -561,7 +618,7 @@ sealed class AnnotationDocument
     public bool Delete(int id, out string reason) => Apply(Labels.Where(l => l.Id != id).ToArray(), out reason);
 
 
-    public PartLabel? Draft(int viewId, int partId, out string reason, LeaderLine line = LeaderLine.Dotted, LeaderTip tip = LeaderTip.Dot, string? note = null)
+    public PartLabel? Draft(int viewId, int partId, out string reason, LeaderLine line = LeaderLine.Dotted, LeaderTip tip = LeaderTip.Dot, string? note = null, LabelSymbol symbol = LabelSymbol.Square)
     {
         if (Labels.Length >= Limit)
         {
@@ -576,7 +633,8 @@ sealed class AnnotationDocument
         reason = "Drag or click to place the label anywhere on the sheet. Right-click to cancel.";
         int flagNumber = note == null ? 0 : FlagnoteNumbers.Next(Labels);
         return new(nextId, viewId, partId, AnnotationText.Clean(note ?? Scene.Parts.Single(p => p.Id == partId).Name), 0, 0, Tip: tip, Line: line, ManualPlacement: true, FlagNote: note != null,
-            Key: note != null ? (Scene.Options.FlagTable ? $"F{flagNumber}" : null) : (Scene.Options.PartsTable && !Scene.Parts.Single(p => p.Id == partId).DetailOnly ? PrintTables.PartKey(Scene, partId) : null), Quantity: note == null ? LabelQuantities.Count(Scene, viewId, partId) : 1, FlagnoteNumber: flagNumber);
+            Key: note != null ? (Scene.Options.FlagTable ? $"F{flagNumber}" : null) : (Scene.Options.PartsTable ? PrintTables.PartKey(Scene, partId) : null),
+            Quantity: note == null ? LabelQuantities.Count(Scene, viewId, partId) : 1, FlagnoteNumber: flagNumber, Symbol: symbol);
     }
 
 
@@ -692,7 +750,7 @@ static class AnnotationPainting
     public static Sheet Compose(Sheet source, PartLabel[] labels, CancellationToken token, TableLayout? tables = null)
     {
         var scene = source.Scene ?? throw new InvalidOperationException("No annotation geometry.");
-        labels = FlagnoteNumbers.Normalize(labels, scene.Options.FlagTable).Select(l => LabelQuantities.Refresh(scene, l)).ToArray();
+        labels = PrintTables.ResolveLabelKeys(scene, labels).Select(l => LabelQuantities.Refresh(scene, l)).ToArray();
         if (tables != null)
         {
             scene = scene.WithTables(tables);
@@ -710,14 +768,17 @@ static class AnnotationPainting
             token.ThrowIfCancellationRequested();
             canvas.HitTarget = new(DrawingObjectKind.Label, route.Label.Id);
             LeaderPainting.Paint(canvas, [route.Start, route.End], route.Label.Line, route.Label.Tip, route.Label.Key == null ? 10 : 0);
-            if (route.Label.Key != null)
+            if (route.Label.Key is { } key)
             {
-                var box = route.TextBox;
-                canvas.Line((int)box.X, (int)box.Y, (int)box.Right, (int)box.Y, 1);
-                canvas.Line((int)box.X, (int)box.Bottom, (int)box.Right, (int)box.Bottom, 1);
-                canvas.Line((int)box.X, (int)box.Y, (int)box.X, (int)box.Bottom, 1);
-                canvas.Line((int)box.Right, (int)box.Y, (int)box.Right, (int)box.Bottom, 1);
-                canvas.Text(route.Label.Key, (int)(box.Center.X - route.Label.Key.Length * AnnotationText.Font * .31f), (int)box.Y + 6, AnnotationText.Font, 1);
+                var outline = AnnotationText.SymbolOutline(route.Label.Symbol, route.TextBox, route.End);
+                for (int i = 0; i < outline.Length; i++)
+                {
+                    var a = outline[i];
+                    var b = outline[(i + 1) % outline.Length];
+                    canvas.Line((int)a.X, (int)a.Y, (int)b.X, (int)b.Y, 1);
+                }
+                var origin = AnnotationText.TextOrigin(route.Label, route.TextBox, route.End);
+                canvas.Text(key, (int)origin.X, (int)origin.Y, AnnotationText.Font, 1);
             }
             else
                 for (int i = 0; i < route.Lines.Length; i++)

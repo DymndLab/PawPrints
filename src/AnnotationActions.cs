@@ -12,7 +12,7 @@ public sealed partial class BlueprintMod
     static int hoveredLabel = -1, requestedEdit, requestedDelete = -1, requestedViewDelete = -1, requestedHeightDelete = -1, requestedTableDelete = -1, requestedDetailDelete = -1;
     static Vec panMouse, panScroll;
     static RenderScene? partMenuScene;
-    static int partMenuView, partMenuPart;
+    static int partMenuView, partMenuPart, menuLabel;
     static bool partMenuOpen, focusFlagnoteText;
     static FlagnotePlacement? flagnotePlacement;
     static RenderScene? flagnoteScene;
@@ -116,7 +116,7 @@ public sealed partial class BlueprintMod
             }
             return;
         }
-        var existing = !flagnote ? document.Labels.FirstOrDefault(l => !l.FlagNote && l.ViewId == viewId && l.PartId == partId) : null;
+        var existing = document.Labels.FirstOrDefault(l => !l.FlagNote && l.ViewId == viewId && l.PartId == partId);
         if (existing != null)
         {
             SelectLabel(existing.Id);
@@ -132,13 +132,8 @@ public sealed partial class BlueprintMod
                 status = "Existing part label selected. Drag its text or either leader handle to move it.";
             return;
         }
-        string? note = flagnote ? AnnotationText.Clean(noteText.ToString()) : null;
-        if (note != null && note.Length == 0)
-        {
-            status = "Enter the flagnote text, then drag from a part.";
-            return;
-        }
-        pendingLabel = document.Draft(viewId, partId, out var reason, (LeaderLine)defaultLine, (LeaderTip)defaultTip, note);
+        var symbol = profileDefaults.RoundPartLabels ? LabelSymbol.Circle : LabelSymbol.Square;
+        pendingLabel = document.Draft(viewId, partId, out var reason, (LeaderLine)defaultLine, (LeaderTip)defaultTip, symbol: symbol);
         var startMouse = ImGui.GetMousePos();
         placementGesture = pendingLabel != null ? new(new(startMouse.X, startMouse.Y), held) : null;
         status = pendingLabel != null ? "Move onto the paper and click to place. Right-click cancels." : reason;
@@ -149,7 +144,8 @@ public sealed partial class BlueprintMod
     {
         if (document == null)
             return;
-        var label = document.Draft(viewId, partId, out var reason, (LeaderLine)defaultLine, (LeaderTip)defaultTip, preset ?? "Custom flagnote");
+        var symbol = profileDefaults.PicketFlagnotes ? LabelSymbol.Flag : LabelSymbol.Square;
+        var label = document.Draft(viewId, partId, out var reason, (LeaderLine)defaultLine, (LeaderTip)defaultTip, preset ?? "Custom flagnote", symbol);
         if (label == null)
         {
             ReportFailure(reason);
@@ -276,6 +272,52 @@ public sealed partial class BlueprintMod
             ImGui.EndPopup();
         }
         return menuDrawn; // Menu selection must never also place the draft.
+    }
+
+
+    static bool DrawLabelMenu(bool hovered, bool editable)
+    {
+        if (editable && hovered && CanEditAnnotations && ImGui.IsMouseClicked(ImGuiMouseButton.Right) &&
+            canvasTarget is { Kind: DrawingObjectKind.Label } item && document!.Labels.FirstOrDefault(l => l.Id == item.Id) is { Visible: true } label &&
+            (label.Key != null || (!label.FlagNote && document.Scene.Options.PartsTable && PrintTables.PartKey(document.Scene, label.PartId) != null)))
+        {
+            partMenuScene = document.Scene;
+            menuLabel = item.Id;
+            SelectLabel(item.Id);
+            ImGui.OpenPopup("Label actions"u8);
+        }
+        if (!ImGui.BeginPopup("Label actions"u8))
+            return false;
+        partMenuOpen = true;
+        if (!editable || !CanEditAnnotations || !ReferenceEquals(partMenuScene, document?.Scene) ||
+            document!.Labels.FirstOrDefault(l => l.Id == menuLabel) is not { Visible: true } selected)
+            ImGui.CloseCurrentPopup();
+        else
+        {
+            ImGui.Text(selected.FlagNote ? "Flagnote symbol" : "Part label");
+            ImGui.Separator();
+            if (!selected.FlagNote)
+            {
+                if (selected.Key != null && ImGui.MenuItem("Show full part label"u8))
+                    ChangeLabel(selected with { FullText = true });
+                if (selected.Key == null && ImGui.MenuItem("Use parts-table symbol"u8))
+                    ChangeLabel(selected with { FullText = false });
+            }
+            if (selected.Key != null)
+            {
+                if (ImGui.MenuItem("Square"u8, selected: selected.Symbol == LabelSymbol.Square))
+                    ChangeLabel(selected with { Symbol = LabelSymbol.Square });
+                if (selected.FlagNote)
+                {
+                    if (ImGui.MenuItem("Flag"u8, selected: selected.Symbol == LabelSymbol.Flag))
+                        ChangeLabel(selected with { Symbol = LabelSymbol.Flag });
+                }
+                else if (ImGui.MenuItem("Circle"u8, selected: selected.Symbol == LabelSymbol.Circle))
+                    ChangeLabel(selected with { Symbol = LabelSymbol.Circle });
+            }
+        }
+        ImGui.EndPopup();
+        return true;
     }
 
 

@@ -77,6 +77,15 @@ public sealed partial class BlueprintMod
             ApplyPrintStyle(defaultLine, printTip);
             SaveProfileSettings(profileDefaults with { Endpoint = (LeaderTip)printTip });
         }
+        ImGui.Separator();
+        ImGui.Text("Symbols for new labels");
+        bool roundPartLabels = profileDefaults.RoundPartLabels;
+        if (ImGui.Checkbox("Circle for parts-table labels", ref roundPartLabels))
+            SaveProfileSettings(profileDefaults with { RoundPartLabels = roundPartLabels });
+        bool picketFlagnotes = profileDefaults.PicketFlagnotes;
+        if (ImGui.Checkbox("Flag for flagnote-table labels", ref picketFlagnotes))
+            SaveProfileSettings(profileDefaults with { PicketFlagnotes = picketFlagnotes });
+        PrintUiStyle.Help("Right-click a symbol on the drawing to change its shape.");
         ImGui.EndDisabled();
         if (profileMessage != null) PrintUiText.Wrapped(profileMessage);
 

@@ -155,7 +155,8 @@ static class DrawingProjectCodec
         if (c.Details.Any(detail => detail.SourceIssue != DetailSourceIssue.None))
             throw new InvalidDataException("Resolve the affected exploded views before saving.");
         var ids = d.Views.Select(v => v.Id).Concat(c.Details.Select(v => v.ViewId)).ToHashSet();
-        if (ids.Count != d.Views.Length + c.Details.Length || c.Labels.Any(l => !ids.Contains(l.ViewId)) ||
+        if (ids.Count != d.Views.Length + c.Details.Length || c.Labels.Any(l => !ids.Contains(l.ViewId) ||
+                (l.FlagNote ? l.Symbol is not (LabelSymbol.Square or LabelSymbol.Flag) : l.Symbol is not (LabelSymbol.Square or LabelSymbol.Circle))) ||
             c.Labels.Select(l => l.Id).Distinct().Count() != c.Labels.Length ||
             d.Views.Any(v => v.Id is < 0 or >= 1000 || v.Camera is < 0 or > 7 ||
                 v.Alignment is < 0 or > 2 || v.RollDirection is < -1 or > 7 || v.ProjectionAngle is not (1 or 3) ||

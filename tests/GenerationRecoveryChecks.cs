@@ -234,6 +234,24 @@ static class GenerationRecoveryChecks
                 reopenedPart.Id != note.PartId &&
                 reopenedDetail.Selection!.Cuts.Single() == JointKey.Between(cut.A with { Part = NewId(cut.A.Part) }, cut.B with { Part = NewId(cut.B.Part) }),
                 "Restart binding ignores enumeration order and remaps the flagnote, detail root and both joint endpoints");
+            var converted = note with
+            {
+                Id = note.Id + 1, FlagNote = false, FlagnoteNumber = 0, Symbol = LabelSymbol.Circle,
+                FullText = true, X = note.X + 100
+            };
+            var styles = project with
+            {
+                Content = project.Content with
+                {
+                    Options = project.Content.Options with { PartsTable = true, FlagTable = true },
+                    Labels = [note with { Symbol = LabelSymbol.Flag }, converted]
+                }
+            };
+            var reopenedStyles = DrawingProjectCodec.Read(DrawingProjectCodec.Write(styles)).Render(restarted, null, null, default);
+            check(reopenedStyles.Labels[0] is { FlagNote: true, Symbol: LabelSymbol.Flag, Key: "F1" } &&
+                reopenedStyles.Labels[1] is { FullText: true, Symbol: LabelSymbol.Circle, Key: null } &&
+                reopenedStyles.Labels[1].PartId == reopenedPart.Id,
+                "Saving and reopening after a restart preserves the flag shape and the full-text part-label override");
             var changedAssembly = restartedAssembly with
             {
                 Nodes = restartedAssembly.Nodes.Select(n => n.Id == NewId(20) ? n with { Scale = new(1, 2, 1) } : n).ToArray()

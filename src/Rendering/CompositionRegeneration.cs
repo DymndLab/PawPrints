@@ -171,24 +171,27 @@ static class CompositionRegeneration
                     pin = LeaderRouting.SnapAttachment(after, label with { PartId = part.Id }, pin.Vector, float.PositiveInfinity);
             }
             var position = MapPoint(label.ViewId, label.X, label.Y);
-            var changed = label with
+            labels.Add(label with
             {
                 PartId = part.Id,
                 X = position.X,
                 Y = position.Y,
                 Attachment = pin,
                 Socket = null,
-                ManualPlacement = true,
-                Key = label.FlagNote ? label.Key : (fresh.Options.PartsTable && !part.DetailOnly ? PrintTables.PartKey(after, part.Id) : null)
-            };
-            var bounds = AnnotationText.Bounds(changed);
-            labels.Add(changed with
-            {
-                X = fresh.Options.FreeLayout ? changed.X : Math.Clamp(changed.X, 0, fresh.PixelWidth - bounds.Width),
-                Y = fresh.Options.FreeLayout ? changed.Y : Math.Clamp(changed.Y, 0, fresh.PixelHeight - bounds.Height)
+                ManualPlacement = true
             });
         }
-        var retained = FlagnoteNumbers.Normalize(labels.ToArray(), fresh.Options.FlagTable);
+        var retained = PrintTables.ResolveLabelKeys(after, labels);
+        if (!fresh.Options.FreeLayout)
+            retained = retained.Select(label =>
+            {
+                var bounds = AnnotationText.Bounds(label);
+                return label with
+                {
+                    X = Math.Clamp(label.X, 0, fresh.PixelWidth - bounds.Width),
+                    Y = Math.Clamp(label.Y, 0, fresh.PixelHeight - bounds.Height)
+                };
+            }).ToArray();
         if (repaging && !fresh.Options.FreeLayout && after.FreeText.Length > 0)
         {
             var placedText = new List<FreeTextBox>();

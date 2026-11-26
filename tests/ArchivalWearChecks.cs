@@ -127,5 +127,25 @@ static class ArchivalWearChecks
             "Older editable files load with deterministic automatic wear");
         check(WearPlacement.Resolve(options with { Archive=false }, "Survey", [], [mark]).SequenceEqual([mark]),
             "Manual wear remains on a drawing with automatic wear off");
+
+        var tear = WearPlacement.Manual(WearKind.CurvedTear, new(310, page.Height - 2), page, 1, 0, true, 19);
+        var ring = WearPlacement.Manual(WearKind.CoffeeRing, new(140, 160), page, 1, 0, false, 2);
+        var manual = new[] { mark, tear, mark, ring };
+        var several = AnnotationPainting.Compose(sheet with { Scene = scene.WithWear(manual) }, [], default);
+        var before = DrawingAcceptance.Prepare(several, null, false, false);
+        var shortened = before.Document.Scene.WithoutWearMark(2);
+        var rendered = AnnotationPainting.Compose(several with { Scene = shortened }, [], default);
+        var after = DrawingAcceptance.Prepare(rendered, before.Document, true, false);
+        check(before.Document.Scene.WearMarks.SequenceEqual(manual) &&
+            after.Document.Scene.WearMarks.SequenceEqual([mark, tear, ring]) &&
+            after.Sheet.AppliedWear.SequenceEqual(several.AppliedWear.Where((_, index) => index != several.AppliedWear.Length - 2)),
+            "Removing one duplicate mark preserves the earlier mark, other placements and automatic wear");
+        after.Document.Undo();
+        check(after.Document.Scene.WearMarks.SequenceEqual(manual), "Undo restores the removed wear mark in its original order");
+        after.Document.Redo();
+        var reopenedRemoval = DrawingProjectCodec.Read(DrawingProjectCodec.Write(DrawingProject.Capture(after.Sheet, after.Document, null)))
+            .Render(null, null, null, default);
+        check(reopenedRemoval.Scene!.WearMarks.SequenceEqual([mark, tear, ring]) && reopenedRemoval.Rgb.AsSpan().SequenceEqual(after.Sheet.Rgb),
+            "Redo and drawing reopen preserve the removal and its rendered appearance");
     }
 }

@@ -29,6 +29,7 @@ public sealed partial class BlueprintMod
 
     static void CancelPlacement()
     {
+        selectedPlacedWear = null;
         activePlaceTool = PlaceTool.None;
         referenceViewPick = null;
         pickingPartTool = false;
@@ -420,6 +421,7 @@ public sealed partial class BlueprintMod
         var size = new float2(sheet.PixelWidth * factor, sheet.PixelHeight * factor);
         ImGui.Image(texture, in size);
         var origin = ImGui.GetItemRectMin();
+        DrawPlacedWearSelection(origin, size, factor);
         // An Image is not an input target. Claim the canvas press so ImGui cannot
         // start dragging the root window while our Space gesture pans the paper.
         ImGui.SetCursorScreenPos(origin);
@@ -456,12 +458,6 @@ public sealed partial class BlueprintMod
         var point = new Vec((mouse.X - origin.X) / factor, (mouse.Y - origin.Y) / factor);
         bool editable = !busy && PrintIsCurrent && document != null;
         bool hovered = ImGui.IsItemHovered();
-        if (editable && hovered && pickingPartTool && ImGui.IsMouseClicked(ImGuiMouseButton.Right))
-        {
-            CancelPlacement();
-            status = "Placement cancelled.";
-            return;
-        }
         if (DrawWearPlacement(point, factor, origin, hovered, editable))
             return;
         if (DrawProjectionSource(point, factor, origin, hovered, editable) ||
@@ -491,6 +487,14 @@ public sealed partial class BlueprintMod
         if (DrawReferenceMenu(editable))
             return;
         canvasTarget = document == null ? null : CanvasObjects.Pick(sheet, document.Scene, document.Labels, point, 5 / factor, listedObject);
+        if (DrawLabelMenu(hovered, editable))
+            return;
+        if (editable && hovered && pickingPartTool && ImGui.IsMouseClicked(ImGuiMouseButton.Right))
+        {
+            CancelPlacement();
+            status = "Placement cancelled.";
+            return;
+        }
         if (hovered && editable && !ControlsLocked && ImGui.IsMouseClicked(ImGuiMouseButton.Left))
             SelectCanvasObject(canvasTarget);
         bool HitKind(DrawingObjectKind kind) => hovered && canvasTarget?.Kind == kind;
@@ -544,17 +548,7 @@ public sealed partial class BlueprintMod
             var proposed = flag.Stage == FlagnoteStage.End ? flag.PreviewEnd(point) : flag.Label;
             bool valid = LeaderRouting.TryLayout(document!.Scene, [.. document.Labels, proposed], out var flagRoutes, out _);
             uint color = valid ? 0xFF8EDD8E : 0xFF7777FF;
-            Outline(AnnotationText.Bounds(proposed), color);
-            var flagRoute = flagRoutes.FirstOrDefault(r => r.Label.Id == proposed.Id);
-            if (flagRoute != null)
-            {
-                ImGui.GetWindowDrawList().AddLine(ToScreen(flagRoute.Start), ToScreen(flagRoute.End), color, 1);
-                Handle(flagRoute.Start, color);
-                Handle(flagRoute.End, color);
-            }
-            var flagLines = AnnotationText.Lines(proposed);
-            for (int i = 0; i < flagLines.Length; i++)
-                ImGui.GetWindowDrawList().AddText(ImGui.GetFont(), AnnotationText.Font * factor, ToScreen(new(proposed.X, proposed.Y + i * AnnotationText.Leading)), color, flagLines[i]);
+            DrawLabelDraft(proposed, flagRoutes.FirstOrDefault(r => r.Label.Id == proposed.Id), color);
             if (flag.Stage == FlagnoteStage.End && hovered && ImGui.IsMouseClicked(ImGuiMouseButton.Left))
             {
                 flag.PickEnd(point);
@@ -673,19 +667,10 @@ public sealed partial class BlueprintMod
             var labels = placing ? [.. document.Labels, proposed] : document.Labels.Select(l => l.Id == proposed.Id ? proposed : l).ToArray();
             bool valid = LeaderRouting.TryLayout(document.Scene, labels, out var routes, out var reason);
             uint color = valid ? 0xFF8EDD8E : 0xFF7777FF;
-            Outline(AnnotationText.Bounds(proposed), color);
             var route = routes.FirstOrDefault(r => r.Label.Id == proposed.Id);
-            if (route != null)
-            {
-                ImGui.GetWindowDrawList().AddLine(ToScreen(route.Start), ToScreen(route.End), color, 1);
-                Handle(route.Start, color);
-                Handle(route.End, color);
-            }
-            else if (draggingAttachment && !placing)
-                Handle(proposed.Attachment!.Vector, color);
-            var lines = AnnotationText.Lines(proposed);
-            for (int i = 0; i < lines.Length; i++)
-                ImGui.GetWindowDrawList().AddText(ImGui.GetFont(), AnnotationText.Font * factor, ToScreen(new(proposed.X, proposed.Y + i * AnnotationText.Leading)), color, lines[i]);
+            DrawLabelDraft(proposed, route, color);
+            if (route == null && draggingAttachment && !placing && proposed.Attachment is { } attachment)
+                Handle(attachment.Vector, color);
             var screenMouse = new Vec(mouse.X, mouse.Y);
             bool commit = placing ? placementGesture?.Update(screenMouse, ImGui.IsMouseDown(ImGuiMouseButton.Left), ImGui.IsMouseClicked(ImGuiMouseButton.Left), hovered) == true : !ImGui.IsMouseDown(ImGuiMouseButton.Left);
             if (!placing && commit && Vec.Distance(screenMouse, pressMouse) < 2)
@@ -712,6 +697,30 @@ public sealed partial class BlueprintMod
         }
         float2 ToScreen(Vec p) => origin + new float2(p.X * factor, p.Y * factor);
         void Outline(Box box, uint color) => ImGui.GetWindowDrawList().AddRect(ToScreen(new(box.X, box.Y)), ToScreen(new(box.Right, box.Bottom)), color, 0, ImDrawFlags.None, 1.5f);
+        void DrawLabelDraft(PartLabel label, LabelGeometry? route, uint color)
+        {
+            var draw = ImGui.GetWindowDrawList();
+            var box = AnnotationText.Bounds(label);
+            var part = route?.End ?? label.Attachment?.Vector ?? box.Center;
+            if (label.Key != null)
+            {
+                var outline = AnnotationText.SymbolOutline(label.Symbol, box, part);
+                for (int i = 0; i < outline.Length; i++)
+                    draw.AddLine(ToScreen(outline[i]), ToScreen(outline[(i + 1) % outline.Length]), color, 1.5f);
+            }
+            else
+                Outline(box, color);
+            var start = AnnotationText.TextOrigin(label, box, part);
+            var lines = AnnotationText.Lines(label);
+            for (int i = 0; i < lines.Length; i++)
+                draw.AddText(ImGui.GetFont(), AnnotationText.Font * factor, ToScreen(start + new Vec(0, i * AnnotationText.Leading)), color, lines[i]);
+            if (route != null)
+            {
+                draw.AddLine(ToScreen(route.Start), ToScreen(route.End), color, 1);
+                Handle(route.Start, color);
+                Handle(route.End, color);
+            }
+        }
         void Handle(Vec p, uint color)
         {
             ImGui.GetWindowDrawList().AddCircleFilled(ToScreen(p), 5, 0xFF332211);

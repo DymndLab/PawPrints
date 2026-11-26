@@ -155,7 +155,11 @@ public sealed partial class BlueprintMod
         if (ImGui.Checkbox("Automatic"u8, ref automatic))
             chosen = automatic ? default((int Columns, int Rows)) : current;
         if (beside && preview is { } pending && pending != current)
-            ImGui.TextDisabled($"{pending.Columns} x {pending.Rows}");
+        {
+            ImGui.PushStyleColor(ImGuiCol.Text, ImGui.GetColorU32(ImGuiCol.TextDisabled));
+            try { ImGui.Text($"{pending.Columns} x {pending.Rows}"); }
+            finally { ImGui.PopStyleColor(); }
+        }
         ImGui.EndGroup();
 
         if (chosen is { } size && size != setupGrid)

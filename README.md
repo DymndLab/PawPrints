@@ -8,7 +8,7 @@ Part poses affect the drawing without changing your craft. Rendering runs locall
 
 ## Get started
 
-**PawPrints 0.6.1** requires **Windows x64**, **KSA 2026.11.25.5949** and **StarMap 0.5.4**. Install it from Borea's Stable channel or use the release ZIP.
+**PawPrints 0.6.2** requires **Windows x64**, **KSA 2026.11.25.5949** and **StarMap 0.5.4**. Install it from Borea's Stable channel or use the release ZIP.
 
 Native Linux testing is pending. If you can test on a native Linux KSA and StarMap setup, [open or join a Linux testing discussion](https://github.com/DymndLab/PawPrints/issues).
 
@@ -19,6 +19,13 @@ Native Linux testing is pending. If you can test on a native Linux KSA and StarM
 Use **Save Drawing** to keep an editable project for the current craft. Large craft and high-resolution sheets can use substantial memory. Compatibility with third-party parts varies with their implementation.
 
 For problems, [open an issue](https://github.com/DymndLab/PawPrints/issues) with reproduction steps and your PawPrints, KSA and StarMap versions. See [security and local data](SECURITY.md) before sharing logs or files.
+
+## What’s new in 0.6.2
+
+- PawPrints closes when you leave the Vehicle Editor, so an unfinished New Drawing screen won’t carry over into the next editor session.
+- Exploded views use the same parts-table letter as other views for the same part. Right-click a part label to switch between its table symbol and full text.
+- Choose circular parts-table symbols or picket-shaped flagnote symbols in Preferences. Right-click an existing symbol to change its shape on the drawing.
+- Remove individual marks under **Place → Placed wear**. **Ctrl+Z** restores the removed mark.
 
 ## What’s new in 0.6.1
 

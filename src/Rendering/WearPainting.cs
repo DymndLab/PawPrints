@@ -125,6 +125,9 @@ static class WearPainting
         }
     }
 
+    public static Box Bounds(WearMark mark, PrintOptions options) =>
+        new Brush(mark, options.Theme, options.Page.Width, options.Page.Height).Bounds;
+
     public static void Apply(byte[] rgb, int w, int h, int theme, IEnumerable<WearMark> marks, CancellationToken token, Box? clip = null)
     {
         foreach (var mark in marks)
